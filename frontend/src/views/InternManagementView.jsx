@@ -1,17 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Search, 
-  Filter, 
   UserPlus, 
   Edit3, 
   Eye, 
   RefreshCw, 
-  GraduationCap, 
-  Building2, 
   Phone, 
   Mail,
   AlertCircle,
-  Check
+  Check,
+  XCircle
 } from 'lucide-react';
 import InternModal from '../components/InternModal';
 
@@ -22,11 +20,12 @@ export default function InternManagementView({
   currentUser
 }) {
   const [interns, setInterns] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Filter and Search states
   const [searchTerm, setSearchTerm] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [filterDuyet, setFilterDuyet] = useState('');
   const [filterThucTap, setFilterThucTap] = useState('');
   const [filterPhongBan, setFilterPhongBan] = useState('');
@@ -35,25 +34,29 @@ export default function InternManagementView({
   // Modal states for Create / Edit
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedInternId, setSelectedInternId] = useState(null);
+  const [modalSession, setModalSession] = useState(0);
 
   // Detail view modal
   const [detailModalIntern, setDetailModalIntern] = useState(null);
 
-  const fetchInterns = async () => {
-    setLoading(true);
-    setErrorMsg('');
-    try {
-      const params = new URLSearchParams();
-      if (searchTerm) params.append('search', searchTerm);
-      if (filterDuyet) params.append('trang_thai_xet_duyet', filterDuyet);
-      if (filterThucTap) params.append('trang_thai_thuc_tap', filterThucTap);
-      if (filterPhongBan) params.append('ma_phong_ban', filterPhongBan);
-      if (filterTruong) params.append('ma_truong', filterTruong);
+  const requestInterns = useCallback(async (query = appliedSearch) => {
+    const params = new URLSearchParams();
+    if (query) params.append('search', query);
+    if (filterDuyet) params.append('trang_thai_xet_duyet', filterDuyet);
+    if (filterThucTap) params.append('trang_thai_thuc_tap', filterThucTap);
+    if (filterPhongBan) params.append('ma_phong_ban', filterPhongBan);
+    if (filterTruong) params.append('ma_truong', filterTruong);
 
-      const res = await fetch(`/api/interns?${params.toString()}`);
-      if (!res.ok) throw new Error('Không thể tải danh sách thực tập sinh');
-      const data = await res.json();
+    const res = await fetch(`/api/interns?${params.toString()}`);
+    if (!res.ok) throw new Error('Không thể tải danh sách thực tập sinh');
+    return res.json();
+  }, [appliedSearch, filterDuyet, filterThucTap, filterPhongBan, filterTruong]);
+
+  const fetchInterns = async (query = appliedSearch) => {
+    try {
+      const data = await requestInterns(query);
       setInterns(data);
+      setErrorMsg('');
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -62,20 +65,51 @@ export default function InternManagementView({
   };
 
   useEffect(() => {
-    fetchInterns();
-  }, [filterDuyet, filterThucTap, filterPhongBan, filterTruong]);
+    let current = true;
+    requestInterns()
+      .then((data) => {
+        if (current) {
+          setInterns(data);
+          setErrorMsg('');
+        }
+      })
+      .catch((err) => {
+        if (current) setErrorMsg(err.message);
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => { current = false; };
+  }, [requestInterns]);
 
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
+  const refreshInterns = () => {
+    setLoading(true);
     fetchInterns();
   };
 
+  const openInternModal = (internId = null) => {
+    setSelectedInternId(internId);
+    setModalSession((session) => session + 1);
+    setModalOpen(true);
+  };
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setLoading(true);
+    if (searchTerm === appliedSearch) fetchInterns(searchTerm);
+    else setAppliedSearch(searchTerm);
+  };
+
   const handleResetFilters = () => {
+    const alreadyReset = !searchTerm && !appliedSearch && !filterDuyet && !filterThucTap && !filterPhongBan && !filterTruong;
+    setLoading(true);
     setSearchTerm('');
+    setAppliedSearch('');
     setFilterDuyet('');
     setFilterThucTap('');
     setFilterPhongBan('');
     setFilterTruong('');
+    if (alreadyReset) fetchInterns('');
   };
 
   const handleApproveIntern = async (intern) => {
@@ -87,7 +121,7 @@ export default function InternManagementView({
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể duyệt');
       onShowToast(`Đã duyệt tài khoản: ${intern.ho_ten}`);
-      fetchInterns();
+      refreshInterns();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
@@ -102,7 +136,7 @@ export default function InternManagementView({
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể từ chối');
       onShowToast(`Đã từ chối tài khoản: ${intern.ho_ten}`);
-      fetchInterns();
+      refreshInterns();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
@@ -145,10 +179,7 @@ export default function InternManagementView({
 
         <button 
           className="btn btn-primary"
-          onClick={() => {
-            setSelectedInternId(null);
-            setModalOpen(true);
-          }}
+          onClick={() => openInternModal()}
         >
           <UserPlus size={16} />
           <span>Thêm thực tập sinh</span>
@@ -177,7 +208,7 @@ export default function InternManagementView({
         <select 
           className="filter-select"
           value={filterDuyet}
-          onChange={(e) => setFilterDuyet(e.target.value)}
+            onChange={(e) => { setLoading(true); setFilterDuyet(e.target.value); }}
         >
           <option value="">Xét duyệt: Tất cả</option>
           <option value="ChoDuyet">Chờ duyệt</option>
@@ -188,7 +219,7 @@ export default function InternManagementView({
         <select 
           className="filter-select"
           value={filterThucTap}
-          onChange={(e) => setFilterThucTap(e.target.value)}
+            onChange={(e) => { setLoading(true); setFilterThucTap(e.target.value); }}
         >
           <option value="">Tiến độ: Tất cả</option>
           <option value="DangThucTap">Đang thực tập</option>
@@ -199,7 +230,7 @@ export default function InternManagementView({
         <select 
           className="filter-select"
           value={filterPhongBan}
-          onChange={(e) => setFilterPhongBan(e.target.value)}
+            onChange={(e) => { setLoading(true); setFilterPhongBan(e.target.value); }}
         >
           <option value="">Phòng ban: Tất cả</option>
           {departments.map((d) => (
@@ -212,7 +243,7 @@ export default function InternManagementView({
         <select 
           className="filter-select"
           value={filterTruong}
-          onChange={(e) => setFilterTruong(e.target.value)}
+            onChange={(e) => { setLoading(true); setFilterTruong(e.target.value); }}
         >
           <option value="">Trường ĐH: Tất cả</option>
           {universities.map((u) => (
@@ -241,7 +272,7 @@ export default function InternManagementView({
           </div>
           <button 
             className="btn btn-secondary btn-sm"
-            onClick={fetchInterns}
+            onClick={refreshInterns}
             disabled={loading}
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
@@ -315,6 +346,7 @@ export default function InternManagementView({
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: '6px' }}>
                         {(currentUser?.vai_tro === 'HR' || currentUser?.vai_tro === 'Admin') && intern.trang_thai_xet_duyet === 'ChoDuyet' && (
+                          <>
                           <button
                             className="btn btn-sm"
                             style={{ backgroundColor: '#10b981', color: 'white', padding: '4px 10px', fontSize: '12px' }}
@@ -324,6 +356,15 @@ export default function InternManagementView({
                             <Check size={13} />
                             <span>Duyệt</span>
                           </button>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            title="Từ chối hồ sơ"
+                            onClick={() => handleRejectIntern(intern)}
+                          >
+                            <XCircle size={13} />
+                            <span>Từ chối</span>
+                          </button>
+                          </>
                         )}
                         <button
                           className="btn btn-secondary btn-sm"
@@ -335,10 +376,7 @@ export default function InternManagementView({
                         <button
                           className="btn btn-outline-primary btn-sm"
                           title="Chỉnh sửa"
-                          onClick={() => {
-                            setSelectedInternId(intern.ma_ho_so);
-                            setModalOpen(true);
-                          }}
+                          onClick={() => openInternModal(intern.ma_ho_so)}
                         >
                           <Edit3 size={13} />
                           <span>Sửa</span>
@@ -355,6 +393,7 @@ export default function InternManagementView({
 
       {/* Intern Create/Edit Modal */}
       <InternModal
+        key={modalSession}
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         internId={selectedInternId}
@@ -362,7 +401,7 @@ export default function InternManagementView({
         universities={universities}
         onSuccess={(msg) => {
           onShowToast(msg);
-          fetchInterns();
+          refreshInterns();
         }}
       />
 
@@ -414,9 +453,8 @@ export default function InternManagementView({
               <button 
                 className="btn btn-outline-primary btn-sm"
                 onClick={() => {
-                  setSelectedInternId(detailModalIntern.ma_ho_so);
+                  openInternModal(detailModalIntern.ma_ho_so);
                   setDetailModalIntern(null);
-                  setModalOpen(true);
                 }}
               >
                 <Edit3 size={14} />

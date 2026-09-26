@@ -1,11 +1,13 @@
-import React from 'react';
-import { User, LogIn, LogOut, Shield, Briefcase, GraduationCap, Users } from 'lucide-react';
+import React, { useState } from 'react';
+import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown } from 'lucide-react';
 
 export default function Navbar({ 
   currentUser, 
   onLogout, 
-  onSwitchRole 
+  onSwitchRole,
+  onOpenAccount
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const getRoleBadge = (role) => {
     switch (role) {
       case 'Admin':
@@ -48,19 +50,23 @@ export default function Navbar({
         </div>
 
         {currentUser && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div className={`badge ${roleInfo?.class}`} style={{ gap: '6px' }}>
-              {roleInfo?.icon}
-              <span>{currentUser.ho_ten}</span>
-            </div>
-            <button 
-              className="btn btn-secondary btn-sm" 
-              onClick={onLogout}
-              title="Đăng xuất khỏi hệ thống"
-            >
-              <LogOut size={14} />
-              <span>Đăng xuất</span>
+          <div className="account-menu-wrap">
+            <button type="button" className="account-menu-trigger" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
+              <span className="user-avatar account-menu-avatar">{currentUser.ho_ten?.charAt(0)?.toUpperCase() || 'U'}</span>
+              <span className="account-menu-copy"><strong>{currentUser.ho_ten}</strong><small>{roleInfo?.label}</small></span>
+              <ChevronDown size={15} />
             </button>
+            {menuOpen && <>
+              <button className="account-menu-dismiss" aria-label="Đóng menu" onClick={() => setMenuOpen(false)} />
+              <div className="account-menu-panel">
+                <div className="account-menu-heading"><strong>{currentUser.ho_ten}</strong><span>{currentUser.email}</span></div>
+                <button type="button" onClick={() => { onOpenAccount('profile'); setMenuOpen(false); }}><User size={16} /> Tài khoản</button>
+                <button type="button" onClick={() => { onOpenAccount('settings'); setMenuOpen(false); }}><Settings size={16} /> Cài đặt</button>
+                <button type="button" onClick={() => { onOpenAccount('password'); setMenuOpen(false); }}><KeyRound size={16} /> Cập nhật mật khẩu</button>
+                <div className="account-menu-divider" />
+                <button type="button" className="account-menu-logout" onClick={onLogout}><LogOut size={16} /> Đăng xuất</button>
+              </div>
+            </>}
           </div>
         )}
       </div>

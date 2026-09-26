@@ -1,4 +1,5 @@
 @echo off
+set "PATH=C:\Program Files\nodejs;%PATH%"
 echo ===================================================
 echo     KHOI DONG HE THONG QUAN LY THUC TAP SINH
 echo ===================================================

@@ -21,6 +21,14 @@ class UserStatusUpdate(BaseModel):
     trang_thai: str  # 'HoatDong' | 'Khoa' | 'ChoDuyet'
 
 
+class UserProfileUpdate(BaseModel):
+    ho_ten: str
+    so_dien_thoai: Optional[str] = None
+
+class PasswordChange(BaseModel):
+    mat_khau_hien_tai: str
+    mat_khau_moi: str
+
 class UserResponse(BaseModel):
     ma_nguoi_dung: int
     ho_ten: str

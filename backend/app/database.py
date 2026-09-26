@@ -216,5 +216,57 @@ def init_db():
                 new_bcrypt_hash = hash_password("123456")
                 cursor.execute("UPDATE NGUOI_DUNG SET mat_khau = ? WHERE ma_nguoi_dung = ?", (new_bcrypt_hash, u["ma_nguoi_dung"]))
 
+    # Add a larger, repeatable demo roster without replacing users created by the team.
+    demo_users = [
+        (1, "Nguyễn Minh Khôi (Thực tập sinh)", "minh.khoi.nguyen@internship.vn", "0911000001", "ThucTapSinh", "HoatDong"),
+        (2, "Trần Thị Ngọc (Thực tập sinh)", "ngoc.tran@internship.vn", "0381000002", "ThucTapSinh", "HoatDong"),
+        (3, "Lê Quang Huy (Thực tập sinh)", "quang.huy.le@internship.vn", "0971000003", "ThucTapSinh", "HoatDong"),
+        (4, "Phạm Gia Hân (Thực tập sinh)", "gia.han.pham@internship.vn", "0851000004", "ThucTapSinh", "HoatDong"),
+        (1, "Võ Đức Long (Thực tập sinh)", "duc.long.vo@internship.vn", "0831000005", "ThucTapSinh", "HoatDong"),
+        (3, "Bùi Thanh Trúc (Thực tập sinh)", "thanh.truc.bui@internship.vn", "0701000006", "ThucTapSinh", "HoatDong"),
+        (2, "Đặng Hoàng Nam (Thực tập sinh)", "hoang.nam.dang@internship.vn", "0921000007", "ThucTapSinh", "HoatDong"),
+        (4, "Đỗ Khánh Linh (Thực tập sinh)", "khanh.linh.do@internship.vn", "0861000008", "ThucTapSinh", "ChoDuyet"),
+        (1, "Hoàng Tuấn Kiệt (Thực tập sinh)", "tuan.kiet.hoang@internship.vn", "0391000009", "ThucTapSinh", "Khoa"),
+        (3, "Mai Phương Anh (Thực tập sinh)", "phuong.anh.mai@internship.vn", "0561000010", "ThucTapSinh", "HoatDong"),
+        (1, "Nguyễn Hải Đăng (Mentor)", "hai.dang.nguyen@internship.vn", "0905555667", "Mentor", "HoatDong"),
+        (2, "Trần Quốc Bảo (Mentor)", "quoc.bao.tran@internship.vn", "0905555668", "Mentor", "HoatDong"),
+        (3, "Lê Thu Trang (HR)", "thu.trang.le@internship.vn", "0903333445", "HR", "HoatDong"),
+        (1, "Quản trị viên dự phòng", "admin.demo2@internship.vn", "0901111223", "Admin", "HoatDong"),
+    ]
+    demo_emails = [user[2] for user in demo_users]
+    placeholders = ",".join("?" for _ in demo_emails)
+    cursor.execute(f"SELECT COUNT(*) FROM NGUOI_DUNG WHERE email IN ({placeholders})", demo_emails)
+    missing_demo_users = cursor.fetchone()[0] < len(demo_users)
+    if missing_demo_users:
+        demo_password_hash = hash_password("123456")
+        cursor.executemany("""
+            INSERT OR IGNORE INTO NGUOI_DUNG
+                (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [(*user[:3], demo_password_hash, *user[3:]) for user in demo_users])
+
+    # Seed internship profiles for the demo interns so management screens are populated too.
+    demo_profiles = [
+        ("minh.khoi.nguyen@internship.vn", 1, "Kỹ thuật phần mềm", "DaDuyet", "DangThucTap"),
+        ("ngoc.tran@internship.vn", 2, "An toàn thông tin", "DaDuyet", "DangThucTap"),
+        ("quang.huy.le@internship.vn", 3, "Hệ thống thông tin", "ChoDuyet", "DangThucTap"),
+        ("gia.han.pham@internship.vn", 4, "Trí tuệ nhân tạo", "DaDuyet", "DangThucTap"),
+        ("duc.long.vo@internship.vn", 1, "Kỹ thuật phần mềm", "DaDuyet", "HoanThanh"),
+        ("thanh.truc.bui@internship.vn", 2, "Khoa học dữ liệu", "DaDuyet", "DangThucTap"),
+        ("hoang.nam.dang@internship.vn", 3, "Mạng máy tính", "DaDuyet", "DangThucTap"),
+        ("khanh.linh.do@internship.vn", 4, "Thiết kế giao diện", "ChoDuyet", "DangThucTap"),
+        ("tuan.kiet.hoang@internship.vn", 1, "Phát triển ứng dụng", "DaDuyet", "ThoiHoc"),
+        ("phuong.anh.mai@internship.vn", 2, "Phân tích dữ liệu", "DaDuyet", "DangThucTap"),
+    ]
+    for email, university_id, major, approval, internship_status in demo_profiles:
+        cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email = ?", (email,))
+        demo_user = cursor.fetchone()
+        if demo_user:
+            cursor.execute("""
+                INSERT OR IGNORE INTO HO_SO_THUC_TAP
+                    (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                VALUES (?, ?, ?, ?, ?)
+            """, (demo_user[0], university_id, major, approval, internship_status))
+
     conn.commit()
     conn.close()

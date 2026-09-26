@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Target, ChevronDown, ChevronUp, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 
 export default function VisionBanner() {
   const [expanded, setExpanded] = useState(false);

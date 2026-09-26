@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 import sqlite3
+import re
 from typing import List, Optional, Dict, Any
 from ..database import get_db, hash_password
 from ..schemas import InternCreate, InternUpdate, InternDetail
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
+
+def validate_phone_number(phone: Optional[str]):
+    if phone and not re.fullmatch(r"(03|05|07|08|09)\d{8}", phone):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
 
 @router.post("", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 def create_intern(data: InternCreate, db: sqlite3.Connection = Depends(get_db)):
@@ -13,6 +18,7 @@ def create_intern(data: InternCreate, db: sqlite3.Connection = Depends(get_db)):
     Viết API lưu thông tin vào CSDL (Backend).
     Tạo tài khoản NGUOI_DUNG với vai_tro='ThucTapSinh' và tạo bản ghi HO_SO_THUC_TAP.
     """
+    validate_phone_number(data.so_dien_thoai)
     cursor = db.cursor()
 
     # Kiểm tra email trùng
@@ -89,6 +95,7 @@ def update_intern(id: int, data: InternUpdate, db: sqlite3.Connection = Depends(
     US02 – Cập nhật/Chỉnh sửa hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API Cập nhật (Update) dữ liệu.
     """
+    validate_phone_number(data.so_dien_thoai)
     cursor = db.cursor()
     
     # Kiểm tra hồ sơ có tồn tại không

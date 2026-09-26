@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { UserCheck, UserPlus, Mail, Phone } from 'lucide-react';
+import { UserPlus, Mail, Phone } from 'lucide-react';
+import PhoneField from '../components/PhoneField';
+import { isValidVietnamPhone } from '../utils/phone';
 
 export default function MentorManagementView({ departments, onShowToast }) {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -45,6 +47,10 @@ export default function MentorManagementView({ departments, onShowToast }) {
 
   const handleAddMentor = (e) => {
     e.preventDefault();
+    if (form.so_dien_thoai && !isValidVietnamPhone(form.so_dien_thoai)) {
+      onShowToast('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.', 'error');
+      return;
+    }
     const deptObj = departments.find(d => String(d.ma_phong_ban) === String(form.ma_phong_ban));
     const newMentor = {
       id: Date.now(),
@@ -131,17 +137,7 @@ export default function MentorManagementView({ departments, onShowToast }) {
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Số điện thoại</label>
-                <input
-                  type="text"
-                  name="so_dien_thoai"
-                  className="form-control"
-                  placeholder="0905555666"
-                  value={form.so_dien_thoai}
-                  onChange={handleChange}
-                />
-              </div>
+              <PhoneField value={form.so_dien_thoai} onChange={(value) => setForm((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0905555666" />
 
               <div className="form-group">
                 <label className="form-label">Phòng ban</label>

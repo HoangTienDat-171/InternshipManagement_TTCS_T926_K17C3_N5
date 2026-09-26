@@ -1,11 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Request, Query
 import sqlite3
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from ..database import get_db, hash_password, verify_password
-from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate
+from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & Security"])
+
+def validate_phone_number(phone: Optional[str]):
+    if phone and not re.fullmatch(r"(03|05|07|08|09)\d{8}", phone):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
 
 # Chuỗi hash Bcrypt giả lập phục vụ chống Timing Attack khi email không tồn tại
 DUMMY_BCRYPT_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lew.nOQ2/y4g7e1xK"
@@ -78,6 +83,7 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     1. Khi tạo tài khoản thì mặc định là Thực tập sinh (vai_tro='ThucTapSinh').
     2. Sau khi tạo tài khoản thì phải đợi Quản lý thực tập sinh xét duyệt (trang_thai='ChoDuyet').
     """
+    validate_phone_number(data.so_dien_thoai)
     if len(data.mat_khau) < 6:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -222,6 +228,8 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Quyền truy cập bị từ chối: Chức năng quản trị người dùng chỉ Admin mới được dùng!"
         )
+
+    validate_phone_number(data.so_dien_thoai)
 
     if len(data.mat_khau) < 6:
         raise HTTPException(
@@ -425,6 +433,37 @@ def delete_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_
 @router.post("/logout")
 def logout():
     return {"message": "Đăng xuất thành công!", "status": "success"}
+
+@router.put("/users/{user_id}/profile")
+def update_profile(user_id: int, data: UserProfileUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    if request.headers.get("x-user-id") != str(user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể cập nhật thông tin tài khoản của mình.")
+    if not data.ho_ten.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Họ và tên không được để trống.")
+    validate_phone_number(data.so_dien_thoai)
+    cursor = db.cursor()
+    cursor.execute("UPDATE NGUOI_DUNG SET ho_ten = ?, so_dien_thoai = ? WHERE ma_nguoi_dung = ?", (data.ho_ten.strip(), data.so_dien_thoai or None, user_id))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
+    db.commit()
+    return {"message": "Đã cập nhật thông tin tài khoản.", "ho_ten": data.ho_ten.strip(), "so_dien_thoai": data.so_dien_thoai}
+
+@router.put("/users/{user_id}/password")
+def change_password(user_id: int, data: PasswordChange, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    if request.headers.get("x-user-id") != str(user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể đổi mật khẩu tài khoản của mình.")
+    if len(data.mat_khau_moi) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu mới phải có tối thiểu 6 ký tự.")
+    cursor = db.cursor()
+    cursor.execute("SELECT mat_khau FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
+    if not verify_password(data.mat_khau_hien_tai, user["mat_khau"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không chính xác.")
+    cursor.execute("UPDATE NGUOI_DUNG SET mat_khau = ? WHERE ma_nguoi_dung = ?", (hash_password(data.mat_khau_moi), user_id))
+    db.commit()
+    return {"message": "Đổi mật khẩu thành công."}
 
 @router.get("/users", response_model=list)
 def get_all_users(

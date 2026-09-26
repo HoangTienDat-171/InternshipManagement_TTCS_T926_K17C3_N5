@@ -1,76 +1,108 @@
-CREATE DATABASE IF NOT EXISTS `Internship_Management`;
+-- MySQL migration: Sprint 1 account and phone fields.
+-- Run with a MySQL user that can ALTER NGUOI_DUNG and CREATE ROUTINE.
 USE `Internship_Management`;
--- 1. Bảng Danh mục Phòng Ban
-CREATE TABLE IF NOT EXISTS PHONG_BAN (
-    ma_phong_ban INT AUTO_INCREMENT PRIMARY KEY,
-    ten_phong_ban VARCHAR(100) NOT NULL,
-    mo_ta TEXT
-);
 
--- 2. Bảng Danh mục Trường Đại Học
-CREATE TABLE IF NOT EXISTS TRUONG_DAI_HOC (
-    ma_truong INT AUTO_INCREMENT PRIMARY KEY,
-    ten_truong VARCHAR(255) NOT NULL,
-    dia_chi VARCHAR(255),
-    nguoi_lien_he VARCHAR(100),
-    email_lien_he VARCHAR(100)
-);
+DROP PROCEDURE IF EXISTS `_migrate_sprint1_user_profile`;
+DELIMITER $$
+CREATE PROCEDURE `_migrate_sprint1_user_profile`()
+BEGIN
+    DECLARE duplicate_count INT DEFAULT 0;
+    DECLARE column_definition TEXT DEFAULT '';
 
--- 3. Bảng Người Dùng (Tài khoản & Phân quyền)
-CREATE TABLE IF NOT EXISTS NGUOI_DUNG (
-    ma_nguoi_dung INT AUTO_INCREMENT PRIMARY KEY,
-    ma_phong_ban INT NULL,
-    ho_ten VARCHAR(100) NOT NULL,
-    email VARCHAR(100) NOT NULL,
-    mat_khau VARCHAR(255) NOT NULL, -- Dùng hash bcrypt/argon2
-    so_dien_thoai VARCHAR(20),
-    avatar_url VARCHAR(500) NULL,
-    vai_tro ENUM('Admin', 'HR', 'Mentor', 'ThucTapSinh') NOT NULL,
-    trang_thai ENUM('HoatDong', 'Khoa', 'ChoDuyet') NOT NULL DEFAULT 'HoatDong',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_nguoi_dung_email (email),
-    UNIQUE KEY uq_nguoi_dung_so_dien_thoai (so_dien_thoai),
-    FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
-);
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG'
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'NGUOI_DUNG is missing; import intership_management.sql first.';
+    END IF;
 
--- 4. Bảng Hồ Sơ Thực Tập (Khởi tạo & Xét duyệt)
-CREATE TABLE IF NOT EXISTS HO_SO_THUC_TAP (
-    ma_ho_so INT AUTO_INCREMENT PRIMARY KEY,
-    ma_nguoi_dung INT NOT NULL UNIQUE, -- Liên kết 1-1 với tài khoản Thực tập sinh
-    ma_truong INT NULL,
-    chuyen_nganh VARCHAR(100),
-    trang_thai_xet_duyet ENUM('ChoDuyet', 'DaDuyet', 'TuChoi') DEFAULT 'ChoDuyet',
-    trang_thai_thuc_tap ENUM('DangThucTap', 'HoanThanh', 'ThoiHoc') DEFAULT 'DangThucTap',
-    ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
-    FOREIGN KEY (ma_truong) REFERENCES TRUONG_DAI_HOC(ma_truong) ON DELETE SET NULL
-);
+    SELECT COUNT(*) INTO duplicate_count
+    FROM (
+        SELECT email FROM NGUOI_DUNG GROUP BY email HAVING COUNT(*) > 1
+    ) AS duplicate_emails;
+    IF duplicate_count > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Duplicate emails exist in NGUOI_DUNG; resolve them before adding the unique key.';
+    END IF;
 
--- 5. Bảng Tài Liệu Hồ Sơ (Upload CV, Giấy tờ)
-CREATE TABLE IF NOT EXISTS TAI_LIEU_HO_SO (
-    ma_tai_lieu INT AUTO_INCREMENT PRIMARY KEY,
-    ma_ho_so INT NOT NULL,
-    loai_tai_lieu ENUM('CV', 'DonXinThucTap', 'GiayGioiThieu') NOT NULL,
-    duong_dan_file VARCHAR(500) NOT NULL,
-    trang_thai_duyet ENUM('ChoDuyet', 'DaDuyet', 'TuChoi') DEFAULT 'ChoDuyet',
-    ngay_tai_len DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE
-);
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'so_dien_thoai'
+    ) THEN
+        SELECT COUNT(*) INTO duplicate_count
+        FROM (
+            SELECT so_dien_thoai FROM NGUOI_DUNG
+            WHERE so_dien_thoai IS NOT NULL
+            GROUP BY so_dien_thoai HAVING COUNT(*) > 1
+        ) AS duplicate_phones;
+        IF duplicate_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Duplicate phone numbers exist in NGUOI_DUNG; resolve them before adding the unique key.';
+        END IF;
+    END IF;
 
--- 6. Bảng Thông Báo (Gửi mail/app về kết quả xét duyệt)
-CREATE TABLE IF NOT EXISTS THONG_BAO (
-    ma_thong_bao INT AUTO_INCREMENT PRIMARY KEY,
-    ma_nguoi_dung INT NOT NULL,
-    tieu_de VARCHAR(255) NOT NULL,
-    noi_dung TEXT,
-    kenh ENUM('Email', 'App') DEFAULT 'Email',
-    da_doc BOOLEAN DEFAULT FALSE,
-    thoi_gian_gui DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
-);
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'so_dien_thoai'
+    ) THEN
+        ALTER TABLE NGUOI_DUNG ADD COLUMN so_dien_thoai VARCHAR(20) NULL;
+    END IF;
 
--- Tài khoản demo dùng chung mật khẩu 123456 (bcrypt).
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'avatar_url'
+    ) THEN
+        ALTER TABLE NGUOI_DUNG ADD COLUMN avatar_url VARCHAR(500) NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'updated_at'
+    ) THEN
+        ALTER TABLE NGUOI_DUNG
+            ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'trang_thai'
+    ) THEN
+        ALTER TABLE NGUOI_DUNG
+            ADD COLUMN trang_thai ENUM('HoatDong', 'Khoa', 'ChoDuyet') NOT NULL DEFAULT 'HoatDong';
+    ELSE
+        SELECT column_type INTO column_definition
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG' AND column_name = 'trang_thai'
+        LIMIT 1;
+        IF LOCATE('ChoDuyet', column_definition) = 0 THEN
+            ALTER TABLE NGUOI_DUNG
+                MODIFY COLUMN trang_thai ENUM('HoatDong', 'Khoa', 'ChoDuyet') NOT NULL DEFAULT 'HoatDong';
+        END IF;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG'
+          AND column_name = 'email' AND non_unique = 0
+    ) THEN
+        ALTER TABLE NGUOI_DUNG ADD UNIQUE KEY uq_nguoi_dung_email (email);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.statistics
+        WHERE table_schema = DATABASE() AND table_name = 'NGUOI_DUNG'
+          AND column_name = 'so_dien_thoai' AND non_unique = 0
+    ) THEN
+        ALTER TABLE NGUOI_DUNG ADD UNIQUE KEY uq_nguoi_dung_so_dien_thoai (so_dien_thoai);
+    END IF;
+END$$
+DELIMITER ;
+
+CALL `_migrate_sprint1_user_profile`();
+DROP PROCEDURE IF EXISTS `_migrate_sprint1_user_profile`;
+
+-- Idempotent demo accounts; shared demo password is 123456 (bcrypt hash).
 INSERT IGNORE INTO NGUOI_DUNG
     (ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
 VALUES
@@ -101,7 +133,7 @@ FROM (
 ) AS sample
 WHERE NOT EXISTS (SELECT 1 FROM TRUONG_DAI_HOC existing WHERE existing.ten_truong = sample.ten_truong);
 
--- Hồ sơ thực tập mẫu để các màn hình quản lý hồ sơ có dữ liệu hiển thị.
+-- Idempotent internship profiles for list, filter, and detail demonstrations.
 INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
 SELECT u.ma_nguoi_dung, sample.ma_truong, sample.chuyen_nganh, sample.trang_thai_xet_duyet, sample.trang_thai_thuc_tap
 FROM (

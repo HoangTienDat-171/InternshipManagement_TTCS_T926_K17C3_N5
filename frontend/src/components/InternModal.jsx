@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
+import PhoneField from './PhoneField';
+import { isValidVietnamPhone } from '../utils/phone';
+
+const createEmptyForm = (departments, universities) => ({
+  ho_ten: '',
+  email: '',
+  so_dien_thoai: '',
+  ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
+  ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
+  chuyen_nganh: '',
+  trang_thai_xet_duyet: 'ChoDuyet',
+  trang_thai_thuc_tap: 'DangThucTap'
+});
 
 export default function InternModal({ 
   isOpen, 
@@ -11,31 +24,23 @@ export default function InternModal({
 }) {
   const isEdit = Boolean(internId);
 
-  const [formData, setFormData] = useState({
-    ho_ten: '',
-    email: '',
-    so_dien_thoai: '',
-    ma_phong_ban: '',
-    ma_truong: '',
-    chuyen_nganh: '',
-    trang_thai_xet_duyet: 'ChoDuyet',
-    trang_thai_thuc_tap: 'DangThucTap'
-  });
+  const [formData, setFormData] = useState(() => createEmptyForm(departments, universities));
 
   const [loading, setLoading] = useState(false);
-  const [loadingInitial, setLoadingInitial] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(isEdit);
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
-    if (isOpen && isEdit && internId) {
-      setLoadingInitial(true);
-      setErrorMsg('');
-      fetch(`/api/interns/${internId}`)
+    if (!isOpen || !isEdit || !internId) return undefined;
+
+    const controller = new AbortController();
+      fetch(`/api/interns/${internId}`, { signal: controller.signal })
         .then(async (res) => {
           if (!res.ok) throw new Error('Không thể tải thông tin thực tập sinh');
           return res.json();
         })
         .then((data) => {
+          if (controller.signal.aborted) return;
           setFormData({
             ho_ten: data.ho_ten || '',
             email: data.email || '',
@@ -48,24 +53,12 @@ export default function InternModal({
           });
         })
         .catch((err) => {
-          setErrorMsg(err.message);
+          if (!controller.signal.aborted) setErrorMsg(err.message);
         })
         .finally(() => {
-          setLoadingInitial(false);
+          if (!controller.signal.aborted) setLoadingInitial(false);
         });
-    } else if (isOpen && !isEdit) {
-      setFormData({
-        ho_ten: '',
-        email: '',
-        so_dien_thoai: '',
-        ma_phong_ban: departments.length > 0 ? String(departments[0].ma_phong_ban) : '',
-        ma_truong: universities.length > 0 ? String(universities[0].ma_truong) : '',
-        chuyen_nganh: '',
-        trang_thai_xet_duyet: 'ChoDuyet',
-        trang_thai_thuc_tap: 'DangThucTap'
-      });
-      setErrorMsg('');
-    }
+    return () => controller.abort();
   }, [isOpen, internId, isEdit]);
 
   if (!isOpen) return null;
@@ -91,6 +84,10 @@ export default function InternModal({
         trang_thai_xet_duyet: formData.trang_thai_xet_duyet,
         trang_thai_thuc_tap: formData.trang_thai_thuc_tap
       };
+
+      if (payload.so_dien_thoai && !isValidVietnamPhone(payload.so_dien_thoai)) {
+        throw new Error('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.');
+      }
 
       let url = '/api/interns';
       let method = 'POST';
@@ -121,7 +118,7 @@ export default function InternModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-container" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div>
@@ -176,17 +173,7 @@ export default function InternModal({
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Số điện thoại</label>
-                <input
-                  type="text"
-                  name="so_dien_thoai"
-                  className="form-control"
-                  placeholder="0912345678"
-                  value={formData.so_dien_thoai}
-                  onChange={handleChange}
-                />
-              </div>
+              <PhoneField value={formData.so_dien_thoai} onChange={(value) => setFormData((prev) => ({ ...prev, so_dien_thoai: value }))} />
 
               <div className="form-group">
                 <label className="form-label">Trường Đại học</label>

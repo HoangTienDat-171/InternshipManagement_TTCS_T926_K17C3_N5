@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, PlusCircle, Clock } from 'lucide-react';
+import { PlusCircle, Clock } from 'lucide-react';
 
 export default function ProgramManagementView({ departments, onShowToast }) {
   const [showAddForm, setShowAddForm] = useState(false);

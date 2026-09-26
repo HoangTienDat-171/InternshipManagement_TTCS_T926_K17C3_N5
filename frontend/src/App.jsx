@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import LoginView from './views/LoginView';
@@ -7,6 +7,7 @@ import MentorManagementView from './views/MentorManagementView';
 import ProgramManagementView from './views/ProgramManagementView';
 import DocumentManagementView from './views/DocumentManagementView';
 import AccountManagementView from './views/AccountManagementView';
+import AccountProfileView from './views/AccountProfileView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
@@ -28,13 +29,18 @@ export default function App() {
 
   // Toast notifications
   const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const [accountSection, setAccountSection] = useState('profile');
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
-    setTimeout(() => {
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => {
       setToast(null);
     }, 3500);
   };
+
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   // Load master data when authenticated
   useEffect(() => {
@@ -51,22 +57,15 @@ export default function App() {
     }
   }, [currentUser]);
 
-  const handleLoginSuccess = (user, token) => {
+  const handleLoginSuccess = (user) => {
     setCurrentUser(user);
     showToast(`Đăng nhập thành công! Chào mừng ${user.ho_ten}.`);
   };
 
-  // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
-  useEffect(() => {
-    if (activeTab === 'accounts' && currentUser?.vai_tro !== 'Admin') {
-      setActiveTab('interns');
-    }
-  }, [activeTab, currentUser]);
-
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (e) {
+    } catch {
       // ignore
     }
     localStorage.removeItem('ims_token');
@@ -85,6 +84,7 @@ export default function App() {
 
     const targetUser = roleProfiles[newRole] || { ...currentUser, vai_tro: newRole };
     setCurrentUser(targetUser);
+    if (newRole !== 'Admin' && activeTab === 'accounts') setActiveTab('interns');
     localStorage.setItem('ims_user', JSON.stringify(targetUser));
     showToast(`Đã chuyển vai trò: ${targetUser.ho_ten} (${newRole})`);
   };
@@ -140,6 +140,7 @@ export default function App() {
           currentUser={currentUser}
           onLogout={handleLogout}
           onSwitchRole={handleSwitchRole}
+          onOpenAccount={(section) => { setAccountSection(section); setActiveTab('profile'); }}
         />
 
         <main className="content-wrapper">
@@ -177,6 +178,16 @@ export default function App() {
               departments={departments}
               onShowToast={showToast}
               currentUser={currentUser}
+            />
+          )}
+
+          {activeTab === 'profile' && (
+            <AccountProfileView
+              key={accountSection}
+              initialSection={accountSection}
+              currentUser={currentUser}
+              onUserUpdated={setCurrentUser}
+              onShowToast={showToast}
             />
           )}
         </main>

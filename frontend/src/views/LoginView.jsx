@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import PhoneField from '../components/PhoneField';
+import { isValidVietnamPhone } from '../utils/phone';
 
 export default function LoginView({ onLoginSuccess }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
@@ -64,6 +66,11 @@ export default function LoginView({ onLoginSuccess }) {
 
     if (regForm.mat_khau.length < 6) {
       setErrorMsg('Mật khẩu phải có tối thiểu 6 ký tự');
+      setRegLoading(false);
+      return;
+    }
+    if (regForm.so_dien_thoai && !isValidVietnamPhone(regForm.so_dien_thoai)) {
+      setErrorMsg('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.');
       setRegLoading(false);
       return;
     }
@@ -272,16 +279,7 @@ export default function LoginView({ onLoginSuccess }) {
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>Số điện thoại</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="0912345678"
-                value={regForm.so_dien_thoai}
-                onChange={(e) => setRegForm({ ...regForm, so_dien_thoai: e.target.value })}
-              />
-            </div>
+            <PhoneField id="register-phone" value={regForm.so_dien_thoai} onChange={(value) => setRegForm((prev) => ({ ...prev, so_dien_thoai: value }))} />
 
             <div style={{
               background: '#f8fafc',
