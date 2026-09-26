@@ -4,6 +4,38 @@ import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
+async function readApiResponse(response) {
+  const responseText = await response.text();
+  let data = {};
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      if (response.status >= 500) {
+        throw new Error('Máy chủ đăng nhập không khả dụng. Hãy kiểm tra backend FastAPI tại cổng 8000.');
+      }
+      throw new Error('Máy chủ trả về dữ liệu không hợp lệ. Vui lòng thử lại.');
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status >= 500) {
+      throw new Error('Máy chủ đăng nhập không khả dụng. Hãy kiểm tra backend FastAPI tại cổng 8000.');
+    }
+    throw new Error(data.detail || 'Không thể xử lý yêu cầu. Vui lòng thử lại.');
+  }
+
+  return data;
+}
+
+function getRequestError(error) {
+  if (error instanceof TypeError || /failed to fetch|networkerror/i.test(error.message || '')) {
+    return 'Không thể kết nối máy chủ. Hãy kiểm tra backend FastAPI tại cổng 8000 rồi thử lại.';
+  }
+  return error.message || 'Đã xảy ra lỗi. Vui lòng thử lại.';
+}
+
 export default function LoginView({ onLoginSuccess, sessionNotice }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   
@@ -42,18 +74,14 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
         }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Email hoặc mật khẩu không chính xác');
-      }
+      const data = await readApiResponse(res);
 
       localStorage.setItem('ims_token', data.token);
       localStorage.setItem('ims_user', JSON.stringify(data.user));
 
       onLoginSuccess(data.user, data.token);
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(getRequestError(err));
     } finally {
       setLoading(false);
     }
@@ -92,17 +120,14 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
         body: JSON.stringify(payload)
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'Không thể tạo tài khoản');
-      }
+      await readApiResponse(res);
 
       setRegSuccessMsg('Đăng ký thành công! Tài khoản đang chờ Quản lý thực tập sinh xét duyệt trước khi có thể đăng nhập.');
       setEmail(regForm.email);
       setPassword('');
       setIsRegisterMode(false);
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(getRequestError(err));
     } finally {
       setRegLoading(false);
     }
@@ -114,44 +139,34 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
     setErrorMsg('');
   };
 
+  const toggleAuthMode = () => {
+    setIsRegisterMode((mode) => !mode);
+    setErrorMsg('');
+    setRegSuccessMsg('');
+  };
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#f8fafc',
-      padding: '24px',
-      fontFamily: 'var(--font-family)'
-    }}>
-      <div style={{
-        width: '100%',
-        maxWidth: '440px',
-        background: '#ffffff',
-        borderRadius: '16px',
-        boxShadow: '0 4px 20px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04)',
-        border: '1px solid #e2e8f0',
-        padding: '36px 32px'
-      }}>
+    <main className="auth-page">
+      <div className={`auth-card ${isRegisterMode ? 'register-mode' : ''}`}>
+        <section className="auth-form-panel">
         {/* Brand Header */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+        <div className="auth-brand-header">
           <div style={{
             width: '46px',
             height: '46px',
             borderRadius: '12px',
-            background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+            background: 'linear-gradient(135deg, #6b63ee, #4f46d8)',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             color: 'white',
             marginBottom: '14px',
-            boxShadow: '0 4px 10px rgba(37, 99, 235, 0.2)'
+            boxShadow: '0 4px 10px rgba(79, 70, 216, 0.2)'
           }}>
             <Building2 size={24} />
           </div>
-          <h1 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.3px' }}>
-            Hệ thống Quản lý Thực tập sinh
-          </h1>
+          <div className="auth-brand-name">IMS PORTAL</div>
+          <h1>Hệ thống Quản lý Thực tập sinh</h1>
           <p style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>
             {isRegisterMode ? 'Đăng ký tài khoản Thực tập sinh' : 'Đăng nhập để vào hệ thống làm việc'}
           </p>
@@ -159,20 +174,20 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
         {/* Thông báo lỗi / thành công */}
         {sessionNotice && (
-          <div className="alert-banner error" style={{ marginBottom: '18px', padding: '10px 14px' }}>
+          <div className="alert-banner error auth-alert" role="alert">
             <AlertCircle size={16} style={{ flexShrink: 0 }} />
             <span style={{ fontSize: '13px' }}>{sessionNotice}</span>
           </div>
         )}
         {errorMsg && (
-          <div className="alert-banner error" style={{ marginBottom: '18px', padding: '10px 14px' }}>
+          <div className="alert-banner error auth-alert" role="alert">
             <AlertCircle size={16} style={{ flexShrink: 0 }} />
             <span style={{ fontSize: '13px' }}>{errorMsg}</span>
           </div>
         )}
 
         {regSuccessMsg && (
-          <div className="alert-banner success" style={{ marginBottom: '18px', padding: '10px 14px' }}>
+          <div className="alert-banner success auth-alert" role="status">
             <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
             <span style={{ fontSize: '13px' }}>{regSuccessMsg}</span>
           </div>
@@ -313,35 +328,9 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           </form>
         )}
 
-        {/* Chuyển đổi Đăng nhập / Đăng ký */}
-        <div style={{ textAlign: 'center', marginTop: '18px', paddingTop: '16px', borderTop: '1px solid #f1f5f9' }}>
-          <button
-            type="button"
-            onClick={() => {
-              setIsRegisterMode(!isRegisterMode);
-              setErrorMsg('');
-              setRegSuccessMsg('');
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#2563eb',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-          >
-            <span>{isRegisterMode ? 'Đã có tài khoản? Đăng nhập' : 'Chưa có tài khoản? Đăng ký Thực tập sinh'}</span>
-            <ArrowRight size={13} />
-          </button>
-        </div>
-
         {/* Chọn nhanh tài khoản test mẫu */}
         {!isRegisterMode && (
-          <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
+          <div className="auth-demo-accounts" style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
             <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, marginBottom: '8px', textAlign: 'center' }}>
               Tài khoản mẫu:
             </div>
@@ -381,7 +370,34 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             </div>
           </div>
         )}
+        </section>
+
+        <aside className={`auth-welcome-panel ${isRegisterMode ? 'is-register-mode' : ''}`}>
+          <div className="auth-welcome-brand"><Building2 size={18} /> IMS PORTAL</div>
+          <div className="auth-welcome-copy">
+            <span className="auth-welcome-kicker">HỆ THỐNG QUẢN LÝ THỰC TẬP</span>
+            <h2>{isRegisterMode ? 'Bắt đầu hành trình của bạn' : 'Chào mừng trở lại!'}</h2>
+            <p>{isRegisterMode
+              ? 'Tạo tài khoản để theo dõi hồ sơ và cập nhật quá trình thực tập của bạn.'
+              : 'Quản lý hồ sơ, chương trình và tiến độ thực tập trên cùng một nền tảng.'}</p>
+            <div className="auth-feature-list">
+              <span><CheckCircle2 size={17} /> Theo dõi tiến độ rõ ràng</span>
+              <span><CheckCircle2 size={17} /> Cập nhật thông tin tập trung</span>
+              <span><CheckCircle2 size={17} /> Kết nối thực tập sinh và mentor</span>
+            </div>
+          </div>
+          <div className="auth-welcome-action">
+            <p>{isRegisterMode ? 'Đã có tài khoản IMS Portal?' : 'Bạn chưa có tài khoản?'}</p>
+            <button type="button" className="auth-switch-button" onClick={toggleAuthMode}>
+              {isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'} <ArrowRight size={16} />
+            </button>
+          </div>
+        </aside>
       </div>
-    </div>
+      <div className="auth-mobile-switch">
+        <span>{isRegisterMode ? 'Đã có tài khoản?' : 'Bạn chưa có tài khoản?'}</span>
+        <button type="button" onClick={toggleAuthMode}>{isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'}</button>
+      </div>
+    </main>
   );
 }
