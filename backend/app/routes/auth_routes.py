@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Request, Query
+from fastapi import APIRouter, HTTPException, Depends, status, Request, Query, BackgroundTasks
 import sqlite3
 import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from ..database import get_db, hash_password, verify_password
 from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange
+from ..security import new_session_token, token_digest, require_role, publish_force_logout, session_connections
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & Security"])
 
@@ -133,7 +134,7 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     }
 
 @router.post("/login", response_model=Dict[str, Any])
-def login(data: UserLogin, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """Đăng nhập hệ thống & kiểm tra trạng thái phê duyệt"""
     client_ip = request.client.host if request.client else "127.0.0.1"
     email_clean = data.email.strip().lower()
@@ -208,7 +209,18 @@ def login(data: UserLogin, request: Request, db: sqlite3.Connection = Depends(ge
         "trang_thai": user["trang_thai"]
     }
 
-    session_token = f"sec_tok_{user['ma_nguoi_dung']}_{hash_password(user['email'])[-16:]}"
+    session_token, session_id = new_session_token()
+    cursor.execute("SELECT session_id FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (user["ma_nguoi_dung"],))
+    previous_session = cursor.fetchone()
+    cursor.execute("""
+        INSERT INTO ACTIVE_SESSIONS (ma_nguoi_dung, token_hash, session_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(ma_nguoi_dung) DO UPDATE SET
+            token_hash = excluded.token_hash, session_id = excluded.session_id
+    """, (user["ma_nguoi_dung"], token_digest(session_token), session_id))
+    db.commit()
+    if previous_session:
+        background_tasks.add_task(publish_force_logout, user["ma_nguoi_dung"], previous_session["session_id"])
 
     return {
         "message": "Đăng nhập thành công!",
@@ -222,7 +234,7 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
     Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng.
     Admin trực tiếp tạo tài khoản mới với vai trò và phòng ban được chỉ định.
     """
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -282,7 +294,7 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
     """
     Quản lý thực tập sinh (hoặc Admin) phê duyệt kích hoạt tài khoản
     """
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header not in ["Admin", "HR"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -310,7 +322,7 @@ def reject_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_
     """
     Quản lý thực tập sinh (hoặc Admin) từ chối / khóa tài khoản
     """
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header not in ["Admin", "HR"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -334,13 +346,13 @@ def reject_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_
     }
 
 @router.put("/users/{id}/role")
-def assign_role(id: int, data: RoleAssign, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """
     Yêu cầu: Admin có thể phân quyền cho các role dưới
     (Admin, Quản lý thực tập sinh [HR], Mentor, Thực tập sinh)
     Chỉ Admin mới có quyền thao tác.
     """
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -373,6 +385,13 @@ def assign_role(id: int, data: RoleAssign, request: Request, db: sqlite3.Connect
             """, (id,))
 
     db.commit()
+    cursor.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai, u.vai_tro,
+               u.trang_thai, u.ma_phong_ban, p.ten_phong_ban
+        FROM NGUOI_DUNG u LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban
+        WHERE u.ma_nguoi_dung = ?
+    """, (id,))
+    background_tasks.add_task(session_connections.publish, id, {"type": "ACCOUNT_UPDATED", "user": dict(cursor.fetchone())})
 
     return {
         "message": f"Admin đã phân quyền vai trò '{data.vai_tro}' cho người dùng {user['ho_ten']}",
@@ -381,9 +400,9 @@ def assign_role(id: int, data: RoleAssign, request: Request, db: sqlite3.Connect
     }
 
 @router.put("/users/{id}/status")
-def update_user_status(id: int, data: UserStatusUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def update_user_status(id: int, data: UserStatusUpdate, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """Cập nhật trạng thái người dùng (HoatDong, Khoa, ChoDuyet) - Chỉ Admin"""
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -403,13 +422,17 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, db: sq
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Không thể khóa tài khoản Quản trị viên gốc của hệ thống!")
 
     cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = ? WHERE ma_nguoi_dung = ?", (data.trang_thai, id))
+    if data.trang_thai != "HoatDong":
+        cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,))
     db.commit()
+    if data.trang_thai != "HoatDong":
+        background_tasks.add_task(session_connections.publish, id, {"type": "FORCE_LOGOUT", "message": "Tài khoản đã bị vô hiệu hóa."})
     return {"message": f"Admin đã cập nhật trạng thái của {user['ho_ten']} thành '{data.trang_thai}'!", "trang_thai": data.trang_thai}
 
 @router.delete("/users/{id}")
-def delete_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def delete_user(id: int, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """Xóa tài khoản người dùng - Chỉ Admin mới có quyền thực hiện"""
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -425,18 +448,32 @@ def delete_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
 
+    cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,))
     cursor.execute("DELETE FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
     db.commit()
+    background_tasks.add_task(session_connections.publish, id, {"type": "FORCE_LOGOUT", "message": "Tài khoản đã bị xóa."})
 
     return {"message": f"Admin đã xóa tài khoản {user['ho_ten']} thành công!", "ma_nguoi_dung": id}
 
 @router.post("/logout")
-def logout():
+def logout(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request)
+    token = request.headers.get("authorization", "").partition(" ")[2]
+    db.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ? AND token_hash = ?", (user["ma_nguoi_dung"], token_digest(token)))
+    db.commit()
     return {"message": "Đăng xuất thành công!", "status": "success"}
 
+
+@router.get("/me")
+def get_current_user(request: Request):
+    user = require_role(request).copy()
+    user.pop("session_id", None)
+    return user
+
 @router.put("/users/{user_id}/profile")
-def update_profile(user_id: int, data: UserProfileUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    if request.headers.get("x-user-id") != str(user_id):
+def update_profile(user_id: int, data: UserProfileUpdate, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request)
+    if user["ma_nguoi_dung"] != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể cập nhật thông tin tài khoản của mình.")
     if not data.ho_ten.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Họ và tên không được để trống.")
@@ -446,11 +483,16 @@ def update_profile(user_id: int, data: UserProfileUpdate, request: Request, db: 
     if cursor.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
     db.commit()
+    background_tasks.add_task(session_connections.publish, user_id, {
+        "type": "ACCOUNT_UPDATED",
+        "user": {key: value for key, value in {**user, "ho_ten": data.ho_ten.strip(), "so_dien_thoai": data.so_dien_thoai}.items() if key != "session_id"},
+    })
     return {"message": "Đã cập nhật thông tin tài khoản.", "ho_ten": data.ho_ten.strip(), "so_dien_thoai": data.so_dien_thoai}
 
 @router.put("/users/{user_id}/password")
-def change_password(user_id: int, data: PasswordChange, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    if request.headers.get("x-user-id") != str(user_id):
+def change_password(user_id: int, data: PasswordChange, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request)
+    if user["ma_nguoi_dung"] != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể đổi mật khẩu tài khoản của mình.")
     if len(data.mat_khau_moi) < 6:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu mới phải có tối thiểu 6 ký tự.")
@@ -462,7 +504,11 @@ def change_password(user_id: int, data: PasswordChange, request: Request, db: sq
     if not verify_password(data.mat_khau_hien_tai, user["mat_khau"]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không chính xác.")
     cursor.execute("UPDATE NGUOI_DUNG SET mat_khau = ? WHERE ma_nguoi_dung = ?", (hash_password(data.mat_khau_moi), user_id))
+    cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (user_id,))
     db.commit()
+    background_tasks.add_task(session_connections.publish, user_id, {
+        "type": "FORCE_LOGOUT", "message": "Mật khẩu đã được thay đổi. Vui lòng đăng nhập lại.",
+    })
     return {"message": "Đổi mật khẩu thành công."}
 
 @router.get("/users", response_model=list)
@@ -476,7 +522,7 @@ def get_all_users(
     Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng.
     Danh sách toàn bộ người dùng và vai trò chỉ phục vụ Quản trị viên (Admin).
     """
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -507,7 +553,7 @@ def get_all_users(
 @router.get("/security-audit-logs")
 def get_security_audit_logs(request: Request, db: sqlite3.Connection = Depends(get_db)):
     """Nhật ký bảo mật chỉ phục vụ Quản trị viên (Admin)"""
-    role_header = request.headers.get("x-user-role")
+    role_header = require_role(request)["vai_tro"]
     if role_header != "Admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

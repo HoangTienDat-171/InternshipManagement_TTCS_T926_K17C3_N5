@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
+import { apiFetch } from '../utils/api';
 
-export default function LoginView({ onLoginSuccess }) {
+export default function LoginView({ onLoginSuccess, sessionNotice }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   
   // Login Form State
@@ -29,7 +30,7 @@ export default function LoginView({ onLoginSuccess }) {
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -85,7 +86,7 @@ export default function LoginView({ onLoginSuccess }) {
         vai_tro: 'ThucTapSinh'
       };
 
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -157,6 +158,12 @@ export default function LoginView({ onLoginSuccess }) {
         </div>
 
         {/* Thông báo lỗi / thành công */}
+        {sessionNotice && (
+          <div className="alert-banner error" style={{ marginBottom: '18px', padding: '10px 14px' }}>
+            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '13px' }}>{sessionNotice}</span>
+          </div>
+        )}
         {errorMsg && (
           <div className="alert-banner error" style={{ marginBottom: '18px', padding: '10px 14px' }}>
             <AlertCircle size={16} style={{ flexShrink: 0 }} />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../utils/api';
 import { 
   Search, 
   UserPlus, 
@@ -47,7 +48,7 @@ export default function InternManagementView({
     if (filterPhongBan) params.append('ma_phong_ban', filterPhongBan);
     if (filterTruong) params.append('ma_truong', filterTruong);
 
-    const res = await fetch(`/api/interns?${params.toString()}`);
+    const res = await apiFetch(`/api/interns?${params.toString()}`);
     if (!res.ok) throw new Error('Không thể tải danh sách thực tập sinh');
     return res.json();
   }, [appliedSearch, filterDuyet, filterThucTap, filterPhongBan, filterTruong]);
@@ -114,9 +115,8 @@ export default function InternManagementView({
 
   const handleApproveIntern = async (intern) => {
     try {
-      const res = await fetch(`/api/auth/users/${intern.ma_nguoi_dung}/approve`, { 
+      const res = await apiFetch(`/api/auth/users/${intern.ma_nguoi_dung}/approve`, {
         method: 'PUT',
-        headers: { 'x-user-role': currentUser?.vai_tro || '' }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể duyệt');
@@ -129,9 +129,8 @@ export default function InternManagementView({
 
   const handleRejectIntern = async (intern) => {
     try {
-      const res = await fetch(`/api/auth/users/${intern.ma_nguoi_dung}/reject`, { 
+      const res = await apiFetch(`/api/auth/users/${intern.ma_nguoi_dung}/reject`, {
         method: 'PUT',
-        headers: { 'x-user-role': currentUser?.vai_tro || '' }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể từ chối');

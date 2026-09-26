@@ -3,6 +3,7 @@ import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCirc
 import PhoneField from '../components/PhoneField';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { isValidVietnamPhone } from '../utils/phone';
+import { apiFetch } from '../utils/api';
 
 export default function AccountManagementView({ departments, onShowToast, currentUser }) {
   const [users, setUsers] = useState([]);
@@ -28,13 +29,13 @@ export default function AccountManagementView({ departments, onShowToast, curren
 
   const requestUsers = useCallback(async () => {
     if (!isAdmin) return [];
-    const res = await fetch('/api/auth/users', { headers: { 'x-user-role': currentRole } });
+    const res = await apiFetch('/api/auth/users');
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.detail || 'Không thể tải danh sách tài khoản');
     }
     return res.json();
-  }, [isAdmin, currentRole]);
+  }, [isAdmin]);
 
   const fetchUsers = async () => {
     try {
@@ -100,11 +101,10 @@ export default function AccountManagementView({ departments, onShowToast, curren
         ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null
       };
 
-      const res = await fetch('/api/auth/users', {
+      const res = await apiFetch('/api/auth/users', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-user-role': currentUser?.vai_tro || ''
         },
         body: JSON.stringify(payload)
       });
@@ -135,11 +135,10 @@ export default function AccountManagementView({ departments, onShowToast, curren
   // Yêu cầu: Admin có thể phân quyền cho các role dưới
   const handleRoleChange = async (userId, newRole) => {
     try {
-      const res = await fetch(`/api/auth/users/${userId}/role`, {
+      const res = await apiFetch(`/api/auth/users/${userId}/role`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
-          'x-user-role': currentUser?.vai_tro || ''
         },
         body: JSON.stringify({ vai_tro: newRole })
       });
@@ -155,11 +154,10 @@ export default function AccountManagementView({ departments, onShowToast, curren
   const handleStatusChange = async (userId, newStatus) => {
     try {
       const endpoint = `/api/auth/users/${userId}/status`;
-      const res = await fetch(endpoint, { 
+      const res = await apiFetch(endpoint, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
-          'x-user-role': currentUser?.vai_tro || '' 
         },
         body: JSON.stringify({ trang_thai: newStatus })
       });
@@ -182,9 +180,8 @@ export default function AccountManagementView({ departments, onShowToast, curren
       return;
     }
     try {
-      const res = await fetch(`/api/auth/users/${userId}`, {
+      const res = await apiFetch(`/api/auth/users/${userId}`, {
         method: 'DELETE',
-        headers: { 'x-user-role': currentUser?.vai_tro || '' }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể xóa người dùng');

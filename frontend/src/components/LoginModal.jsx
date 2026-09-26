@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Lock, AlertCircle, ArrowRight } from 'lucide-react';
+import { apiFetch } from '../utils/api';
 
 export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchToRegister }) {
   const [email, setEmail] = useState('');
@@ -15,7 +16,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, mat_khau: password }),
@@ -26,6 +27,8 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
         throw new Error(data.detail || 'Đăng nhập không thành công');
       }
 
+      localStorage.setItem('ims_token', data.token);
+      localStorage.setItem('ims_user', JSON.stringify(data.user));
       onLoginSuccess(data.user, data.token);
       onClose();
     } catch (err) {

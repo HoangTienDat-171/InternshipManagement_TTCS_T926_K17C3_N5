@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserRound, Settings, KeyRound, Save, Bell, ShieldCheck, Mail, Building2 } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
+import { apiFetch } from '../utils/api';
 
 export default function AccountProfileView({ currentUser, initialSection = 'profile', onUserUpdated, onShowToast }) {
   const [section, setSection] = useState(initialSection);
@@ -24,8 +25,8 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
     if (profile.so_dien_thoai && !isValidVietnamPhone(profile.so_dien_thoai)) return onShowToast('Số điện thoại chưa đúng định dạng Việt Nam.', 'error');
     setSaving(true);
     try {
-      const response = await fetch(`/api/auth/users/${currentUser.ma_nguoi_dung}/profile`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-user-id': String(currentUser.ma_nguoi_dung) },
+      const response = await apiFetch(`/api/auth/users/${currentUser.ma_nguoi_dung}/profile`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profile)
       });
       const data = await response.json();
@@ -44,8 +45,8 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
     if (password.mat_khau_moi !== password.xac_nhan) return onShowToast('Mật khẩu xác nhận không khớp.', 'error');
     setSaving(true);
     try {
-      const response = await fetch(`/api/auth/users/${currentUser.ma_nguoi_dung}/password`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-user-id': String(currentUser.ma_nguoi_dung) },
+      const response = await apiFetch(`/api/auth/users/${currentUser.ma_nguoi_dung}/password`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mat_khau_hien_tai: password.mat_khau_hien_tai, mat_khau_moi: password.mat_khau_moi })
       });
       const data = await response.json();

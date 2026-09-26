@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import PhoneField from './PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
+import { apiFetch } from '../utils/api';
 
 const createEmptyForm = (departments, universities) => ({
   ho_ten: '',
@@ -34,7 +35,7 @@ export default function InternModal({
     if (!isOpen || !isEdit || !internId) return undefined;
 
     const controller = new AbortController();
-      fetch(`/api/interns/${internId}`, { signal: controller.signal })
+      apiFetch(`/api/interns/${internId}`, { signal: controller.signal })
         .then(async (res) => {
           if (!res.ok) throw new Error('Không thể tải thông tin thực tập sinh');
           return res.json();
@@ -97,7 +98,7 @@ export default function InternModal({
         method = 'PUT';
       }
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

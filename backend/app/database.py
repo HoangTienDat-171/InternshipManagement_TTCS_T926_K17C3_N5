@@ -85,6 +85,16 @@ def init_db():
     );
     """)
 
+    # One active opaque session per account. Tokens themselves are never stored.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ACTIVE_SESSIONS (
+        ma_nguoi_dung INTEGER PRIMARY KEY,
+        token_hash TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
+    );
+    """)
+
     # 4. Bảng Hồ Sơ Thực Tập (Khởi tạo & Xét duyệt)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS HO_SO_THUC_TAP (

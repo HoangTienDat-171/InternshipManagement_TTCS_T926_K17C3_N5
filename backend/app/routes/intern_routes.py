@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Query
+from fastapi import APIRouter, HTTPException, Depends, status, Query, Request
 import sqlite3
 import re
 from typing import List, Optional, Dict, Any
 from ..database import get_db, hash_password
 from ..schemas import InternCreate, InternUpdate, InternDetail
+from ..security import require_role
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
 
@@ -12,12 +13,13 @@ def validate_phone_number(phone: Optional[str]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
 
 @router.post("", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
-def create_intern(data: InternCreate, db: sqlite3.Connection = Depends(get_db)):
+def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection = Depends(get_db)):
     """
     US01 – Thêm mới hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API lưu thông tin vào CSDL (Backend).
     Tạo tài khoản NGUOI_DUNG với vai_tro='ThucTapSinh' và tạo bản ghi HO_SO_THUC_TAP.
     """
+    require_role(request, "Admin", "HR")
     validate_phone_number(data.so_dien_thoai)
     cursor = db.cursor()
 
@@ -90,11 +92,12 @@ def get_intern_by_id(id: int, db: sqlite3.Connection = Depends(get_db)):
     return dict(row)
 
 @router.put("/{id}", response_model=Dict[str, Any])
-def update_intern(id: int, data: InternUpdate, db: sqlite3.Connection = Depends(get_db)):
+def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
     """
     US02 – Cập nhật/Chỉnh sửa hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API Cập nhật (Update) dữ liệu.
     """
+    require_role(request, "Admin", "HR")
     validate_phone_number(data.so_dien_thoai)
     cursor = db.cursor()
     

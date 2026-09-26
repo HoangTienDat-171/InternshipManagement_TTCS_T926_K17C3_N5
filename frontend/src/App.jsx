@@ -9,6 +9,7 @@ import DocumentManagementView from './views/DocumentManagementView';
 import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { apiFetch } from './utils/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('interns');
@@ -17,11 +18,12 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const savedUser = localStorage.getItem('ims_user');
-      return savedUser ? JSON.parse(savedUser) : null;
+      return savedUser && localStorage.getItem('ims_token') ? JSON.parse(savedUser) : null;
     } catch {
       return null;
     }
   });
+  const currentUserId = currentUser?.ma_nguoi_dung;
 
   // Master data
   const [departments, setDepartments] = useState([]);
@@ -31,6 +33,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const [accountSection, setAccountSection] = useState('profile');
+  const [sessionNotice, setSessionNotice] = useState('');
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -42,29 +45,102 @@ export default function App() {
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
+  useEffect(() => {
+    if (!currentUserId) return;
+    apiFetch('/api/auth/me')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Phiên đăng nhập không còn hợp lệ.');
+        const user = await response.json();
+        localStorage.setItem('ims_user', JSON.stringify(user));
+        setCurrentUser(user);
+      })
+      .catch(() => {
+        localStorage.removeItem('ims_token');
+        localStorage.removeItem('ims_user');
+        setCurrentUser(null);
+        setSessionNotice('Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.');
+      });
+  }, [currentUserId]);
+
   // Load master data when authenticated
   useEffect(() => {
     if (currentUser) {
-      fetch('/api/master/departments')
+      apiFetch('/api/master/departments')
         .then(res => res.json())
         .then(data => setDepartments(data))
         .catch(err => console.error('Error fetching departments:', err));
 
-      fetch('/api/master/universities')
+      apiFetch('/api/master/universities')
         .then(res => res.json())
         .then(data => setUniversities(data))
         .catch(err => console.error('Error fetching universities:', err));
     }
   }, [currentUser]);
 
+  // Keep the current session connected for immediate revocation notices.
+  useEffect(() => {
+    const token = localStorage.getItem('ims_token');
+    if (!currentUserId || !token) return undefined;
+    let socket;
+    let reconnectTimer;
+    let heartbeatTimer;
+    let disposed = false;
+    const connect = () => {
+      if (disposed) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}/api/auth/events?token=${encodeURIComponent(token)}`);
+      socket.onopen = () => {
+        heartbeatTimer = window.setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
+        }, 15000);
+      };
+      socket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === 'FORCE_LOGOUT') {
+          disposed = true;
+          localStorage.removeItem('ims_token');
+          localStorage.removeItem('ims_user');
+          setCurrentUser(null);
+          setSessionNotice(message.message || 'Phiên đăng nhập đã bị kết thúc.');
+        } else if (message.type === 'ACCOUNT_UPDATED' && message.user) {
+          setCurrentUser((previous) => {
+            const updated = { ...previous, ...message.user };
+            localStorage.setItem('ims_user', JSON.stringify(updated));
+            return updated;
+          });
+        }
+      };
+      socket.onclose = (event) => {
+        window.clearInterval(heartbeatTimer);
+        if (event.code === 4401) {
+          disposed = true;
+          localStorage.removeItem('ims_token');
+          localStorage.removeItem('ims_user');
+          setCurrentUser(null);
+          setSessionNotice('Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.');
+        } else if (!disposed) {
+          reconnectTimer = window.setTimeout(connect, 2000);
+        }
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      window.clearTimeout(reconnectTimer);
+      window.clearInterval(heartbeatTimer);
+      socket?.close();
+    };
+  }, [currentUserId]);
+
   const handleLoginSuccess = (user) => {
+    setSessionNotice('');
     setCurrentUser(user);
     showToast(`Đăng nhập thành công! Chào mừng ${user.ho_ten}.`);
   };
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', { method: 'POST' });
     } catch {
       // ignore
     }
@@ -95,6 +171,7 @@ export default function App() {
       <LoginView
         onLoginSuccess={handleLoginSuccess}
         departments={departments}
+        sessionNotice={sessionNotice}
       />
     );
   }
