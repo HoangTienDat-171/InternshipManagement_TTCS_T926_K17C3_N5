@@ -60,6 +60,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
   const updatePreference = (key) => setPreferences((previous) => {
     const next = { ...previous, [key]: !previous[key] };
     localStorage.setItem('ims_preferences', JSON.stringify(next));
+    window.dispatchEvent(new CustomEvent('ims-preferences-change', { detail: next }));
     return next;
   });
 
@@ -86,8 +87,8 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
             <footer className="account-form-footer"><button className="btn btn-primary" disabled={saving}><Save size={16} />{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</button></footer>
           </form>}
           {section === 'settings' && <div className="account-settings-list">
-            <button className="setting-row" onClick={() => updatePreference('notifications')}><span className="setting-icon"><Bell size={17} /></span><span><strong>Thông báo trong hệ thống</strong><small>Hiển thị thông báo khi có cập nhật mới.</small></span><span className={`toggle-switch${preferences.notifications ? ' checked' : ''}`} aria-label={preferences.notifications ? 'Đang bật' : 'Đang tắt'} /></button>
-            <button className="setting-row" onClick={() => updatePreference('compact')}><span className="setting-icon"><Settings size={17} /></span><span><strong>Giao diện gọn</strong><small>Giảm khoảng cách giữa các mục trong danh sách.</small></span><span className={`toggle-switch${preferences.compact ? ' checked' : ''}`} aria-label={preferences.compact ? 'Đang bật' : 'Đang tắt'} /></button>
+            <button className="setting-row" onClick={() => updatePreference('notifications')}><span className="setting-icon"><Bell size={17} /></span><span><strong>Thông báo trên giao diện</strong><small>Bật hoặc tắt các thông báo trạng thái dạng toast.</small></span><span className={`toggle-switch${preferences.notifications ? ' checked' : ''}`} aria-label={preferences.notifications ? 'Đang bật' : 'Đang tắt'} /></button>
+            <button className="setting-row" onClick={() => updatePreference('compact')}><span className="setting-icon"><Settings size={17} /></span><span><strong>Giao diện gọn</strong><small>Giảm khoảng cách của bảng và thẻ trong trang quản lý.</small></span><span className={`toggle-switch${preferences.compact ? ' checked' : ''}`} aria-label={preferences.compact ? 'Đang bật' : 'Đang tắt'} /></button>
             <p className="settings-note">Tùy chọn được lưu trên thiết bị này.</p>
           </div>}
           {section === 'password' && <form className="password-form" onSubmit={changePassword}>

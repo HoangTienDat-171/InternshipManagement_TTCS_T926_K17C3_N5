@@ -1,212 +1,318 @@
-import React, { useState } from 'react';
-import { PlusCircle, Clock } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { apiFetch, readJsonResponse } from '../utils/api';
+import {
+  Check,
+  Clock,
+  Eye,
+  FileText,
+  Lock,
+  Pencil,
+  PlusCircle,
+  RefreshCw,
+  Send,
+  Users,
+  X,
+  XCircle,
+} from 'lucide-react';
+import ConfirmDialog from '../components/ConfirmDialog';
 
-export default function ProgramManagementView({ departments, onShowToast }) {
-  const [showAddForm, setShowAddForm] = useState(false);
+const emptyForm = {
+  ma_ct: '',
+  ten_ct: '',
+  ma_phong_ban: '',
+  ngay_bat_dau: '',
+  ngay_ket_thuc: '',
+  chi_tieu: 10,
+  mo_ta_cong_viec: '',
+  yeu_cau: '',
+};
 
-  const [programs, setPrograms] = useState([
-    {
-      id: 1,
-      ma_ct: 'CT-2026-SUMMER',
-      ten_ct: 'Chương trình Thực tập sinh Công nghệ Mùa Hè 2026',
-      phong_ban: 'Trung tâm Công nghệ Thông tin',
-      thoi_gian: '01/06/2026 - 31/08/2026',
-      chi_tieu: 20,
-      so_luong_hien_tai: 8,
-      trang_thai: 'DangMo'
-    },
-    {
-      id: 2,
-      ma_ct: 'CT-2026-AI',
-      ten_ct: 'Tài năng Trí tuệ Nhân tạo & Kỹ thuật Dữ liệu',
-      phong_ban: 'Phòng Dữ liệu & Trí tuệ nhân tạo (AI/Data)',
-      thoi_gian: '15/07/2026 - 15/10/2026',
-      chi_tieu: 10,
-      so_luong_hien_tai: 4,
-      trang_thai: 'DangMo'
+const statusLabels = {
+  DangMo: 'Đang nhận hồ sơ',
+  TamDung: 'Tạm dừng',
+  DaDong: 'Đã đóng',
+  ChoDuyet: 'Chờ duyệt',
+  DaDuyet: 'Đã duyệt',
+  TuChoi: 'Từ chối',
+};
+
+function StatusBadge({ status }) {
+  const badgeClass = status === 'DangMo' || status === 'DaDuyet'
+    ? 'badge-success'
+    : status === 'ChoDuyet' || status === 'TamDung'
+      ? 'badge-warning'
+      : 'badge-danger';
+  return <span className={`badge ${badgeClass}`}><span className="badge-dot" />{statusLabels[status] || status}</span>;
+}
+
+function formatDate(value) {
+  return value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN') : 'Chưa thiết lập';
+}
+
+export default function ProgramManagementView({ departments, onShowToast, currentUser }) {
+  const isAdmin = currentUser?.vai_tro === 'Admin';
+  const isManager = ['Admin', 'HR'].includes(currentUser?.vai_tro);
+  const isIntern = currentUser?.vai_tro === 'ThucTapSinh';
+
+  const [programs, setPrograms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editingProgram, setEditingProgram] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [detailProgram, setDetailProgram] = useState(null);
+  const [applicantProgram, setApplicantProgram] = useState(null);
+  const [applicationProgram, setApplicationProgram] = useState(null);
+  const [applicationCv, setApplicationCv] = useState(null);
+  const [applicants, setApplicants] = useState([]);
+  const [applicantsLoading, setApplicantsLoading] = useState(false);
+  const [pendingClose, setPendingClose] = useState(null);
+
+  const requestPrograms = useCallback(async () => {
+    const response = await apiFetch('/api/programs');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách chương trình.');
+    return data;
+  }, []);
+
+  const refreshPrograms = useCallback(async () => {
+    setLoading(true);
+    try {
+      setPrograms(await requestPrograms());
+      setErrorMsg('');
+    } catch (error) {
+      setErrorMsg(error.message);
+    } finally {
+      setLoading(false);
     }
-  ]);
+  }, [requestPrograms]);
 
-  const [form, setForm] = useState({
-    ten_ct: '',
-    ma_ct: '',
-    ma_phong_ban: '',
-    ngay_bat_dau: '',
-    ngay_ket_thuc: '',
-    chi_tieu: 10,
-    yeu_cau: '',
-    quyen_loi: ''
-  });
+  useEffect(() => {
+    let current = true;
+    requestPrograms().then((data) => {
+      if (current) setPrograms(data);
+    }).catch((error) => {
+      if (current) setErrorMsg(error.message);
+    }).finally(() => {
+      if (current) setLoading(false);
+    });
+    return () => { current = false; };
+  }, [requestPrograms]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm(prev => ({ ...prev, [name]: value }));
+  const resetForm = () => {
+    setForm(emptyForm);
+    setEditingProgram(null);
+    setShowForm(false);
   };
 
-  const handleCreateProgram = (e) => {
-    e.preventDefault();
-    const deptObj = departments.find(d => String(d.ma_phong_ban) === String(form.ma_phong_ban));
-    const newProg = {
-      id: Date.now(),
-      ma_ct: form.ma_ct || `CT-${Date.now().toString().slice(-4)}`,
-      ten_ct: form.ten_ct,
-      phong_ban: deptObj ? deptObj.ten_phong_ban : 'Trung tâm CNTT',
-      thoi_gian: `${form.ngay_bat_dau || '01/07/2026'} - ${form.ngay_ket_thuc || '30/09/2026'}`,
-      chi_tieu: parseInt(form.chi_tieu, 10) || 10,
-      so_luong_hien_tai: 0,
-      trang_thai: 'DangMo'
-    };
+  const openCreateForm = () => {
+    setEditingProgram(null);
+    setForm(emptyForm);
+    setShowForm(true);
+  };
 
-    setPrograms([newProg, ...programs]);
-    onShowToast(`Đã tạo chương trình: ${newProg.ten_ct}`);
+  const openEditForm = (program) => {
+    setEditingProgram(program);
     setForm({
-      ten_ct: '',
-      ma_ct: '',
-      ma_phong_ban: '',
-      ngay_bat_dau: '',
-      ngay_ket_thuc: '',
-      chi_tieu: 10,
-      yeu_cau: '',
-      quyen_loi: ''
+      ma_ct: program.ma_ct,
+      ten_ct: program.ten_ct,
+      ma_phong_ban: program.ma_phong_ban ? String(program.ma_phong_ban) : '',
+      ngay_bat_dau: program.ngay_bat_dau || '',
+      ngay_ket_thuc: program.ngay_ket_thuc || '',
+      chi_tieu: program.chi_tieu,
+      mo_ta_cong_viec: program.mo_ta_cong_viec || '',
+      yeu_cau: program.yeu_cau || '',
     });
-    setShowAddForm(false);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setForm((previous) => ({ ...previous, [name]: value }));
+  };
+
+  const handleSaveProgram = async (event) => {
+    event.preventDefault();
+    if (form.ngay_ket_thuc < form.ngay_bat_dau) {
+      onShowToast('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await apiFetch(
+        editingProgram ? `/api/programs/${editingProgram.ma_chuong_trinh}` : '/api/programs',
+        {
+          method: editingProgram ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...form,
+            ma_ct: form.ma_ct.trim(),
+            ten_ct: form.ten_ct.trim(),
+            ma_phong_ban: Number(form.ma_phong_ban),
+            chi_tieu: Number(form.chi_tieu),
+            mo_ta_cong_viec: form.mo_ta_cong_viec.trim(),
+            yeu_cau: form.yeu_cau.trim(),
+          }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Không thể lưu chương trình.');
+      onShowToast(data.message);
+      resetForm();
+      await refreshPrograms();
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleApply = async (event) => {
+    event.preventDefault();
+    if (!applicationProgram || !applicationCv) {
+      onShowToast('Vui lòng đính kèm CV để gửi hồ sơ.', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload = new FormData();
+      payload.append('cv', applicationCv);
+      const response = await apiFetch(`/api/programs/${applicationProgram.ma_chuong_trinh}/apply`, { method: 'POST', body: payload });
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể ứng tuyển chương trình.');
+      onShowToast(data.message);
+      setApplicationProgram(null);
+      setApplicationCv(null);
+      await refreshPrograms();
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const loadApplicants = async (program) => {
+    setApplicantProgram(program);
+    setApplicants([]);
+    setApplicantsLoading(true);
+    try {
+      const response = await apiFetch(`/api/programs/${program.ma_chuong_trinh}/applications`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách ứng viên.');
+      setApplicants(data);
+    } catch (error) {
+      onShowToast(error.message, 'error');
+      setApplicantProgram(null);
+    } finally {
+      setApplicantsLoading(false);
+    }
+  };
+
+  const reviewApplicant = async (application, status) => {
+    try {
+      const response = await apiFetch(
+        `/api/programs/${application.ma_chuong_trinh}/applications/${application.ma_ung_tuyen}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trang_thai: status }),
+        },
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Không thể cập nhật đơn ứng tuyển.');
+      onShowToast(data.message);
+      await loadApplicants(applicantProgram);
+      await refreshPrograms();
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    }
+  };
+
+  const closeProgram = async () => {
+    if (!pendingClose) return;
+    try {
+      const response = await apiFetch(`/api/programs/${pendingClose.ma_chuong_trinh}/close`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Không thể đóng chương trình.');
+      onShowToast(data.message);
+      setPendingClose(null);
+      await refreshPrograms();
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    }
   };
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+    <div className="program-management-page">
+      <div className="program-page-heading">
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>Chương trình Thực tập</h2>
-          <p style={{ fontSize: '13px', color: '#64748b' }}>
-            Thiết lập và quản lý các đợt thực tập và kế hoạch tiếp nhận sinh viên
-          </p>
+          <h2>{isIntern ? 'Chương trình thực tập đang mở' : 'Chương trình Thực tập'}</h2>
+          <p>{isIntern ? 'Khám phá và đăng ký các chương trình phù hợp với hồ sơ của bạn' : 'Thiết lập các đợt thực tập và quản lý danh sách ứng viên'}</p>
         </div>
-
-        <button 
-          className="btn btn-primary"
-          onClick={() => setShowAddForm(!showAddForm)}
-        >
-          <PlusCircle size={16} />
-          <span>{showAddForm ? 'Đóng biểu mẫu' : 'Tạo chương trình'}</span>
-        </button>
+        {isAdmin && (
+          <button type="button" className="btn btn-primary" onClick={showForm ? resetForm : openCreateForm}>
+            {showForm ? <X size={16} /> : <PlusCircle size={16} />}
+            <span>{showForm ? 'Đóng biểu mẫu' : 'Tạo chương trình'}</span>
+          </button>
+        )}
       </div>
 
-      {showAddForm && (
-        <div className="card" style={{ marginBottom: '24px' }}>
+      {isAdmin && showForm && (
+        <div className="card program-form-card">
           <div className="card-header">
-            <div className="card-title-box">
-              <h2>Tạo mới chương trình thực tập</h2>
-            </div>
+            <div className="card-title-box"><h2>{editingProgram ? 'Chỉnh sửa chương trình' : 'Tạo mới chương trình thực tập'}</h2></div>
           </div>
           <div className="card-body">
-            <form onSubmit={handleCreateProgram} className="form-grid">
+            <form onSubmit={handleSaveProgram} className="form-grid program-form-grid">
               <div className="form-group">
-                <label className="form-label">
-                  Tên chương trình <span className="required">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="ten_ct"
-                  className="form-control"
-                  placeholder="Ví dụ: Thực tập sinh Công nghệ Mùa Hè 2026"
-                  required
-                  value={form.ten_ct}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Mã CT <span className="required">*</span></label>
+                <input type="text" name="ma_ct" className="form-control" maxLength="40" required
+                  placeholder="CT-2026-01" value={form.ma_ct} onChange={handleChange} />
               </div>
-
               <div className="form-group">
-                <label className="form-label">Mã chương trình</label>
-                <input
-                  type="text"
-                  name="ma_ct"
-                  className="form-control"
-                  placeholder="CT-2026-01"
-                  value={form.ma_ct}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Tên chương trình <span className="required">*</span></label>
+                <input type="text" name="ten_ct" className="form-control" maxLength="200" required
+                  placeholder="Thực tập Backend mùa hè 2026" value={form.ten_ct} onChange={handleChange} />
               </div>
-
               <div className="form-group">
-                <label className="form-label">Phòng ban</label>
-                <select
-                  name="ma_phong_ban"
-                  className="form-select"
-                  value={form.ma_phong_ban}
-                  onChange={handleChange}
-                >
+                <label className="form-label">Phòng ban <span className="required">*</span></label>
+                <select name="ma_phong_ban" className="form-select" required value={form.ma_phong_ban} onChange={handleChange}>
                   <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((d) => (
-                    <option key={d.ma_phong_ban} value={d.ma_phong_ban}>
-                      {d.ten_phong_ban}
-                    </option>
+                  {departments.map((department) => (
+                    <option key={department.ma_phong_ban} value={department.ma_phong_ban}>{department.ten_phong_ban}</option>
                   ))}
                 </select>
               </div>
-
               <div className="form-group">
-                <label className="form-label">Chỉ tiêu tiếp nhận</label>
-                <input
-                  type="number"
-                  name="chi_tieu"
-                  className="form-control"
-                  min="1"
-                  value={form.chi_tieu}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Chỉ tiêu số lượng <span className="required">*</span></label>
+                <input type="number" name="chi_tieu" className="form-control" min="1" required value={form.chi_tieu} onChange={handleChange} />
               </div>
-
               <div className="form-group">
-                <label className="form-label">Ngày bắt đầu</label>
-                <input
-                  type="date"
-                  name="ngay_bat_dau"
-                  className="form-control"
-                  value={form.ngay_bat_dau}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Thời gian bắt đầu <span className="required">*</span></label>
+                <input type="date" name="ngay_bat_dau" className="form-control" required value={form.ngay_bat_dau} onChange={handleChange} />
               </div>
-
               <div className="form-group">
-                <label className="form-label">Ngày kết thúc</label>
-                <input
-                  type="date"
-                  name="ngay_ket_thuc"
-                  className="form-control"
-                  value={form.ngay_ket_thuc}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Thời gian kết thúc <span className="required">*</span></label>
+                <input type="date" name="ngay_ket_thuc" className="form-control" min={form.ngay_bat_dau || undefined}
+                  required value={form.ngay_ket_thuc} onChange={handleChange} />
               </div>
-
               <div className="form-group form-full">
-                <label className="form-label">Yêu cầu tuyển chọn</label>
-                <textarea
-                  name="yeu_cau"
-                  className="form-textarea"
-                  placeholder="Sinh viên năm 3, 4 có kiến thức cơ bản về lập trình..."
-                  value={form.yeu_cau}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Mô tả công việc <span className="required">*</span></label>
+                <textarea name="mo_ta_cong_viec" className="form-textarea" rows="4" required
+                  placeholder="Mô tả nhiệm vụ, công nghệ và phạm vi công việc..." value={form.mo_ta_cong_viec} onChange={handleChange} />
               </div>
-
               <div className="form-group form-full">
-                <label className="form-label">Quyền lợi & Phụ cấp</label>
-                <textarea
-                  name="quyen_loi"
-                  className="form-textarea"
-                  placeholder="Phụ cấp hàng tháng, có mentor hướng dẫn..."
-                  value={form.quyen_loi}
-                  onChange={handleChange}
-                />
+                <label className="form-label">Yêu cầu ứng viên <span className="required">*</span></label>
+                <textarea name="yeu_cau" className="form-textarea" rows="4" required
+                  placeholder="Kiến thức, kỹ năng và điều kiện ứng tuyển..." value={form.yeu_cau} onChange={handleChange} />
               </div>
-
-              <div className="form-full" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddForm(false)}>
-                  Hủy
-                </button>
-                <button type="submit" className="btn btn-primary btn-sm">
-                  <PlusCircle size={15} />
-                  <span>Xác nhận tạo</span>
+              <div className="form-full program-form-actions">
+                <button type="button" className="btn btn-secondary" onClick={resetForm} disabled={submitting}>Hủy</button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {editingProgram ? <Pencil size={15} /> : <PlusCircle size={15} />}
+                  <span>{submitting ? 'Đang lưu...' : editingProgram ? 'Lưu thay đổi' : 'Xác nhận tạo'}</span>
                 </button>
               </div>
             </form>
@@ -214,56 +320,128 @@ export default function ProgramManagementView({ departments, onShowToast }) {
         </div>
       )}
 
-      {/* Danh sách chương trình */}
-      <div className="card">
+      <div className="card program-list-card">
         <div className="card-header">
-          <div className="card-title-box">
-            <h2>Các chương trình đào tạo ({programs.length})</h2>
-          </div>
+          <div className="card-title-box"><h2>{isIntern ? 'Danh sách chương trình đang mở' : 'Các chương trình đào tạo'}{loading || errorMsg ? '' : ` (${programs.length})`}</h2></div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshPrograms} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span>Làm mới</span>
+          </button>
         </div>
-
-        <div className="table-responsive">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Mã CT</th>
-                <th>Tên chương trình</th>
-                <th>Phòng ban</th>
-                <th>Thời gian</th>
-                <th>Chỉ tiêu & Hiện tại</th>
-                <th>Trạng thái</th>
-              </tr>
-            </thead>
+        <div className="table-responsive program-table-scroll">
+          <table className="data-table program-data-table">
+            <thead><tr>
+              <th>Mã CT</th><th>Tên chương trình</th><th>Phòng ban</th><th>Thời gian</th>
+              <th>Chỉ tiêu</th>{isManager && <th>Ứng viên</th>}<th>Trạng thái</th><th>Thao tác</th>
+            </tr></thead>
             <tbody>
-              {programs.map((p) => (
-                <tr key={p.id}>
-                  <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{p.ma_ct}</td>
-                  <td>
-                    <div style={{ fontWeight: 600, color: '#0f172a' }}>{p.ten_ct}</div>
-                  </td>
-                  <td>{p.phong_ban}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
-                      <Clock size={13} color="var(--text-subtle)" />
-                      <span>{p.thoi_gian}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 600 }}>
-                      {p.so_luong_hien_tai} / {p.chi_tieu} ứng viên
-                    </div>
-                  </td>
-                  <td>
-                    <span className="badge badge-success">
-                      <span className="badge-dot" /> Đang nhận hồ sơ
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {loading ? <tr><td colSpan={isManager ? 8 : 7} className="program-empty-cell">Đang tải dữ liệu...</td></tr>
+                : errorMsg ? <tr><td colSpan={isManager ? 8 : 7} className="program-empty-cell program-error-cell">{errorMsg}</td></tr>
+                  : programs.length === 0 ? <tr><td colSpan={isManager ? 8 : 7} className="program-empty-cell">{isIntern ? 'Hiện chưa có chương trình nào đang mở.' : 'Chưa có chương trình thực tập.'}</td></tr>
+                    : programs.map((program) => (
+                      <tr key={program.ma_chuong_trinh}>
+                        <td className="program-code-cell">{program.ma_ct}</td>
+                        <td><strong>{program.ten_ct}</strong></td>
+                        <td>{program.phong_ban || 'Chưa phân phòng'}</td>
+                        <td><span className="program-date"><Clock size={13} />{formatDate(program.ngay_bat_dau)} – {formatDate(program.ngay_ket_thuc)}</span></td>
+                        <td><strong>{program.chi_tieu}</strong></td>
+                        {isManager && <td><span className="program-applicant-count">{program.so_ung_vien} hồ sơ{program.so_cho_duyet > 0 ? ` · ${program.so_cho_duyet} chờ` : ''}</span></td>}
+                        <td>{isIntern && program.trang_thai_ung_tuyen ? <StatusBadge status={program.trang_thai_ung_tuyen} /> : <StatusBadge status={program.trang_thai} />}</td>
+                        <td><div className="program-row-actions">
+                          <button type="button" className="btn btn-secondary btn-sm" title="Xem chi tiết" onClick={() => setDetailProgram(program)}><Eye size={13} /><span>Chi tiết</span></button>
+                          {isManager && <button type="button" className="btn btn-secondary btn-sm" title="Danh sách ứng viên" onClick={() => loadApplicants(program)}><Users size={13} /><span>Ứng viên</span></button>}
+                          {isAdmin && <button type="button" className="btn btn-outline-primary btn-sm" title="Chỉnh sửa" onClick={() => openEditForm(program)}><Pencil size={13} /><span>Sửa</span></button>}
+                          {isAdmin && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
+                          {isIntern && (program.trang_thai_ung_tuyen
+                            ? <button type="button" className="btn btn-secondary btn-sm" disabled title="Bạn đã gửi hồ sơ cho chương trình này"><Check size={13} /><span>Đã ứng tuyển</span></button>
+                            : <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={() => { setApplicationCv(null); setApplicationProgram(program); }}><Send size={13} /><span>Ứng tuyển & nộp CV</span></button>)}
+                        </div></td>
+                      </tr>
+                    ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {detailProgram && (
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && setDetailProgram(null)}>
+          <section className="modal-container program-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="program-detail-title">
+            <div className="modal-header">
+              <div><h3 id="program-detail-title">{detailProgram.ten_ct}</h3><p>{detailProgram.ma_ct} · {detailProgram.phong_ban}</p></div>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={() => setDetailProgram(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body program-detail-body">
+              <div className="program-detail-meta">
+                <span><strong>Thời gian</strong>{formatDate(detailProgram.ngay_bat_dau)} – {formatDate(detailProgram.ngay_ket_thuc)}</span>
+                <span><strong>Chỉ tiêu</strong>{detailProgram.chi_tieu} thực tập sinh</span>
+                <span><strong>Trạng thái</strong><StatusBadge status={detailProgram.trang_thai_ung_tuyen || detailProgram.trang_thai} /></span>
+              </div>
+              <div><h4>Mô tả công việc</h4><p>{detailProgram.mo_ta_cong_viec || 'Chưa cập nhật.'}</p></div>
+              <div><h4>Yêu cầu ứng viên</h4><p>{detailProgram.yeu_cau || 'Chưa cập nhật.'}</p></div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {applicantProgram && (
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApplicantProgram(null)}>
+          <section className="modal-container program-applicants-dialog" role="dialog" aria-modal="true" aria-labelledby="program-applicants-title">
+            <div className="modal-header">
+              <div><h3 id="program-applicants-title">Danh sách ứng viên</h3><p>{applicantProgram.ten_ct}</p></div>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={() => setApplicantProgram(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body program-applicants-body">
+              {applicantsLoading ? <div className="program-modal-message">Đang tải danh sách...</div>
+                : applicants.length === 0 ? <div className="program-modal-message">Chưa có ứng viên đăng ký.</div>
+                  : <div className="table-responsive"><table className="data-table program-applicants-table">
+                    <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th>{isAdmin && <th>Thao tác</th>}</tr></thead>
+                    <tbody>{applicants.map((application) => <tr key={application.ma_ung_tuyen}>
+                      <td><strong>{application.ho_ten}</strong><small>{application.email}<br />{application.so_dien_thoai || 'Chưa có SĐT'}</small></td>
+                      <td>{application.ten_truong || 'Chưa cập nhật'}<small>{application.chuyen_nganh || 'Chưa cập nhật'}</small></td>
+                      <td>{application.ngay_ung_tuyen ? new Date(application.ngay_ung_tuyen).toLocaleString('vi-VN') : '—'}</td>
+                      <td><StatusBadge status={application.trang_thai} /></td>
+                      {isAdmin && <td>{application.trang_thai === 'ChoDuyet' ? <div className="program-row-actions">
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => reviewApplicant(application, 'TuChoi')}><XCircle size={13} />Từ chối</button>
+                      </div> : <span className="program-applicant-count">Đã xử lý</span>}</td>}
+                    </tr>)}</tbody>
+                  </table></div>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {applicationProgram && (
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApplicationProgram(null)}>
+          <section className="modal-container program-apply-dialog" role="dialog" aria-modal="true" aria-labelledby="program-apply-title">
+            <div className="modal-header">
+              <div><h3 id="program-apply-title">Ứng tuyển chương trình</h3><p>{applicationProgram.ten_ct} · {applicationProgram.ma_ct}</p></div>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={() => setApplicationProgram(null)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleApply}>
+              <div className="modal-body program-apply-body">
+                  <div className="apply-confirm-card"><Users size={19} /><span>Chọn CV riêng cho chương trình <strong>{applicationProgram.ten_ct}</strong>. Hồ sơ sẽ được gửi và hiển thị trạng thái <strong>Chờ duyệt</strong>.</span></div>
+                <label className="apply-cv-dropzone">
+                  <input type="file" accept=".pdf,.docx,.png" required onChange={(event) => setApplicationCv(event.target.files?.[0] || null)} />
+                  <span className="apply-cv-icon"><FileText size={21} /></span>
+                  <strong>{applicationCv?.name || 'Đính kèm CV ứng tuyển'}</strong>
+                  <small>PDF, DOCX hoặc PNG · tối đa 15 MB</small>
+                </label>
+              </div>
+              <div className="modal-footer"><button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => setApplicationProgram(null)}>Hủy</button><button type="submit" className="btn btn-primary" disabled={submitting || !applicationCv}><Send size={15} />{submitting ? 'Đang gửi hồ sơ…' : 'Gửi hồ sơ'}</button></div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(pendingClose)}
+        title="Đóng đợt thực tập?"
+        message={pendingClose ? `Chương trình “${pendingClose.ten_ct}” sẽ ngừng nhận hồ sơ mới.` : ''}
+        confirmLabel="Đóng đợt"
+        danger
+        onConfirm={closeProgram}
+        onCancel={() => setPendingClose(null)}
+      />
     </div>
   );
 }

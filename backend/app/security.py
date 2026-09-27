@@ -1,12 +1,11 @@
 """Opaque, server-validated sessions and realtime session notifications."""
 import hashlib
 import secrets
-import sqlite3
 from typing import Any
 
 from fastapi import HTTPException, Request, status, WebSocket
 
-from .database import DB_FILE
+from .database import get_db_connection
 
 
 def token_digest(token: str) -> str:
@@ -14,8 +13,7 @@ def token_digest(token: str) -> str:
 
 
 def get_session_user(token: str) -> dict[str, Any] | None:
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     try:
         row = conn.execute("""
             SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
@@ -75,6 +73,10 @@ async def publish_force_logout(user_id: int, session_id: str | None = None):
         "type": "FORCE_LOGOUT",
         "message": "Tài khoản của bạn vừa được đăng nhập trên một thiết bị khác.",
     }, session_id)
+
+
+async def publish_workspace_updated(user_id: int):
+    await session_connections.publish(user_id, {"type": "WORKSPACE_UPDATED"})
 
 
 def new_session_token() -> tuple[str, str]:

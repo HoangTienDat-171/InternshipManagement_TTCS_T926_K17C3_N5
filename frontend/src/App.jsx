@@ -8,6 +8,8 @@ import ProgramManagementView from './views/ProgramManagementView';
 import DocumentManagementView from './views/DocumentManagementView';
 import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
+import InternWorkspaceView from './views/InternWorkspaceView';
+import MentorWorkspaceView from './views/MentorWorkspaceView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -24,6 +26,17 @@ export default function App() {
     }
   });
   const currentUserId = currentUser?.ma_nguoi_dung;
+  const canManageRecords = ['Admin', 'HR'].includes(currentUser?.vai_tro);
+  const personalWorkspace = currentUser?.vai_tro === 'Mentor'
+    ? 'mentor-workspace'
+    : currentUser?.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : 'profile';
+  const visibleActiveTab = currentUser && (
+    (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
+    || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+    || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
+  )
+    ? personalWorkspace
+    : activeTab;
 
   // Master data
   const [departments, setDepartments] = useState([]);
@@ -32,10 +45,17 @@ export default function App() {
   // Toast notifications
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  const [compactLayout, setCompactLayout] = useState(() => {
+    try { return Boolean(JSON.parse(localStorage.getItem('ims_preferences'))?.compact); }
+    catch { return false; }
+  });
   const [accountSection, setAccountSection] = useState('profile');
   const [sessionNotice, setSessionNotice] = useState('');
 
   const showToast = (message, type = 'success') => {
+    try {
+      if (JSON.parse(localStorage.getItem('ims_preferences'))?.notifications === false) return;
+    } catch { /* Use the default enabled setting when preferences are unreadable. */ }
     setToast({ message, type });
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => {
@@ -44,6 +64,12 @@ export default function App() {
   };
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+  useEffect(() => {
+    const handlePreferencesChange = (event) => setCompactLayout(Boolean(event.detail?.compact));
+    window.addEventListener('ims-preferences-change', handlePreferencesChange);
+    return () => window.removeEventListener('ims-preferences-change', handlePreferencesChange);
+  }, []);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -66,14 +92,28 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       apiFetch('/api/master/departments')
-        .then(res => res.json())
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok || !Array.isArray(data)) throw new Error(data.detail || 'Không thể tải danh sách phòng ban.');
+          return data;
+        })
         .then(data => setDepartments(data))
-        .catch(err => console.error('Error fetching departments:', err));
+        .catch(err => {
+          setDepartments([]);
+          console.error('Error fetching departments:', err);
+        });
 
       apiFetch('/api/master/universities')
-        .then(res => res.json())
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok || !Array.isArray(data)) throw new Error(data.detail || 'Không thể tải danh sách trường đại học.');
+          return data;
+        })
         .then(data => setUniversities(data))
-        .catch(err => console.error('Error fetching universities:', err));
+        .catch(err => {
+          setUniversities([]);
+          console.error('Error fetching universities:', err);
+        });
     }
   }, [currentUser]);
 
@@ -108,6 +148,8 @@ export default function App() {
             localStorage.setItem('ims_user', JSON.stringify(updated));
             return updated;
           });
+        } else if (message.type === 'WORKSPACE_UPDATED') {
+          window.dispatchEvent(new CustomEvent('ims-workspace-updated'));
         }
       };
       socket.onclose = (event) => {
@@ -150,21 +192,6 @@ export default function App() {
     showToast('Đã đăng xuất khỏi hệ thống.');
   };
 
-  const handleSwitchRole = (newRole) => {
-    const roleProfiles = {
-      Admin: { ma_nguoi_dung: 1, ho_ten: 'Quản Trị Viên Hệ Thống', email: 'admin@internship.vn', vai_tro: 'Admin', ten_phong_ban: 'Trung tâm CNTT' },
-      HR: { ma_nguoi_dung: 2, ho_ten: 'Trần Thu Hà', email: 'hr@internship.vn', vai_tro: 'HR', ten_phong_ban: 'Trung tâm CNTT' },
-      Mentor: { ma_nguoi_dung: 3, ho_ten: 'Nguyễn Văn Hướng', email: 'mentor@internship.vn', vai_tro: 'Mentor', ten_phong_ban: 'Trung tâm CNTT' },
-      ThucTapSinh: { ma_nguoi_dung: 4, ho_ten: 'Lê Minh Tuấn', email: 'tuan.lm@internship.vn', vai_tro: 'ThucTapSinh', ten_phong_ban: 'Trung tâm CNTT' }
-    };
-
-    const targetUser = roleProfiles[newRole] || { ...currentUser, vai_tro: newRole };
-    setCurrentUser(targetUser);
-    if (newRole !== 'Admin' && activeTab === 'accounts') setActiveTab('interns');
-    localStorage.setItem('ims_user', JSON.stringify(targetUser));
-    showToast(`Đã chuyển vai trò: ${targetUser.ho_ten} (${newRole})`);
-  };
-
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
   if (!currentUser) {
     return (
@@ -178,7 +205,7 @@ export default function App() {
 
   // TRANG CHỦ HỆ THỐNG
   return (
-    <div className="app-layout">
+    <div className={`app-layout${compactLayout ? ' compact' : ''}`}>
       {/* Toast Notification */}
       {toast && (
         <div style={{
@@ -205,7 +232,7 @@ export default function App() {
 
       {/* Sidebar */}
       <Sidebar 
-        activeTab={activeTab} 
+        activeTab={visibleActiveTab}
         onTabChange={setActiveTab}
         currentUser={currentUser}
       />
@@ -216,12 +243,11 @@ export default function App() {
         <Navbar
           currentUser={currentUser}
           onLogout={handleLogout}
-          onSwitchRole={handleSwitchRole}
           onOpenAccount={(section) => { setAccountSection(section); setActiveTab('profile'); }}
         />
 
         <main className="content-wrapper">
-          {activeTab === 'interns' && (
+          {canManageRecords && visibleActiveTab === 'interns' && (
             <InternManagementView
               departments={departments}
               universities={universities}
@@ -230,27 +256,30 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'mentors' && (
+          {canManageRecords && visibleActiveTab === 'mentors' && (
             <MentorManagementView
               departments={departments}
               onShowToast={showToast}
+              currentUser={currentUser}
             />
           )}
 
-          {activeTab === 'programs' && (
+          {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'programs' && (
             <ProgramManagementView
               departments={departments}
               onShowToast={showToast}
+              currentUser={currentUser}
             />
           )}
 
-          {activeTab === 'documents' && (
+          {canManageRecords && visibleActiveTab === 'documents' && (
             <DocumentManagementView
+              currentUser={currentUser}
               onShowToast={showToast}
             />
           )}
 
-          {activeTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
+          {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
             <AccountManagementView
               departments={departments}
               onShowToast={showToast}
@@ -258,7 +287,15 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'profile' && (
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-dashboard' && (
+            <InternWorkspaceView currentUser={currentUser} />
+          )}
+
+          {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
+            <MentorWorkspaceView currentUser={currentUser} />
+          )}
+
+          {visibleActiveTab === 'profile' && (
             <AccountProfileView
               key={accountSection}
               initialSection={accountSection}

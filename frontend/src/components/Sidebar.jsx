@@ -5,13 +5,22 @@ import {
   FolderUp, 
   ShieldCheck, 
   Building2,
-  GraduationCap
+  GraduationCap,
+  LayoutDashboard,
+  UsersRound
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, onTabChange, currentUser }) {
   const isAdmin = currentUser?.vai_tro === 'Admin';
+  const canManage = isAdmin || currentUser?.vai_tro === 'HR';
+  const canViewPrograms = canManage || currentUser?.vai_tro === 'ThucTapSinh';
+  const isIntern = currentUser?.vai_tro === 'ThucTapSinh';
+  const isMentor = currentUser?.vai_tro === 'Mentor';
 
   const navItems = [
+    ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
+    ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
+    ...(canManage ? [
     {
       id: 'interns',
       label: 'Quản lý Thực tập sinh',
@@ -21,17 +30,17 @@ export default function Sidebar({ activeTab, onTabChange, currentUser }) {
       id: 'mentors',
       label: 'Quản lý Mentor',
       icon: <UserCheck size={18} />
-    },
-    {
+    }] : []),
+    ...(canViewPrograms ? [{
       id: 'programs',
-      label: 'Chương trình thực tập',
+      label: canManage ? 'Chương trình thực tập' : 'Chương trình đang mở',
       icon: <Calendar size={18} />
-    },
-    {
+    }] : []),
+    ...(canManage ? [{
       id: 'documents',
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
-    },
+    }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
       id: 'accounts',
