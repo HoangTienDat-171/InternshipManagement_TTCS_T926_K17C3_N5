@@ -1,13 +1,61 @@
-import React, { useState } from 'react';
-import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown, Bell } from 'lucide-react';
+import { apiFetch } from '../utils/api';
 
 export default function Navbar({ 
   currentUser, 
   onLogout, 
-  onSwitchRole,
   onOpenAccount
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState('');
+  const userId = currentUser?.ma_nguoi_dung;
+
+  const loadNotifications = useCallback(async () => {
+    if (!userId) return;
+    setNotificationsLoading(true);
+    setNotificationsError('');
+    try {
+      const response = await apiFetch('/api/notifications');
+      if (!response.ok) throw new Error('Không tải được thông báo.');
+      setNotifications(await response.json());
+    } catch (error) {
+      setNotificationsError(error.message || 'Không tải được thông báo.');
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => loadNotifications(), 0);
+    const refreshTimer = window.setInterval(loadNotifications, 60000);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(refreshTimer);
+    };
+  }, [loadNotifications]);
+
+  const markNotificationRead = async (notificationId) => {
+    try {
+      const response = await apiFetch(`/api/notifications/${notificationId}/read`, { method: 'PUT' });
+      if (!response.ok) throw new Error('Không thể cập nhật thông báo.');
+      setNotifications((items) => items.map((item) => item.ma_thong_bao === notificationId ? { ...item, da_doc: 1 } : item));
+    } catch (error) {
+      setNotificationsError(error.message || 'Không thể cập nhật thông báo.');
+    }
+  };
+
+  const formatNotificationDate = (value) => {
+    if (!value) return '';
+    const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+    const date = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(normalized) ? normalized : `${normalized}Z`);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
+  };
+
+  const unreadCount = notifications.filter((item) => !item.da_doc).length;
   const getRoleBadge = (role) => {
     switch (role) {
       case 'Admin':
@@ -34,21 +82,32 @@ export default function Navbar({
       </div>
 
       <div className="navbar-actions">
-        {/* Vai trò */}
-        <div className="role-switcher" title="Chuyển đổi góc nhìn vai trò">
-          <span className="role-switcher-label">Vai trò:</span>
-          <select 
-            className="role-select"
-            value={currentUser?.vai_tro || 'HR'}
-            onChange={(e) => onSwitchRole(e.target.value)}
-          >
-            <option value="Admin">Admin</option>
-            <option value="HR">Quản lý thực tập sinh</option>
-            <option value="Mentor">Mentor</option>
-            <option value="ThucTapSinh">Thực tập sinh</option>
-          </select>
-        </div>
-
+        {currentUser && (
+          <div className="notification-menu-wrap">
+            <button type="button" className="notification-trigger" aria-label="Thông báo" aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen((open) => !open); setMenuOpen(false); if (!notificationsOpen) loadNotifications(); }}>
+              <Bell size={19} />
+              {unreadCount > 0 && <span className="notification-count">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+            </button>
+            {notificationsOpen && <>
+              <button className="notification-dismiss" aria-label="Đóng thông báo" onClick={() => setNotificationsOpen(false)} />
+              <section className="notification-panel" aria-label="Danh sách thông báo">
+                <div className="notification-panel-heading"><strong>Thông báo</strong><button type="button" onClick={loadNotifications}>Làm mới</button></div>
+                {notificationsError && <p className="notification-message notification-error">{notificationsError}</p>}
+                {notificationsLoading && notifications.length === 0 ? <p className="notification-message">Đang tải thông báo…</p> : notifications.length === 0 ? <p className="notification-message">Bạn chưa có thông báo.</p> : (
+                  <div className="notification-list">
+                    {notifications.map((item) => (
+                      <button type="button" key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`} onClick={() => item.da_doc ? null : markNotificationRead(item.ma_thong_bao)}>
+                        <span className="notification-item-title">{item.tieu_de}</span>
+                        <span>{item.noi_dung}</span>
+                        <small>{formatNotificationDate(item.thoi_gian_gui)}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>}
+          </div>
+        )}
         {currentUser && (
           <div className="account-menu-wrap">
             <button type="button" className="account-menu-trigger" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>

@@ -165,8 +165,19 @@ export default function InternManagementView({
     }
   };
 
+  const getAccountBadge = (status) => {
+    switch (status) {
+      case 'HoatDong':
+        return <span className="badge badge-success"><span className="badge-dot" />Hoạt động</span>;
+      case 'Khoa':
+        return <span className="badge badge-danger"><span className="badge-dot" />Bị khóa</span>;
+      default:
+        return <span className="badge badge-warning"><span className="badge-dot" />Chờ duyệt</span>;
+    }
+  };
+
   return (
-    <div>
+    <div className="intern-management-page">
       {/* Header and Actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
@@ -193,7 +204,7 @@ export default function InternManagementView({
       )}
 
       {/* Filter and Search Bar */}
-      <div className="filter-bar">
+      <div className="filter-bar intern-filter-bar">
         <form onSubmit={handleSearchSubmit} className="search-input-box">
           <Search size={16} className="search-icon" />
           <input
@@ -264,7 +275,7 @@ export default function InternManagementView({
       </div>
 
       {/* Table */}
-      <div className="card">
+      <div className="card intern-list-card">
         <div className="card-header">
           <div className="card-title-box">
             <h2>Hồ sơ sinh viên ({interns.length})</h2>
@@ -279,8 +290,19 @@ export default function InternManagementView({
           </button>
         </div>
 
-        <div className="table-responsive">
-          <table className="data-table">
+        <div className="table-responsive intern-table-scroll">
+          <table className="data-table intern-data-table">
+            <colgroup>
+              <col className="intern-col-id" />
+              <col className="intern-col-name" />
+              <col className="intern-col-contact" />
+              <col className="intern-col-education" />
+              <col className="intern-col-department" />
+              <col className="intern-col-review" />
+              <col className="intern-col-account" />
+              <col className="intern-col-progress" />
+              <col className="intern-col-actions" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Mã HS</th>
@@ -289,6 +311,7 @@ export default function InternManagementView({
                 <th>Trường Đại học & Chuyên ngành</th>
                 <th>Phòng ban</th>
                 <th>Xét duyệt</th>
+                <th>Tài khoản</th>
                 <th>Trạng thái</th>
                 <th style={{ textAlign: 'right' }}>Thao tác</th>
               </tr>
@@ -296,13 +319,13 @@ export default function InternManagementView({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
                     Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : interns.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
+                  <td colSpan="9" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
                     Không tìm thấy hồ sơ nào phù hợp.
                   </td>
                 </tr>
@@ -341,9 +364,10 @@ export default function InternManagementView({
                       </span>
                     </td>
                     <td>{getDuyetBadge(intern.trang_thai_xet_duyet)}</td>
+                    <td>{getAccountBadge(intern.trang_thai_tai_khoan)}</td>
                     <td>{getThucTapBadge(intern.trang_thai_thuc_tap)}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '6px' }}>
+                      <div className="intern-row-actions">
                         {(currentUser?.vai_tro === 'HR' || currentUser?.vai_tro === 'Admin') && intern.trang_thai_xet_duyet === 'ChoDuyet' && (
                           <>
                           <button

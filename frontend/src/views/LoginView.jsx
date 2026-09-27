@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight, UploadCloud, FileText } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
@@ -55,6 +55,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
   });
   const [regLoading, setRegLoading] = useState(false);
   const [regSuccessMsg, setRegSuccessMsg] = useState('');
+  const [regCv, setRegCv] = useState(null);
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
@@ -103,28 +104,31 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
       setRegLoading(false);
       return;
     }
+    if (regCv && (regCv.size > 15 * 1024 * 1024 || !['pdf', 'docx', 'png'].includes(regCv.name.split('.').pop()?.toLowerCase()))) {
+      setErrorMsg('CV phải có định dạng PDF, DOCX hoặc PNG và dung lượng tối đa 15 MB.');
+      setRegLoading(false);
+      return;
+    }
 
     try {
-      // Mặc định là Thực tập sinh và chờ Quản lý thực tập sinh xét duyệt
-      const payload = {
-        ho_ten: regForm.ho_ten.trim(),
-        email: regForm.email.trim(),
-        mat_khau: regForm.mat_khau,
-        so_dien_thoai: regForm.so_dien_thoai.trim(),
-        vai_tro: 'ThucTapSinh'
-      };
+      const payload = new FormData();
+      payload.append('ho_ten', regForm.ho_ten.trim());
+      payload.append('email', regForm.email.trim());
+      payload.append('mat_khau', regForm.mat_khau);
+      payload.append('so_dien_thoai', regForm.so_dien_thoai.trim());
+      if (regCv) payload.append('cv', regCv);
 
-      const res = await apiFetch('/api/auth/register', {
+      const res = await apiFetch('/api/auth/register-with-cv', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: payload
       });
 
-      await readApiResponse(res);
+      const data = await readApiResponse(res);
 
-      setRegSuccessMsg('Đăng ký thành công! Tài khoản đang chờ Quản lý thực tập sinh xét duyệt trước khi có thể đăng nhập.');
+      setRegSuccessMsg(data.message || 'Đăng ký thành công. Tài khoản đang chờ Admin/HR xét duyệt.');
       setEmail(regForm.email);
       setPassword('');
+      setRegCv(null);
       setIsRegisterMode(false);
     } catch (err) {
       setErrorMsg(getRequestError(err));
@@ -302,6 +306,16 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             </div>
 
             <PhoneField id="register-phone" value={regForm.so_dien_thoai} onChange={(value) => setRegForm((prev) => ({ ...prev, so_dien_thoai: value }))} />
+
+            <div className="form-group">
+              <label className="form-label" style={{ fontSize: '13px' }}>CV (không bắt buộc)</label>
+              <label htmlFor="register-cv" className="btn btn-secondary" style={{ minHeight: 44, justifyContent: 'flex-start', gap: 10, overflow: 'hidden' }}>
+                {regCv ? <FileText size={16} /> : <UploadCloud size={16} />}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{regCv?.name || 'Chọn CV PDF, DOCX hoặc PNG'}</span>
+              </label>
+              <input id="register-cv" type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" style={{ display: 'none' }} onChange={(event) => setRegCv(event.target.files?.[0] || null)} />
+              <small style={{ color: '#64748b', fontSize: 11 }}>Tối đa 15 MB. Có thể nộp sau khi tài khoản được duyệt.</small>
+            </div>
 
             <div style={{
               background: '#f8fafc',

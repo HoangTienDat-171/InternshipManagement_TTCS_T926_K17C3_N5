@@ -1,0 +1,330 @@
+import re
+import sqlite3
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+
+from ..database import get_db, hash_password
+from ..schemas import (
+    InternAssignmentCandidate,
+    MentorAssignmentDetail,
+    MentorBatchAssignment,
+    MentorCreate,
+    MentorDetail,
+    MentorProfileUpdate,
+)
+from ..security import publish_workspace_updated, require_role
+
+router = APIRouter(prefix="/api/mentors", tags=["Mentors"])
+
+
+@router.get("/me/workspace")
+def mentor_workspace(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    mentor = require_role(request, "Mentor")
+    profile = db.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem,
+               COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da
+        FROM NGUOI_DUNG u
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
+        WHERE u.ma_nguoi_dung=? AND u.vai_tro='Mentor'
+    """, (mentor["ma_nguoi_dung"],)).fetchone()
+    interns = db.execute("""
+        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               u.ma_phong_ban, p.ten_phong_ban AS phong_ban, t.ten_truong,
+               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               a.ngay_phan_cong,
+               (SELECT COUNT(*) FROM TAI_LIEU_HO_SO d WHERE d.ma_ho_so=h.ma_ho_so) AS so_tai_lieu
+        FROM PHAN_CONG_MENTOR_TTS a
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so=a.ma_ho_so
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
+        WHERE a.ma_nguoi_dung_mentor=?
+        ORDER BY u.ho_ten
+    """, (mentor["ma_nguoi_dung"],)).fetchall()
+    return {"mentor": dict(profile) if profile else None, "interns": [dict(row) for row in interns]}
+
+
+@router.get("/me/interns/{profile_id}")
+def mentor_intern_detail(profile_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    mentor = require_role(request, "Mentor")
+    intern = db.execute("""
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               u.ma_phong_ban, p.ten_phong_ban AS phong_ban, t.ten_truong,
+               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               a.ngay_phan_cong
+        FROM PHAN_CONG_MENTOR_TTS a
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so=a.ma_ho_so
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
+        WHERE a.ma_nguoi_dung_mentor=? AND h.ma_ho_so=?
+    """, (mentor["ma_nguoi_dung"], profile_id)).fetchone()
+    if not intern:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thực tập sinh được phân công cho bạn.")
+    documents = db.execute("""
+        SELECT ma_tai_lieu, ma_ho_so, ten_file, loai_tai_lieu, kich_thuoc,
+               ngay_tai_len, trang_thai_duyet
+        FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC
+    """, (profile_id,)).fetchall()
+    programs = db.execute("""
+        SELECT c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
+               a.trang_thai AS trang_thai_ung_tuyen
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
+        WHERE a.ma_ho_so=? ORDER BY a.ngay_ung_tuyen DESC
+    """, (profile_id,)).fetchall()
+    return {"intern": dict(intern), "documents": [dict(row) for row in documents], "programs": [dict(row) for row in programs]}
+
+
+@router.get("", response_model=list[MentorDetail])
+def list_mentors(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    require_role(request, "Admin", "HR")
+    rows = db.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               u.ma_phong_ban, p.ten_phong_ban AS phong_ban,
+               mp.chuyen_mon, mp.kinh_nghiem, COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da,
+               (SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS a
+                WHERE a.ma_nguoi_dung_mentor = u.ma_nguoi_dung) AS so_tts_dang_huong_dan
+        FROM NGUOI_DUNG u
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = u.ma_nguoi_dung
+        WHERE u.vai_tro = 'Mentor'
+        ORDER BY u.ma_nguoi_dung DESC
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.get("/unassigned-interns", response_model=list[InternAssignmentCandidate])
+def list_unassigned_interns(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    require_role(request, "Admin", "HR")
+    rows = db.execute("""
+        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               t.ten_truong, h.chuyen_nganh
+        FROM HO_SO_THUC_TAP h
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
+        WHERE u.vai_tro = 'ThucTapSinh' AND u.trang_thai = 'HoatDong'
+          AND h.trang_thai_xet_duyet = 'DaDuyet'
+          AND h.trang_thai_thuc_tap = 'DangThucTap'
+          AND NOT EXISTS (
+              SELECT 1 FROM PHAN_CONG_MENTOR_TTS a WHERE a.ma_ho_so = h.ma_ho_so
+          )
+        ORDER BY u.ho_ten COLLATE NOCASE
+    """).fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.get("/{mentor_id}/interns", response_model=list[MentorAssignmentDetail])
+def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    require_role(request, "Admin", "HR")
+    if not db.execute("SELECT 1 FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'", (mentor_id,)).fetchone():
+        raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
+    rows = db.execute("""
+        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               t.ten_truong, h.chuyen_nganh, a.ngay_phan_cong
+        FROM PHAN_CONG_MENTOR_TTS a
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
+        WHERE a.ma_nguoi_dung_mentor = ?
+        ORDER BY u.ho_ten COLLATE NOCASE
+    """, (mentor_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.put("/{mentor_id}/profile", response_model=dict[str, str])
+def update_mentor_profile(
+    mentor_id: int, data: MentorProfileUpdate, request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    require_role(request, "Admin", "HR")
+    if not db.execute("SELECT 1 FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'", (mentor_id,)).fetchone():
+        raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
+    capacity = data.so_tts_toi_da if data.so_tts_toi_da is not None else 3
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        assigned_count = db.execute(
+            "SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor = ?",
+            (mentor_id,),
+        ).fetchone()[0]
+        if capacity < assigned_count:
+            raise HTTPException(status_code=400, detail=f"Sức chứa không thể thấp hơn {assigned_count} TTS đang được phân công.")
+        db.execute("""
+            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem, so_tts_toi_da)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ma_nguoi_dung) DO UPDATE SET
+                chuyen_mon = excluded.chuyen_mon,
+                kinh_nghiem = excluded.kinh_nghiem,
+                so_tts_toi_da = excluded.so_tts_toi_da
+        """, (
+            mentor_id,
+            data.chuyen_mon.strip() if data.chuyen_mon and data.chuyen_mon.strip() else None,
+            data.kinh_nghiem,
+            capacity,
+        ))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    return {"message": "Đã cập nhật hồ sơ Mentor."}
+
+
+@router.post("/{mentor_id}/interns/{profile_id}", response_model=dict[str, str], status_code=status.HTTP_201_CREATED)
+def assign_intern(
+    mentor_id: int, profile_id: int, request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    admin = require_role(request, "Admin")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        mentor = db.execute("""
+            SELECT u.ma_nguoi_dung, u.trang_thai,
+                   COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da
+            FROM NGUOI_DUNG u
+            LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = u.ma_nguoi_dung
+            WHERE u.ma_nguoi_dung = ? AND u.vai_tro = 'Mentor'
+        """, (mentor_id,)).fetchone()
+        if not mentor:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
+        if mentor["trang_thai"] != "HoatDong":
+            raise HTTPException(status_code=400, detail="Mentor chưa ở trạng thái hoạt động.")
+        intern = db.execute("""
+            SELECT h.ma_ho_so, h.ma_nguoi_dung FROM HO_SO_THUC_TAP h
+            JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+            WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
+              AND u.trang_thai = 'HoatDong' AND h.trang_thai_xet_duyet = 'DaDuyet'
+              AND h.trang_thai_thuc_tap = 'DangThucTap'
+        """, (profile_id,)).fetchone()
+        if not intern:
+            raise HTTPException(status_code=400, detail="Chỉ có thể phân công TTS đã duyệt và đang thực tập.")
+        count = db.execute(
+            "SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor = ?",
+            (mentor_id,),
+        ).fetchone()[0]
+        if count >= mentor["so_tts_toi_da"]:
+            raise HTTPException(status_code=400, detail="Mentor đã đạt sức chứa TTS tối đa.")
+        db.execute("""
+            INSERT INTO PHAN_CONG_MENTOR_TTS
+                (ma_nguoi_dung_mentor, ma_ho_so, ma_nguoi_phan_cong)
+            VALUES (?, ?, ?)
+        """, (mentor_id, profile_id, admin["ma_nguoi_dung"]))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="TTS đã được phân công cho Mentor khác.") from exc
+    background_tasks.add_task(publish_workspace_updated, mentor_id)
+    background_tasks.add_task(publish_workspace_updated, intern["ma_nguoi_dung"])
+    return {"message": "Đã phân công thực tập sinh cho Mentor."}
+
+
+@router.post("/{mentor_id}/assignments/batch", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
+def assign_interns_batch(
+    mentor_id: int, data: MentorBatchAssignment, request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    admin = require_role(request, "Admin")
+    if len(set(data.ma_ho_so_list)) != len(data.ma_ho_so_list):
+        raise HTTPException(status_code=400, detail="Danh sách có thực tập sinh bị lặp.")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        mentor = db.execute("""
+            SELECT u.trang_thai, COALESCE(mp.so_tts_toi_da,3) AS so_tts_toi_da
+            FROM NGUOI_DUNG u LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
+            WHERE u.ma_nguoi_dung=? AND u.vai_tro='Mentor'
+        """, (mentor_id,)).fetchone()
+        if not mentor:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
+        if mentor["trang_thai"] != "HoatDong":
+            raise HTTPException(status_code=400, detail="Mentor chưa ở trạng thái hoạt động.")
+        assigned = db.execute(
+            "SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor=?", (mentor_id,),
+        ).fetchone()[0]
+        if assigned + len(data.ma_ho_so_list) > mentor["so_tts_toi_da"]:
+            raise HTTPException(status_code=400, detail=f"Chỉ còn {max(0, mentor['so_tts_toi_da'] - assigned)} chỗ trống.")
+        intern_user_ids = []
+        for profile_id in data.ma_ho_so_list:
+            intern = db.execute("""
+                SELECT h.ma_ho_so, h.ma_nguoi_dung FROM HO_SO_THUC_TAP h
+                JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
+                WHERE h.ma_ho_so=? AND u.vai_tro='ThucTapSinh' AND u.trang_thai='HoatDong'
+                  AND h.trang_thai_xet_duyet='DaDuyet' AND h.trang_thai_thuc_tap='DangThucTap'
+                  AND NOT EXISTS (SELECT 1 FROM PHAN_CONG_MENTOR_TTS x WHERE x.ma_ho_so=h.ma_ho_so)
+            """, (profile_id,)).fetchone()
+            if not intern:
+                raise HTTPException(status_code=400, detail=f"Hồ sơ TTS #{profile_id} không còn đủ điều kiện phân công.")
+            intern_user_ids.append(intern["ma_nguoi_dung"])
+            db.execute("""
+                INSERT INTO PHAN_CONG_MENTOR_TTS (ma_nguoi_dung_mentor,ma_ho_so,ma_nguoi_phan_cong)
+                VALUES (?,?,?)
+            """, (mentor_id, profile_id, admin["ma_nguoi_dung"]))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Có hồ sơ TTS vừa được phân công hoặc trùng lặp.") from exc
+    background_tasks.add_task(publish_workspace_updated, mentor_id)
+    for intern_user_id in intern_user_ids:
+        background_tasks.add_task(publish_workspace_updated, intern_user_id)
+    return {"message": f"Đã phân công {len(data.ma_ho_so_list)} thực tập sinh.", "so_tts_da_phan_cong": len(data.ma_ho_so_list)}
+
+
+@router.delete("/{mentor_id}/interns/{profile_id}", response_model=dict[str, str])
+def unassign_intern(
+    mentor_id: int, profile_id: int, request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    require_role(request, "Admin")
+    intern = db.execute("SELECT ma_nguoi_dung FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_id,)).fetchone()
+    cursor = db.execute(
+        "DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ?",
+        (mentor_id, profile_id),
+    )
+    if not cursor.rowcount:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phân công này.")
+    db.commit()
+    background_tasks.add_task(publish_workspace_updated, mentor_id)
+    if intern:
+        background_tasks.add_task(publish_workspace_updated, intern["ma_nguoi_dung"])
+    return {"message": "Đã gỡ phân công thực tập sinh."}
+
+
+@router.post("", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
+def create_mentor(data: MentorCreate, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    require_role(request, "Admin", "HR")
+    if data.so_dien_thoai and not re.fullmatch(r"(03|05|07|08|09)\d{8}", data.so_dien_thoai):
+        raise HTTPException(status_code=400, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
+    email = data.email.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=400, detail="Email không hợp lệ.")
+    if db.execute("SELECT 1 FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,)).fetchone():
+        raise HTTPException(status_code=400, detail="Email đã được đăng ký trong hệ thống.")
+
+    cursor = db.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO NGUOI_DUNG
+                (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (?, ?, ?, ?, ?, 'Mentor', 'HoatDong')
+        """, (data.ma_phong_ban, data.ho_ten.strip(), email, hash_password(data.mat_khau), data.so_dien_thoai or None))
+        user_id = cursor.lastrowid
+        cursor.execute("""
+            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem, so_tts_toi_da)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, data.chuyen_mon.strip() if data.chuyen_mon else None, data.kinh_nghiem, data.so_tts_toi_da))
+        db.commit()
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Phòng ban không hợp lệ hoặc email đã được sử dụng.") from exc
+
+    return {"message": f"Đã thêm Mentor {data.ho_ten.strip()}.", "ma_nguoi_dung": user_id}

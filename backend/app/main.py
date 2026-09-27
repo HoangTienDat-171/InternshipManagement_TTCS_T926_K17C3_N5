@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .security import get_session_user, session_connections
-from .routes import auth_routes, intern_routes, master_routes
+from .routes import auth_routes, document_routes, intern_routes, master_routes, mentor_routes, notification_routes, program_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -39,7 +39,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 @app.middleware("http")
 async def validate_api_session(request: Request, call_next):
     path = request.url.path
-    public_paths = {"/api/auth/login", "/api/auth/register"}
+    public_paths = {"/api/auth/login", "/api/auth/register", "/api/auth/register-with-cv"}
     if path.startswith("/api/") and request.method != "OPTIONS" and path not in public_paths:
         authorization = request.headers.get("authorization", "")
         scheme, _, token = authorization.partition(" ")
@@ -74,6 +74,10 @@ def root():
 app.include_router(auth_routes.router)
 app.include_router(intern_routes.router)
 app.include_router(master_routes.router)
+app.include_router(document_routes.router)
+app.include_router(mentor_routes.router)
+app.include_router(program_routes.router)
+app.include_router(notification_routes.router)
 
 
 @app.websocket("/api/auth/events")

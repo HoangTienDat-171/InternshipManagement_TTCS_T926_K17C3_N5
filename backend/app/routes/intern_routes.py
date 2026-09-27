@@ -1,12 +1,66 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, status, Query, Request, BackgroundTasks
 import sqlite3
 import re
+from datetime import date
 from typing import List, Optional, Dict, Any
 from ..database import get_db, hash_password
 from ..schemas import InternCreate, InternUpdate, InternDetail
-from ..security import require_role
+from ..security import require_role, publish_force_logout
+from ..intern_workflow import APPROVAL_TO_ACCOUNT_STATUS, sync_intern_approval
+from ..notifications import create_notification
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
+
+
+@router.get("/me/workspace")
+def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request, "ThucTapSinh")
+    profile = db.execute("""
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.ma_truong, t.ten_truong,
+               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               u.ho_ten, u.email, u.so_dien_thoai, p.ten_phong_ban AS phong_ban
+        FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+        WHERE h.ma_nguoi_dung=? AND u.vai_tro='ThucTapSinh'
+    """, (user["ma_nguoi_dung"],)).fetchone()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Tài khoản chưa có hồ sơ thực tập sinh.")
+
+    mentor = db.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem
+        FROM PHAN_CONG_MENTOR_TTS a JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=a.ma_nguoi_dung_mentor
+        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
+        WHERE a.ma_ho_so=? AND u.vai_tro='Mentor'
+    """, (profile["ma_ho_so"],)).fetchone()
+    documents = db.execute("""
+        SELECT ma_tai_lieu, ma_ho_so, ten_file, loai_tai_lieu, kich_thuoc,
+               ngay_tai_len, trang_thai_duyet
+        FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC
+    """, (profile["ma_ho_so"],)).fetchall()
+    applications = db.execute("""
+        SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
+               a.trang_thai AS trang_thai_ung_tuyen, a.ngay_ung_tuyen
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
+        WHERE a.ma_ho_so=? ORDER BY a.ngay_ung_tuyen DESC
+    """, (profile["ma_ho_so"],)).fetchall()
+    current_program = next((dict(row) for row in applications if row["trang_thai_ung_tuyen"] == "DaDuyet"), None)
+    progress = None
+    if current_program and current_program["ngay_bat_dau"] and current_program["ngay_ket_thuc"]:
+        start = date.fromisoformat(str(current_program["ngay_bat_dau"])[:10])
+        end = date.fromisoformat(str(current_program["ngay_ket_thuc"])[:10])
+        total_days = max(1, (end - start).days)
+        elapsed_days = min(total_days, max(0, (date.today() - start).days))
+        progress = round(elapsed_days * 100 / total_days)
+    return {
+        "profile": dict(profile), "mentor": dict(mentor) if mentor else None,
+        "documents": [dict(row) for row in documents],
+        "applications": [dict(row) for row in applications],
+        "current_program": current_program, "progress_percent": progress,
+    }
 
 def validate_phone_number(phone: Optional[str]):
     if phone and not re.fullmatch(r"(03|05|07|08|09)\d{8}", phone):
@@ -21,10 +75,11 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
     """
     require_role(request, "Admin", "HR")
     validate_phone_number(data.so_dien_thoai)
+    email = data.email.strip().lower()
     cursor = db.cursor()
 
     # Kiểm tra email trùng
-    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email = ?", (data.email,))
+    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,))
     if cursor.fetchone():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -32,11 +87,13 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
         )
 
     # 1. Tạo tài khoản trong NGUOI_DUNG
+    approval_status = data.trang_thai_xet_duyet or "ChoDuyet"
+    account_status = APPROVAL_TO_ACCOUNT_STATUS[approval_status]
     hashed_pw = hash_password(data.mat_khau or "123456")
     cursor.execute("""
         INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, ?, 'ThucTapSinh', 'HoatDong')
-    """, (data.ma_phong_ban, data.ho_ten, data.email, hashed_pw, data.so_dien_thoai))
+        VALUES (?, ?, ?, ?, ?, 'ThucTapSinh', ?)
+    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, account_status))
     
     ma_nguoi_dung = cursor.lastrowid
 
@@ -48,7 +105,7 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
         ma_nguoi_dung,
         data.ma_truong,
         data.chuyen_nganh,
-        data.trang_thai_xet_duyet or 'ChoDuyet',
+        approval_status,
         data.trang_thai_thuc_tap or 'DangThucTap'
     ))
 
@@ -60,27 +117,28 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
         "ma_ho_so": ma_ho_so,
         "ma_nguoi_dung": ma_nguoi_dung,
         "ho_ten": data.ho_ten,
-        "email": data.email
+        "email": email
     }
 
 @router.get("/{id}", response_model=InternDetail)
-def get_intern_by_id(id: int, db: sqlite3.Connection = Depends(get_db)):
+def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
     """
     US02 – Cập nhật/Chỉnh sửa hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API lấy thông tin chi tiết theo ID thực tập sinh (ma_ho_so hoặc ma_nguoi_dung).
     """
+    require_role(request, "Admin", "HR")
     cursor = db.cursor()
     cursor.execute("""
         SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               u.ma_phong_ban, p.ten_phong_ban, h.ma_truong, t.ten_truong,
-               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
-               h.ngay_tao
+               u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
+               h.ma_truong, t.ten_truong, h.chuyen_nganh, h.trang_thai_xet_duyet,
+               h.trang_thai_thuc_tap, h.ngay_tao
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
-        WHERE h.ma_ho_so = ? OR h.ma_nguoi_dung = ?
-    """, (id, id))
+        WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
+    """, (id,))
     
     row = cursor.fetchone()
     if not row:
@@ -92,7 +150,7 @@ def get_intern_by_id(id: int, db: sqlite3.Connection = Depends(get_db)):
     return dict(row)
 
 @router.put("/{id}", response_model=Dict[str, Any])
-def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def update_intern(id: int, data: InternUpdate, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """
     US02 – Cập nhật/Chỉnh sửa hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API Cập nhật (Update) dữ liệu.
@@ -103,7 +161,11 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
     
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
-        SELECT h.ma_ho_so, h.ma_nguoi_dung FROM HO_SO_THUC_TAP h WHERE h.ma_ho_so = ?
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet,
+               u.ho_ten, u.trang_thai AS trang_thai_tai_khoan, s.session_id
+        FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
+        WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
     record = cursor.fetchone()
     if not record:
@@ -116,39 +178,63 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
 
     # Kiểm tra nếu đổi email thì email mới không được trùng với người dùng khác
     cursor.execute("""
-        SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email = ? AND ma_nguoi_dung != ?
-    """, (data.email, ma_nguoi_dung))
+        SELECT ma_nguoi_dung FROM NGUOI_DUNG
+        WHERE LOWER(email) = LOWER(?) AND ma_nguoi_dung != ?
+    """, (data.email.strip().lower(), ma_nguoi_dung))
     if cursor.fetchone():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Email '{data.email}' đã được sử dụng bởi người dùng khác!"
         )
 
-    # 1. Cập nhật bảng NGUOI_DUNG
+    # Only a changed review decision should change account access. A manual account
+    # lock is independent and must survive ordinary edits to an already-approved profile.
+    previous_session_id = record["session_id"]
+    target_account_status = APPROVAL_TO_ACCOUNT_STATUS[data.trang_thai_xet_duyet]
+    approval_changed = record["trang_thai_xet_duyet"] != data.trang_thai_xet_duyet
+    account_status_drift = (
+        record["trang_thai_tai_khoan"] != target_account_status
+        and record["trang_thai_tai_khoan"] != "Khoa"
+    )
+    if approval_changed or account_status_drift:
+        sync_intern_approval(cursor, ma_nguoi_dung, data.trang_thai_xet_duyet)
+
+    # 2. Cập nhật thông tin tài khoản
     cursor.execute("""
         UPDATE NGUOI_DUNG
         SET ho_ten = ?, email = ?, so_dien_thoai = ?, ma_phong_ban = ?
         WHERE ma_nguoi_dung = ?
-    """, (data.ho_ten, data.email, data.so_dien_thoai, data.ma_phong_ban, ma_nguoi_dung))
+    """, (data.ho_ten.strip(), data.email.strip().lower(), data.so_dien_thoai, data.ma_phong_ban, ma_nguoi_dung))
 
-    # 2. Cập nhật bảng HO_SO_THUC_TAP
+    # 3. Cập nhật bảng HO_SO_THUC_TAP
     cursor.execute("""
         UPDATE HO_SO_THUC_TAP
         SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
         WHERE ma_ho_so = ?
     """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, data.trang_thai_thuc_tap, id))
 
+    if approval_changed or account_status_drift:
+        title, message = {
+            "ChoDuyet": ("Hồ sơ đang chờ duyệt", "Hồ sơ thực tập của bạn đang chờ xét duyệt."),
+            "DaDuyet": ("Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt."),
+            "TuChoi": ("Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết."),
+        }[data.trang_thai_xet_duyet]
+        create_notification(db, ma_nguoi_dung, title, message)
+
     db.commit()
+    if previous_session_id and data.trang_thai_xet_duyet != "DaDuyet":
+        background_tasks.add_task(publish_force_logout, ma_nguoi_dung, previous_session_id)
 
     return {
         "message": "Cập nhật hồ sơ thực tập sinh thành công!",
         "ma_ho_so": id,
         "ho_ten": data.ho_ten,
-        "email": data.email
+        "email": data.email.strip().lower()
     }
 
 @router.get("", response_model=List[InternDetail])
 def list_interns(
+    request: Request,
     search: Optional[str] = Query(None, description="Tìm kiếm theo họ tên, email, chuyên ngành"),
     trang_thai_xet_duyet: Optional[str] = Query(None, description="Lọc theo ChoDuyet, DaDuyet, TuChoi"),
     trang_thai_thuc_tap: Optional[str] = Query(None, description="Lọc theo DangThucTap, HoanThanh, ThoiHoc"),
@@ -159,17 +245,19 @@ def list_interns(
     """
     Hỗ trợ giao diện US03 – Tìm kiếm & Lọc danh sách thực tập sinh
     """
+    require_role(request, "Admin", "HR")
     cursor = db.cursor()
     query = """
         SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               u.ma_phong_ban, p.ten_phong_ban, h.ma_truong, t.ten_truong,
+               u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
+               h.ma_truong, t.ten_truong,
                h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
                h.ngay_tao
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
-        WHERE 1=1
+        WHERE u.vai_tro = 'ThucTapSinh'
     """
     params = []
 

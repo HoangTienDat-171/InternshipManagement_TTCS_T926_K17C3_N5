@@ -1,10 +1,146 @@
 import sqlite3
 import os
+import re
 import bcrypt
 import hashlib
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
+
+import pymysql
+from pymysql.cursors import DictCursor
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "internship.db")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def _load_local_env():
+    env_path = BACKEND_DIR / ".env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#") or "=" not in entry:
+            continue
+        key, value = entry.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
+_load_local_env()
+DATABASE_BACKEND = os.getenv("IMS_DATABASE_BACKEND", "mysql").strip().lower()
+
+
+class _HybridRow(dict):
+    """Mapping row that preserves sqlite3.Row's integer-index behavior."""
+    def __init__(self, row):
+        super().__init__((key, _normalize_mysql_value(value)) for key, value in row.items())
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            key = tuple(self.keys())[key]
+        return super().__getitem__(key)
+
+
+def _normalize_mysql_value(value):
+    # SQLite exposes DATE/DATETIME columns as ISO-like strings by default.
+    # Keep that contract so existing response schemas and route callers work
+    # identically after switching the storage backend to MySQL.
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _mysql_sql(statement: str) -> str:
+    statement = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT IGNORE INTO", statement, flags=re.I)
+    statement = re.sub(r"\bON\s+CONFLICT\s*\([^)]*\)\s*DO\s+UPDATE\s+SET\b", "ON DUPLICATE KEY UPDATE", statement, flags=re.I)
+    statement = re.sub(r"\bexcluded\.([a-zA-Z_][\w]*)", r"VALUES(`\1`)", statement, flags=re.I)
+    statement = re.sub(r"\s+COLLATE\s+NOCASE\b", "", statement, flags=re.I)
+    statement = re.sub(r"^\s*BEGIN\s+IMMEDIATE\s*;?\s*$", "START TRANSACTION", statement, flags=re.I)
+    return statement.replace("?", "%s")
+
+
+class _MySQLCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def execute(self, statement, params=()):
+        try:
+            self._cursor.execute(_mysql_sql(statement), params)
+        except pymysql.err.IntegrityError as exc:
+            raise sqlite3.IntegrityError(str(exc)) from exc
+        return self
+
+    def executemany(self, statement, params):
+        try:
+            self._cursor.executemany(_mysql_sql(statement), params)
+        except pymysql.err.IntegrityError as exc:
+            raise sqlite3.IntegrityError(str(exc)) from exc
+        return self
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        return _HybridRow(row) if row is not None else None
+
+    def fetchall(self):
+        return [_HybridRow(row) for row in self._cursor.fetchall()]
+
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    def close(self):
+        self._cursor.close()
+
+
+class _MySQLConnection:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def cursor(self):
+        return _MySQLCursor(self._connection.cursor(DictCursor))
+
+    def execute(self, statement, params=()):
+        return self.cursor().execute(statement, params)
+
+    def executemany(self, statement, params):
+        return self.cursor().executemany(statement, params)
+
+    def commit(self):
+        self._connection.commit()
+
+    def rollback(self):
+        self._connection.rollback()
+
+    def close(self):
+        self._connection.close()
+
+
+def _connect_mysql():
+    required = ("MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE")
+    missing = [name for name in required if not os.getenv(name)]
+    if missing:
+        raise RuntimeError(f"Thiếu cấu hình MySQL: {', '.join(missing)}")
+    connection = pymysql.connect(
+        host=os.environ["MYSQL_HOST"],
+        port=int(os.getenv("MYSQL_PORT", "3306")),
+        user=os.environ["MYSQL_USER"],
+        password=os.environ["MYSQL_PASSWORD"],
+        database=os.environ["MYSQL_DATABASE"],
+        charset="utf8mb4",
+        cursorclass=DictCursor,
+        autocommit=False,
+    )
+    return _MySQLConnection(connection)
 
 # Giai đoạn 2: Khi xử lý & lưu trữ (At Rest Security)
 # Sử dụng Bcrypt với Salt ngẫu nhiên 12 vòng (Cost factor 12)
@@ -33,19 +169,128 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 def get_db():
+    if DATABASE_BACKEND == "mysql":
+        conn = _connect_mysql()
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
     finally:
         conn.close()
 
 def get_db_connection():
+    if DATABASE_BACKEND == "mysql":
+        return _connect_mysql()
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+
+def init_mysql_db():
+    conn = get_db_connection()
+    try:
+        statements = [
+            """CREATE TABLE IF NOT EXISTS ACTIVE_SESSIONS (
+                ma_nguoi_dung INT PRIMARY KEY, token_hash VARCHAR(64) NOT NULL,
+                session_id VARCHAR(64) NOT NULL,
+                FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS FAILED_LOGIN_ATTEMPTS (
+                id INT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(254) NOT NULL UNIQUE,
+                failed_count INT DEFAULT 0, locked_until DATETIME NULL,
+                last_attempt DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHAT_KY_DANG_NHAP (
+                id INT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(254) NOT NULL,
+                ip_address VARCHAR(64), thanh_cong TINYINT NOT NULL,
+                thong_tin TEXT, thoi_gian DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (
+                ma_nguoi_dung INT PRIMARY KEY, chuyen_mon VARCHAR(255),
+                kinh_nghiem INT UNSIGNED, so_tts_toi_da INT UNSIGNED,
+                FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
+                ma_phan_cong INT AUTO_INCREMENT PRIMARY KEY,
+                ma_nguoi_dung_mentor INT NOT NULL, ma_ho_so INT NOT NULL UNIQUE,
+                ma_nguoi_phan_cong INT NULL, ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_phan_cong_mentor (ma_nguoi_dung_mentor),
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+                FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
+                ma_chuong_trinh INT AUTO_INCREMENT PRIMARY KEY, ma_ct VARCHAR(40) NOT NULL UNIQUE,
+                ten_ct VARCHAR(200) NOT NULL, ma_phong_ban INT NULL, ngay_bat_dau DATE NULL,
+                ngay_ket_thuc DATE NULL, chi_tieu INT UNSIGNED NOT NULL,
+                mo_ta_cong_viec TEXT, yeu_cau TEXT, quyen_loi TEXT,
+                trang_thai ENUM('DangMo','TamDung','DaDong') NOT NULL DEFAULT 'DangMo',
+                ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
+                ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
+                ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
+                ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ngay_xet_duyet DATETIME NULL,
+                nguoi_xet_duyet INT NULL, UNIQUE KEY uq_ung_tuyen_chuong_trinh (ma_chuong_trinh, ma_ho_so),
+                KEY idx_ung_tuyen_chuong_trinh_trang_thai (ma_chuong_trinh, trang_thai),
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+                FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+        ]
+        for statement in statements:
+            conn.execute(statement)
+
+        columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'TAI_LIEU_HO_SO'
+        """).fetchall()
+        column_names = {row["COLUMN_NAME"] for row in columns}
+        if "ten_file" not in column_names:
+            conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN ten_file VARCHAR(255) NULL")
+        if "kich_thuoc" not in column_names:
+            conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN kich_thuoc BIGINT UNSIGNED NULL")
+
+        if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
+            conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
+                ("Trung tâm Công nghệ Thông tin", "Phát triển phần mềm, giải pháp Web/App, AI và Cloud"),
+                ("Khối Kỹ thuật Hạ tầng & An ninh mạng", "Vận hành hệ thống, DevOps và An toàn thông tin"),
+                ("Phòng Dữ liệu & Trí tuệ nhân tạo (AI/Data)", "Phân tích dữ liệu lớn và giải pháp Machine Learning"),
+                ("Phòng Kiểm thử & Đảm bảo chất lượng (QA/QC)", "Kiểm thử phần mềm và quản lý chất lượng dự án"),
+            ])
+        university_unique_key = conn.execute("""
+            SELECT COUNT(*) AS total FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'TRUONG_DAI_HOC'
+              AND INDEX_NAME = 'uq_truong_dai_hoc_ten'
+        """).fetchone()["total"]
+        if not university_unique_key:
+            conn.execute("ALTER TABLE TRUONG_DAI_HOC ADD UNIQUE KEY uq_truong_dai_hoc_ten (ten_truong)")
+        conn.execute("""
+            INSERT IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da)
+            SELECT ma_nguoi_dung, 3 FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'
+        """)
+        conn.execute("""
+            INSERT IGNORE INTO HO_SO_THUC_TAP (ma_nguoi_dung)
+            SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro = 'ThucTapSinh'
+        """)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
 def init_db():
+    if DATABASE_BACKEND == "mysql":
+        return init_mysql_db()
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -121,6 +366,83 @@ def init_db():
         ngay_tai_len DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE
     );
+    """)
+
+    # Store upload metadata alongside the existing file path and review state.
+    document_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(TAI_LIEU_HO_SO)")}
+    if "ten_file" not in document_columns:
+        cursor.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN ten_file TEXT")
+    if "kich_thuoc" not in document_columns:
+        cursor.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN kich_thuoc INTEGER")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (
+        ma_nguoi_dung INTEGER PRIMARY KEY,
+        chuyen_mon TEXT,
+        kinh_nghiem INTEGER CHECK(kinh_nghiem IS NULL OR kinh_nghiem >= 0),
+        so_tts_toi_da INTEGER CHECK(so_tts_toi_da IS NULL OR so_tts_toi_da >= 0),
+        FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
+        ma_phan_cong INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        ma_ho_so INTEGER NOT NULL UNIQUE,
+        ma_nguoi_phan_cong INTEGER,
+        ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+        FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_phan_cong_mentor
+        ON PHAN_CONG_MENTOR_TTS(ma_nguoi_dung_mentor)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
+        ma_chuong_trinh INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ct TEXT NOT NULL UNIQUE,
+        ten_ct TEXT NOT NULL,
+        ma_phong_ban INTEGER,
+        ngay_bat_dau TEXT,
+        ngay_ket_thuc TEXT,
+        chi_tieu INTEGER NOT NULL CHECK(chi_tieu > 0),
+        mo_ta_cong_viec TEXT,
+        yeu_cau TEXT,
+        quyen_loi TEXT,
+        trang_thai TEXT NOT NULL DEFAULT 'DangMo' CHECK(trang_thai IN ('DangMo', 'TamDung', 'DaDong')),
+        ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
+    )
+    """)
+
+    program_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CHUONG_TRINH_THUC_TAP)")}
+    if "mo_ta_cong_viec" not in program_columns:
+        cursor.execute("ALTER TABLE CHUONG_TRINH_THUC_TAP ADD COLUMN mo_ta_cong_viec TEXT")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
+        ma_ung_tuyen INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_chuong_trinh INTEGER NOT NULL,
+        ma_ho_so INTEGER NOT NULL,
+        trang_thai TEXT NOT NULL DEFAULT 'ChoDuyet'
+            CHECK(trang_thai IN ('ChoDuyet', 'DaDuyet', 'TuChoi')),
+        ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        ngay_xet_duyet DATETIME,
+        nguoi_xet_duyet INTEGER,
+        UNIQUE(ma_chuong_trinh, ma_ho_so),
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+        FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
+        ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
     """)
 
     # 6. Bảng Thông Báo

@@ -1,11 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Request, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, status, Request, Query, BackgroundTasks, File, Form, UploadFile
 import sqlite3
 import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
+from pathlib import Path, PurePosixPath
+from uuid import uuid4
 from ..database import get_db, hash_password, verify_password
 from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange
 from ..security import new_session_token, token_digest, require_role, publish_force_logout, session_connections
+from ..intern_workflow import sync_intern_approval
+from ..notifications import create_notification
+from .document_routes import ALLOWED_EXTENSIONS, MAX_FILE_SIZE, UPLOAD_ROOT, valid_file_content
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication & Security"])
 
@@ -91,8 +96,9 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
             detail="Chính sách bảo mật: Mật khẩu phải có độ dài tối thiểu 6 ký tự!"
         )
 
+    email = data.email.strip().lower()
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email = ?", (data.email,))
+    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,))
     if cursor.fetchone():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -109,7 +115,7 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     cursor.execute("""
         INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (data.ma_phong_ban, data.ho_ten, data.email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
+    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
     
     new_user_id = cursor.lastrowid
 
@@ -120,18 +126,121 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     """, (new_user_id, "Chưa cập nhật"))
 
     client_ip = request.client.host if request.client else "127.0.0.1"
-    record_login_attempt(data.email, True, "Đăng ký tài khoản (Chờ duyệt)", client_ip, db)
+    record_login_attempt(email, True, "Đăng ký tài khoản (Chờ duyệt)", client_ip, db)
+
+    managers = cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro IN ('Admin', 'HR') AND trang_thai = 'HoatDong'").fetchall()
+    for manager in managers:
+        create_notification(db, manager["ma_nguoi_dung"], "Thực tập sinh mới chờ duyệt", f"{data.ho_ten.strip()} đã đăng ký tài khoản và đang chờ xét duyệt.")
 
     db.commit()
 
     return {
         "message": "Đăng ký tài khoản thành công! Tài khoản đang chờ Quản lý thực tập sinh xét duyệt trước khi có thể đăng nhập.",
         "ma_nguoi_dung": new_user_id,
-        "email": data.email,
+        "email": email,
         "ho_ten": data.ho_ten,
         "vai_tro": user_role,
         "trang_thai": initial_status
     }
+
+
+@router.post("/register-with-cv", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+async def register_user_with_cv(
+    request: Request,
+    ho_ten: str = Form(...),
+    email: str = Form(...),
+    mat_khau: str = Form(...),
+    so_dien_thoai: Optional[str] = Form(None),
+    cv: Optional[UploadFile] = File(None),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Đăng ký TTS và tùy chọn nộp CV trong cùng một giao dịch."""
+    absolute_path = None
+    try:
+        validate_phone_number(so_dien_thoai)
+        if len(mat_khau) < 6:
+            raise HTTPException(status_code=400, detail="Mật khẩu phải có tối thiểu 6 ký tự.")
+        clean_name = ho_ten.strip()
+        clean_email = email.strip().lower()
+        if not clean_name or len(clean_name) > 255 or not clean_email:
+            raise HTTPException(status_code=400, detail="Vui lòng nhập họ tên và email hợp lệ.")
+
+        cv_content = None
+        original_name = None
+        extension = None
+        if cv is not None and cv.filename:
+            original_name = PurePosixPath(cv.filename.replace("\\", "/")).name
+            extension = Path(original_name).suffix.lower()
+            if len(original_name) > 255 or extension not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail="CV phải là tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
+            cv_content = await cv.read(MAX_FILE_SIZE + 1)
+            if not cv_content or len(cv_content) > MAX_FILE_SIZE:
+                raise HTTPException(status_code=400, detail="CV phải có dung lượng từ 1 byte đến 15 MB.")
+            if not valid_file_content(extension, cv_content):
+                raise HTTPException(status_code=400, detail="Nội dung CV không khớp định dạng tệp.")
+
+        cursor = db.cursor()
+        if cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (clean_email,)).fetchone():
+            raise HTTPException(status_code=400, detail="Email đã được đăng ký trong hệ thống!")
+
+        cursor.execute("""
+            INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (NULL, ?, ?, ?, ?, 'ThucTapSinh', 'ChoDuyet')
+        """, (clean_name, clean_email, hash_password(mat_khau), so_dien_thoai))
+        new_user_id = cursor.lastrowid
+        cursor.execute("""
+            INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+            VALUES (?, ?, 'ChoDuyet', 'DangThucTap')
+        """, (new_user_id, "Chưa cập nhật"))
+        profile_id = cursor.lastrowid
+
+        if cv_content is not None:
+            storage_name = f"{uuid4().hex}{extension}"
+            absolute_path = UPLOAD_ROOT / storage_name
+            stored_path = PurePosixPath("documents", storage_name).as_posix()
+            UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+            with absolute_path.open("xb") as stored_file:
+                stored_file.write(cv_content)
+            cursor.execute("""
+                INSERT INTO TAI_LIEU_HO_SO
+                    (ma_ho_so, loai_tai_lieu, duong_dan_file, ten_file, kich_thuoc)
+                VALUES (?, 'CV', ?, ?, ?)
+            """, (profile_id, stored_path, original_name, len(cv_content)))
+
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        cursor.execute("""
+            INSERT INTO NHAT_KY_DANG_NHAP (email, ip_address, thanh_cong, thong_tin)
+            VALUES (?, ?, 1, 'Đăng ký tài khoản (Chờ duyệt)')
+        """, (clean_email, client_ip))
+        managers = cursor.execute("""
+            SELECT ma_nguoi_dung FROM NGUOI_DUNG
+            WHERE vai_tro IN ('Admin', 'HR') AND trang_thai = 'HoatDong'
+        """).fetchall()
+        for manager in managers:
+            create_notification(
+                db,
+                manager["ma_nguoi_dung"],
+                "Thực tập sinh mới chờ duyệt",
+                f"{clean_name} đã đăng ký tài khoản" + (" và nộp CV" if cv_content is not None else "") + " đang chờ xét duyệt.",
+            )
+        db.commit()
+        return {
+            "message": "Đăng ký thành công. " + ("CV đã được gửi và đang chờ duyệt. " if cv_content is not None else "") + "Tài khoản đang chờ Admin/HR xét duyệt.",
+            "ma_nguoi_dung": new_user_id,
+            "email": clean_email,
+            "ho_ten": clean_name,
+            "vai_tro": "ThucTapSinh",
+            "trang_thai": "ChoDuyet",
+            "cv_da_nop": cv_content is not None,
+        }
+    except Exception:
+        db.rollback()
+        if absolute_path is not None:
+            absolute_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if cv is not None:
+            await cv.close()
 
 @router.post("/login", response_model=Dict[str, Any])
 def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
@@ -249,8 +358,9 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
             detail="Chính sách bảo mật: Mật khẩu phải có độ dài tối thiểu 6 ký tự!"
         )
 
+    email = data.email.strip().lower()
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email = ?", (data.email,))
+    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,))
     if cursor.fetchone():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -264,7 +374,7 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
     cursor.execute("""
         INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
         VALUES (?, ?, ?, ?, ?, ?, 'HoatDong')
-    """, (data.ma_phong_ban, data.ho_ten, data.email, hashed_pw, data.so_dien_thoai, user_role))
+    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, user_role))
     
     new_user_id = cursor.lastrowid
 
@@ -274,16 +384,18 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
             INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
             VALUES (?, 'Chưa cập nhật', 'DaDuyet', 'DangThucTap')
         """, (new_user_id,))
+    elif user_role == 'Mentor':
+        cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (new_user_id,))
 
     client_ip = request.client.host if request.client else "127.0.0.1"
-    record_login_attempt(data.email, True, f"Admin tạo tài khoản ({user_role})", client_ip, db)
+    record_login_attempt(email, True, f"Admin tạo tài khoản ({user_role})", client_ip, db)
 
     db.commit()
 
     return {
         "message": f"Admin đã tạo tài khoản {data.ho_ten} ({user_role}) thành công!",
         "ma_nguoi_dung": new_user_id,
-        "email": data.email,
+        "email": email,
         "ho_ten": data.ho_ten,
         "vai_tro": user_role,
         "trang_thai": "HoatDong"
@@ -302,13 +414,24 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
         )
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten, email, vai_tro FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.vai_tro, u.trang_thai,
+               h.trang_thai_xet_duyet AS trang_thai_ho_so
+        FROM NGUOI_DUNG u LEFT JOIN HO_SO_THUC_TAP h ON h.ma_nguoi_dung = u.ma_nguoi_dung
+        WHERE u.ma_nguoi_dung = ?
+    """, (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
+    if user["vai_tro"] != "ThucTapSinh":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chỉ có thể duyệt tài khoản thực tập sinh.")
 
-    cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = 'HoatDong' WHERE ma_nguoi_dung = ?", (id,))
     cursor.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet = 'DaDuyet' WHERE ma_nguoi_dung = ?", (id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
+    sync_intern_approval(cursor, id, "DaDuyet")
+    if user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong":
+        create_notification(db, id, "Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt.")
     db.commit()
 
     return {
@@ -318,7 +441,7 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
     }
 
 @router.put("/users/{id}/reject")
-def reject_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def reject_user(id: int, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
     """
     Quản lý thực tập sinh (hoặc Admin) từ chối / khóa tài khoản
     """
@@ -330,14 +453,28 @@ def reject_user(id: int, request: Request, db: sqlite3.Connection = Depends(get_
         )
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("""
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.vai_tro, u.trang_thai,
+               h.trang_thai_xet_duyet AS trang_thai_ho_so, s.session_id
+        FROM NGUOI_DUNG u LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
+        LEFT JOIN HO_SO_THUC_TAP h ON h.ma_nguoi_dung = u.ma_nguoi_dung
+        WHERE u.ma_nguoi_dung = ?
+    """, (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
+    if user["vai_tro"] != "ThucTapSinh":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Chỉ có thể từ chối hồ sơ thực tập sinh.")
 
-    cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = 'Khoa' WHERE ma_nguoi_dung = ?", (id,))
     cursor.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet = 'TuChoi' WHERE ma_nguoi_dung = ?", (id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
+    sync_intern_approval(cursor, id, "TuChoi")
+    if user["trang_thai_ho_so"] != "TuChoi" or user["trang_thai"] != "Khoa":
+        create_notification(db, id, "Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết.")
     db.commit()
+    if user["session_id"]:
+        background_tasks.add_task(publish_force_logout, id, user["session_id"])
 
     return {
         "message": f"Đã từ chối/khóa tài khoản {user['ho_ten']}!",
@@ -364,7 +501,7 @@ def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: B
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Vai trò không hợp lệ: {data.vai_tro}")
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
@@ -379,10 +516,13 @@ def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: B
     if data.vai_tro == 'ThucTapSinh':
         cursor.execute("SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?", (id,))
         if not cursor.fetchone():
+            approval_status = "ChoDuyet" if user["trang_thai"] == "ChoDuyet" else "DaDuyet"
             cursor.execute("""
                 INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-                VALUES (?, 'Chưa cập nhật', 'DaDuyet', 'DangThucTap')
-            """, (id,))
+                VALUES (?, 'Chưa cập nhật', ?, 'DangThucTap')
+            """, (id, approval_status))
+    elif data.vai_tro == 'Mentor':
+        cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (id,))
 
     db.commit()
     cursor.execute("""
@@ -413,7 +553,7 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
         raise HTTPException(status_code=400, detail="Trạng thái không hợp lệ")
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
@@ -421,7 +561,27 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
     if user["ma_nguoi_dung"] == 1 and data.trang_thai != 'HoatDong':
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Không thể khóa tài khoản Quản trị viên gốc của hệ thống!")
 
+    profile_status_changed = False
+    if user["vai_tro"] == "ThucTapSinh" and data.trang_thai in ("HoatDong", "ChoDuyet"):
+        approval_status = "DaDuyet" if data.trang_thai == "HoatDong" else "ChoDuyet"
+        cursor.execute("SELECT ma_ho_so, trang_thai_xet_duyet FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?", (id,))
+        profile = cursor.fetchone()
+        profile_status_changed = not profile or profile["trang_thai_xet_duyet"] != approval_status
+        if profile:
+            cursor.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet = ? WHERE ma_nguoi_dung = ?", (approval_status, id))
+        else:
+            cursor.execute("""
+                INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet)
+                VALUES (?, 'Chưa cập nhật', ?)
+            """, (id, approval_status))
     cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = ? WHERE ma_nguoi_dung = ?", (data.trang_thai, id))
+    if user["trang_thai"] != data.trang_thai or profile_status_changed:
+        title, message = {
+            "HoatDong": ("Tài khoản đã được kích hoạt", "Tài khoản của bạn đã được kích hoạt."),
+            "ChoDuyet": ("Tài khoản đang chờ duyệt", "Tài khoản của bạn đang chờ xét duyệt."),
+            "Khoa": ("Tài khoản đã bị khóa", "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên."),
+        }[data.trang_thai]
+        create_notification(db, id, title, message)
     if data.trang_thai != "HoatDong":
         cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,))
     db.commit()
