@@ -4,7 +4,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from ..database import DB_FILE, get_db
@@ -39,20 +39,48 @@ def valid_file_content(extension: str, content: bytes) -> bool:
     return False
 
 
-@router.get("", response_model=list[DocumentDetail])
-def list_documents(request: Request, db: sqlite3.Connection = Depends(get_db)):
+@router.get("")
+def list_documents(
+    request: Request,
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, alias="pageSize", ge=1, le=100),
+    db: sqlite3.Connection = Depends(get_db),
+):
     require_role(request, "Admin", "HR")
-    rows = db.execute("""
-        SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.duong_dan_file,
-               d.kich_thuoc, d.loai_tai_lieu, d.ngay_tai_len,
-               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh
+    base_query = """
         FROM TAI_LIEU_HO_SO d
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         WHERE u.vai_tro = 'ThucTapSinh'
+    """
+    if page is not None or page_size is not None:
+        effective_size = page_size or 10
+        total_items = db.execute("SELECT COUNT(*) AS total_items " + base_query).fetchone()["total_items"]
+        total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
+        effective_page = min(page or 1, total_pages) if total_pages else 1
+        paging_clause = " LIMIT ? OFFSET ?"
+        paging_params = (effective_size, (effective_page - 1) * effective_size)
+    else:
+        total_items = total_pages = effective_page = None
+        paging_clause = ""
+        paging_params = ()
+    rows = db.execute("""
+        SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.duong_dan_file,
+               d.kich_thuoc, d.loai_tai_lieu, d.ngay_tai_len,
+               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh
+    """ + base_query + """
         ORDER BY d.ngay_tai_len DESC, d.ma_tai_lieu DESC
-    """).fetchall()
-    return [document_record(row) for row in rows]
+    """ + paging_clause, paging_params).fetchall()
+    items = [document_record(row) for row in rows]
+    if page is None and page_size is None:
+        return items
+    return {
+        "items": items,
+        "page": effective_page,
+        "pageSize": page_size or 10,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }
 
 
 @router.post("", response_model=DocumentDetail, status_code=status.HTTP_201_CREATED)
@@ -64,9 +92,11 @@ async def upload_document(
     db: sqlite3.Connection = Depends(get_db),
 ):
     user = require_role(request, "Admin", "HR", "ThucTapSinh")
+    if loai_tai_lieu not in {"CV", "DonXinThucTap", "GiayGioiThieu"}:
+        raise HTTPException(status_code=400, detail="Loại tài liệu không hợp lệ.")
     if user["vai_tro"] == "ThucTapSinh":
-        if loai_tai_lieu != "CV":
-            raise HTTPException(status_code=403, detail="Thực tập sinh chỉ được tự nộp CV.")
+        if loai_tai_lieu not in {"CV", "DonXinThucTap"}:
+            raise HTTPException(status_code=403, detail="Thực tập sinh chỉ được tự nộp CV hoặc đơn xin thực tập.")
         own_profile = db.execute(
             "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?",
             (user["ma_nguoi_dung"],),
@@ -76,9 +106,6 @@ async def upload_document(
         ma_ho_so = own_profile["ma_ho_so"]
     elif ma_ho_so is None:
         raise HTTPException(status_code=400, detail="Vui lòng chọn hồ sơ thực tập sinh.")
-    if loai_tai_lieu not in {"CV", "DonXinThucTap", "GiayGioiThieu"}:
-        raise HTTPException(status_code=400, detail="Loại tài liệu không hợp lệ.")
-
     intern = db.execute("""
         SELECT h.ma_ho_so FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung

@@ -4,6 +4,7 @@ import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
+import TablePagination from '../components/TablePagination';
 import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch, readJsonResponse } from '../utils/api';
@@ -20,6 +21,10 @@ export default function MentorManagementView({ departments, onShowToast, current
   const [profileForm, setProfileForm] = useState({ chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: '3' });
 
   const [mentors, setMentors] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalMentors, setTotalMentors] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const tableScrollRef = useRef(null);
@@ -35,37 +40,55 @@ export default function MentorManagementView({ departments, onShowToast, current
     mat_khau: ''
   });
 
-  const requestMentors = useCallback(async () => {
-    const response = await apiFetch('/api/mentors');
+  const requestMentors = useCallback(async (requestedPage, requestedPageSize, signal) => {
+    const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
+    const response = await apiFetch('/api/mentors?' + params.toString(), { signal });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách Mentor.');
     return data;
   }, []);
 
-  const refreshMentors = async () => {
-    setLoading(true);
+  const loadMentors = useCallback(async (requestedPage, requestedPageSize, signal) => {
     try {
-      setMentors(await requestMentors());
+      const data = await requestMentors(requestedPage, requestedPageSize, signal);
+      setMentors(Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []));
+      setPage(Array.isArray(data) ? 1 : Number(data.page) || requestedPage);
+      setPageSize(Array.isArray(data) ? requestedPageSize : Number(data.pageSize) || requestedPageSize);
+      setTotalMentors(Array.isArray(data) ? data.length : Number(data.totalItems) || 0);
+      setTotalPages(Array.isArray(data) ? (data.length ? 1 : 0) : Number(data.totalPages) || 0);
       setErrorMsg('');
       signalDashboardMetricsChanged();
     } catch (error) {
-      setErrorMsg(error.message);
+      if (error.name !== 'AbortError') setErrorMsg(error.message);
     } finally {
       setLoading(false);
     }
+  }, [requestMentors]);
+
+  const refreshMentors = () => {
+    setLoading(true);
+    return loadMentors(page, pageSize);
   };
 
   useEffect(() => {
     let current = true;
-    requestMentors().then((data) => {
-      if (current) setMentors(data);
-    }).catch((error) => {
-      if (current) setErrorMsg(error.message);
-    }).finally(() => {
-      if (current) setLoading(false);
-    });
-    return () => { current = false; };
-  }, [requestMentors]);
+    const controller = new AbortController();
+    requestMentors(page, pageSize, controller.signal)
+      .then((data) => {
+        if (!current) return;
+        const rows = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+        setMentors(rows);
+        setPage(Array.isArray(data) ? 1 : Number(data.page) || page);
+        setPageSize(Array.isArray(data) ? pageSize : Number(data.pageSize) || pageSize);
+        setTotalMentors(Array.isArray(data) ? rows.length : Number(data.totalItems) || 0);
+        setTotalPages(Array.isArray(data) ? (rows.length ? 1 : 0) : Number(data.totalPages) || 0);
+        setErrorMsg('');
+        signalDashboardMetricsChanged();
+      })
+      .catch((error) => { if (current && error.name !== 'AbortError') setErrorMsg(error.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; controller.abort(); };
+  }, [requestMentors, page, pageSize]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -94,7 +117,9 @@ export default function MentorManagementView({ departments, onShowToast, current
       onShowToast(data.message);
       setForm({ ho_ten: '', email: '', so_dien_thoai: '', ma_phong_ban: '', chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: 3, mat_khau: '' });
       setShowAddForm(false);
-      await refreshMentors();
+      setPage(1);
+      setLoading(true);
+      await loadMentors(1, pageSize);
     } catch (error) {
       onShowToast(error.message, 'error');
     }
@@ -329,7 +354,7 @@ export default function MentorManagementView({ departments, onShowToast, current
       <div className="card mentor-list-card">
         <div className="card-header">
           <div className="card-title-box">
-            <h2>Danh sách Người hướng dẫn{loading || errorMsg ? '' : ` (${mentors.length})`}</h2>
+            <h2>Danh sách Người hướng dẫn{loading || errorMsg ? '' : ` (${totalMentors})`}</h2>
           </div>
           <button type="button" className="btn btn-secondary btn-sm" onClick={refreshMentors} disabled={loading}>
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span>Làm mới</span>
@@ -427,6 +452,16 @@ export default function MentorManagementView({ departments, onShowToast, current
             </tbody>
           </table>
         </div>
+        <TablePagination
+          page={page}
+          pageSize={pageSize}
+          totalItems={totalMentors}
+          totalPages={totalPages}
+          itemLabel="Mentor"
+          disabled={loading}
+          onPageChange={(nextPage) => { setLoading(true); setPage(nextPage); }}
+          onPageSizeChange={(size) => { setLoading(true); setPage(1); setPageSize(size); }}
+        />
       </div>
 
       <FloatingTableScrollbar

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Query, Request, BackgroundTasks
 import sqlite3
 import re
+import math
 from datetime import date
 from typing import List, Optional, Dict, Any
 from ..database import get_db, hash_password
@@ -242,7 +243,7 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         "email": data.email.strip().lower()
     }
 
-@router.get("", response_model=List[InternDetail])
+@router.get("")
 def list_interns(
     request: Request,
     search: Optional[str] = Query(None, description="Tìm kiếm theo họ tên, email, chuyên ngành"),
@@ -250,24 +251,15 @@ def list_interns(
     trang_thai_thuc_tap: Optional[str] = Query(None, description="Lọc theo DangThucTap, HoanThanh, ThoiHoc"),
     ma_phong_ban: Optional[int] = Query(None, description="Lọc theo phòng ban"),
     ma_truong: Optional[int] = Query(None, description="Lọc theo trường đại học"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, alias="pageSize", ge=1, le=100),
     db: sqlite3.Connection = Depends(get_db)
 ):
     """
     Hỗ trợ giao diện US03 – Tìm kiếm & Lọc danh sách thực tập sinh
     """
     require_role(request, "Admin", "HR")
-    cursor = db.cursor()
-    query = """
-        SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
-               h.ma_truong, t.ten_truong,
-               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
-               h.ngay_tao,
-               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
-               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
-               mentor.so_dien_thoai AS mentor_so_dien_thoai,
-               mentor_department.ten_phong_ban AS mentor_phong_ban,
-               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
+    from_clause = """
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
@@ -279,31 +271,59 @@ def list_interns(
         LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
         WHERE u.vai_tro = 'ThucTapSinh'
     """
+    filters = []
     params = []
 
     if search:
-        query += " AND (u.ho_ten LIKE ? OR u.email LIKE ? OR h.chuyen_nganh LIKE ?)"
+        filters.append("(u.ho_ten LIKE ? OR u.email LIKE ? OR h.chuyen_nganh LIKE ?)")
         keyword = f"%{search}%"
         params.extend([keyword, keyword, keyword])
 
     if trang_thai_xet_duyet:
-        query += " AND h.trang_thai_xet_duyet = ?"
+        filters.append("h.trang_thai_xet_duyet = ?")
         params.append(trang_thai_xet_duyet)
 
     if trang_thai_thuc_tap:
-        query += " AND h.trang_thai_thuc_tap = ?"
+        filters.append("h.trang_thai_thuc_tap = ?")
         params.append(trang_thai_thuc_tap)
 
     if ma_phong_ban:
-        query += " AND u.ma_phong_ban = ?"
+        filters.append("u.ma_phong_ban = ?")
         params.append(ma_phong_ban)
 
     if ma_truong:
-        query += " AND h.ma_truong = ?"
+        filters.append("h.ma_truong = ?")
         params.append(ma_truong)
 
-    query += " ORDER BY h.ma_ho_so DESC"
+    if filters:
+        from_clause += " AND " + " AND ".join(filters)
 
-    cursor.execute(query, params)
+    cursor = db.cursor()
+    cursor.execute("SELECT COUNT(*) AS total_items " + from_clause, params)
+    total_items = cursor.fetchone()["total_items"]
+    total_pages = math.ceil(total_items / page_size) if total_items else 0
+    effective_page = min(page, total_pages) if total_pages else 1
+    offset = (effective_page - 1) * page_size
+
+    query = """
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
+               h.ma_truong, t.ten_truong,
+               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               h.ngay_tao,
+               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
+               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
+               mentor.so_dien_thoai AS mentor_so_dien_thoai,
+               mentor_department.ten_phong_ban AS mentor_phong_ban,
+               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
+    """
+    query += from_clause + " ORDER BY h.ma_ho_so DESC LIMIT ? OFFSET ?"
+    cursor.execute(query, [*params, page_size, offset])
     rows = cursor.fetchall()
-    return [dict(row) for row in rows]
+    return {
+        "items": [dict(row) for row in rows],
+        "page": effective_page,
+        "pageSize": page_size,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }

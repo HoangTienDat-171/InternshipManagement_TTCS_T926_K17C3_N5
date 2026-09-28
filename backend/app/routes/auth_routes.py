@@ -671,11 +671,13 @@ def change_password(user_id: int, data: PasswordChange, request: Request, backgr
     })
     return {"message": "Đổi mật khẩu thành công."}
 
-@router.get("/users", response_model=list)
+@router.get("/users")
 def get_all_users(
     request: Request,
     trang_thai: Optional[str] = Query(None, description="Lọc theo HoatDong, ChoDuyet, Khoa"),
     vai_tro: Optional[str] = Query(None, description="Lọc theo vai trò"),
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, alias="pageSize", ge=1, le=100),
     db: sqlite3.Connection = Depends(get_db)
 ):
     """
@@ -705,10 +707,33 @@ def get_all_users(
         query += " AND u.vai_tro = ?"
         params.append(vai_tro)
 
-    query += " ORDER BY u.ma_nguoi_dung DESC"
+    # Giữ phản hồi dạng mảng cho các client cũ chưa truyền tham số phân trang.
+    if page is None and page_size is None:
+        query += " ORDER BY u.ma_nguoi_dung DESC"
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    effective_size = page_size or 10
+    count_query = "SELECT COUNT(*) AS total_items FROM NGUOI_DUNG u LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban WHERE 1=1"
+    if trang_thai and isinstance(trang_thai, str):
+        count_query += " AND u.trang_thai = ?"
+    if vai_tro and isinstance(vai_tro, str):
+        count_query += " AND u.vai_tro = ?"
+    cursor.execute(count_query, params)
+    total_items = cursor.fetchone()["total_items"]
+    total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
+    effective_page = min(page or 1, total_pages) if total_pages else 1
+    query += " ORDER BY u.ma_nguoi_dung DESC LIMIT ? OFFSET ?"
+    params.extend([effective_size, (effective_page - 1) * effective_size])
     cursor.execute(query, params)
     rows = cursor.fetchall()
-    return [dict(row) for row in rows]
+    return {
+        "items": [dict(row) for row in rows],
+        "page": effective_page,
+        "pageSize": effective_size,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }
 
 @router.get("/security-audit-logs")
 def get_security_audit_logs(request: Request, db: sqlite3.Connection = Depends(get_db)):

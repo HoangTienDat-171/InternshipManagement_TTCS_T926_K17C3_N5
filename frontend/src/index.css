@@ -1063,7 +1063,20 @@ body { background: var(--bg-app); }
 }
 .intern-filter-bar .search-input-box { min-width: 260px; }
 .intern-filter-bar .filter-select { min-width: 142px; max-width: 185px; }
+@media (max-width: 1360px) {
+  .intern-filter-bar { flex-wrap: wrap; }
+  .intern-filter-bar .search-input-box { flex: 1 1 100%; min-width: 0; }
+  .intern-filter-bar .filter-select { flex: 1 1 170px; max-width: none; }
+  .intern-filter-bar > .btn { margin-left: auto; }
+}
 .intern-list-card { min-width: 0; }
+.table-pagination { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 18px; border-top: 1px solid var(--border-color); color: var(--text-muted); font-size: 12px; }
+.table-pagination-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.table-page-size { display: inline-flex; align-items: center; gap: 7px; margin-right: 6px; }
+.table-page-size .form-select { min-width: 68px; min-height: 32px; padding: 5px 26px 5px 9px; font-size: 12px; }
+.table-page-number { min-width: 32px; justify-content: center; padding: 6px; }
+.table-page-number.is-current { border-color: var(--primary-600); background: var(--primary-600); color: #fff; }
+.table-page-ellipsis, .table-page-count { padding: 0 4px; color: var(--text-muted); white-space: nowrap; }
 .intern-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
 .intern-table-scroll,
 .mentor-table-scroll,
@@ -1312,7 +1325,9 @@ body { background: var(--bg-app); }
 .program-detail-body h4 { color: #23263a; font-size: 12px; }
 .program-detail-body p { margin-top: 7px; color: var(--text-muted); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
 .program-applicants-dialog { width: min(1120px, calc(100vw - 32px)); max-width: 1120px; }
-.program-applicants-body { padding: 0; overflow: hidden; }
+.program-applicants-body { padding: 0; overflow: hidden; min-height: 0; }
+.program-applicants-scroll { max-height: min(58vh, calc(100vh - 270px)); overflow: auto; overscroll-behavior: contain; }
+.program-applicants-scroll thead th { position: sticky; top: 0; z-index: 1; }
 .program-applicants-table { min-width: 940px; }
 .program-applicants-table td { vertical-align: middle; }
 .program-applicants-table small { display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.45; }
@@ -1552,6 +1567,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .workspace-heading p { margin: 0; color: #78819b; font-size: 13px; }
 .intern-workspace-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .intern-workspace-actions .btn { white-space: nowrap; }
+.workspace-document-type { display: grid; gap: 3px; color: var(--text-muted); font-size: 10px; }
+.workspace-document-type .form-select { min-width: 142px; min-height: 34px; padding: 6px 32px 6px 9px; color: var(--text-body); font-size: 12px; }
 .intern-program-empty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .intern-program-empty p { flex: 1 1 360px; line-height: 1.6; }
 .workspace-empty > span { max-width: 460px; line-height: 1.6; }
@@ -1642,6 +1659,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .mentor-workspace-layout, .mentor-workspace-summary { grid-template-columns: 1fr; }
   .workspace-heading { align-items: flex-start; flex-direction: column; }
   .intern-workspace-actions { justify-content: flex-start; }
+  .table-pagination { align-items: flex-start; flex-direction: column; }
+  .table-pagination-controls { justify-content: flex-start; width: 100%; }
   .mentor-assignment-dialog { width: calc(100vw - 20px); }
 }
 

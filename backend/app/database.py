@@ -9,7 +9,10 @@ from pathlib import Path
 import pymysql
 from pymysql.cursors import DictCursor
 
-DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "internship.db")
+DB_FILE = os.path.abspath(os.getenv(
+    "IMS_SQLITE_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "internship.db"),
+))
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 

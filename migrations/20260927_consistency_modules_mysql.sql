@@ -1,6 +1,6 @@
 -- MySQL compatibility migration for document metadata and persistent mentor/program records.
--- The FastAPI application currently uses SQLite; do not run this file on SQLite.
-USE `Internship_Management`;
+-- The configured application runtime uses the internship_management MySQL schema.
+USE `internship_management`;
 
 DROP PROCEDURE IF EXISTS `_migrate_consistency_modules`;
 DELIMITER $$

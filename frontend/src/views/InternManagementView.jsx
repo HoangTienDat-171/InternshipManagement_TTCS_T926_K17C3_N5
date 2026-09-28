@@ -10,7 +10,9 @@ import {
   Mail,
   AlertCircle,
   Check,
-  XCircle
+  XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import InternModal from '../components/InternModal';
 import CustomSelect from '../components/CustomSelect';
@@ -27,6 +29,11 @@ export default function InternManagementView({
   const [interns, setInterns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   // Filter and Search states
   const [searchTerm, setSearchTerm] = useState('');
@@ -45,53 +52,45 @@ export default function InternManagementView({
   const [detailModalIntern, setDetailModalIntern] = useState(null);
   const tableScrollRef = useRef(null);
 
-  const requestInterns = useCallback(async (query = appliedSearch) => {
+  const requestInterns = useCallback(async ({ signal } = {}) => {
     const params = new URLSearchParams();
-    if (query) params.append('search', query);
+    if (appliedSearch) params.append('search', appliedSearch);
     if (filterDuyet) params.append('trang_thai_xet_duyet', filterDuyet);
     if (filterThucTap) params.append('trang_thai_thuc_tap', filterThucTap);
     if (filterPhongBan) params.append('ma_phong_ban', filterPhongBan);
     if (filterTruong) params.append('ma_truong', filterTruong);
+    params.append('page', page);
+    params.append('pageSize', pageSize);
 
-    const res = await apiFetch(`/api/interns?${params.toString()}`);
+    const res = await apiFetch(`/api/interns?${params.toString()}`, { signal });
     if (!res.ok) throw new Error('Không thể tải danh sách thực tập sinh');
     return res.json();
-  }, [appliedSearch, filterDuyet, filterThucTap, filterPhongBan, filterTruong]);
-
-  const fetchInterns = async (query = appliedSearch) => {
-    try {
-      const data = await requestInterns(query);
-      setInterns(data);
-      setErrorMsg('');
-      signalDashboardMetricsChanged();
-    } catch (err) {
-      setErrorMsg(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [appliedSearch, filterDuyet, filterThucTap, filterPhongBan, filterTruong, page, pageSize]);
 
   useEffect(() => {
-    let current = true;
-    requestInterns()
+    const controller = new AbortController();
+    requestInterns({ signal: controller.signal })
       .then((data) => {
-        if (current) {
-          setInterns(data);
-          setErrorMsg('');
-        }
+        if (controller.signal.aborted) return;
+        const items = Array.isArray(data.items) ? data.items : [];
+        setInterns(items);
+        setTotalItems(Number(data.totalItems) || 0);
+        setTotalPages(Number(data.totalPages) || 0);
+        setErrorMsg('');
+        signalDashboardMetricsChanged();
       })
       .catch((err) => {
-        if (current) setErrorMsg(err.message);
+        if (err.name !== 'AbortError' && !controller.signal.aborted) setErrorMsg(err.message);
       })
       .finally(() => {
-        if (current) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => { current = false; };
-  }, [requestInterns]);
+    return () => controller.abort();
+  }, [requestInterns, refreshVersion]);
 
   const refreshInterns = () => {
     setLoading(true);
-    fetchInterns();
+    setRefreshVersion((version) => version + 1);
   };
 
   const openInternModal = (internId = null) => {
@@ -103,8 +102,11 @@ export default function InternManagementView({
   const handleSearchSubmit = (e) => {
     e.preventDefault();
     setLoading(true);
-    if (searchTerm === appliedSearch) fetchInterns(searchTerm);
-    else setAppliedSearch(searchTerm);
+    const queryUnchanged = searchTerm === appliedSearch;
+    const alreadyFirstPage = page === 1;
+    setAppliedSearch(searchTerm);
+    setPage(1);
+    if (queryUnchanged && alreadyFirstPage) setRefreshVersion((version) => version + 1);
   };
 
   const handleResetFilters = () => {
@@ -116,8 +118,30 @@ export default function InternManagementView({
     setFilterThucTap('');
     setFilterPhongBan('');
     setFilterTruong('');
-    if (alreadyReset) fetchInterns('');
+    setPage(1);
+    if (alreadyReset && page === 1) setRefreshVersion((version) => version + 1);
   };
+
+  const changePage = (nextPage) => {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === page) return;
+    setLoading(true);
+    setPage(nextPage);
+  };
+
+  const changePageSize = (event) => {
+    setLoading(true);
+    setPageSize(Number(event.target.value));
+    setPage(1);
+  };
+
+  const currentPage = totalPages ? Math.min(page, totalPages) : 0;
+  const firstVisiblePage = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+  const visiblePages = Array.from(
+    { length: Math.min(totalPages, 5) },
+    (_, index) => firstVisiblePage + index,
+  );
+  const firstVisibleItem = totalItems === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+  const lastVisibleItem = Math.min(currentPage * pageSize, totalItems);
 
   const handleApproveIntern = async (intern) => {
     try {
@@ -226,7 +250,7 @@ export default function InternManagementView({
         <CustomSelect
           className="filter-select"
           value={filterDuyet}
-            onChange={(e) => { setLoading(true); setFilterDuyet(e.target.value); }}
+          onChange={(e) => { setLoading(true); setFilterDuyet(e.target.value); setPage(1); }}
         >
           <option value="">Xét duyệt: Tất cả</option>
           <option value="ChoDuyet">Chờ duyệt</option>
@@ -237,7 +261,7 @@ export default function InternManagementView({
         <CustomSelect
           className="filter-select"
           value={filterThucTap}
-            onChange={(e) => { setLoading(true); setFilterThucTap(e.target.value); }}
+          onChange={(e) => { setLoading(true); setFilterThucTap(e.target.value); setPage(1); }}
         >
           <option value="">Tiến độ: Tất cả</option>
           <option value="DangThucTap">Đang thực tập</option>
@@ -248,7 +272,7 @@ export default function InternManagementView({
         <CustomSelect
           className="filter-select"
           value={filterPhongBan}
-            onChange={(e) => { setLoading(true); setFilterPhongBan(e.target.value); }}
+          onChange={(e) => { setLoading(true); setFilterPhongBan(e.target.value); setPage(1); }}
         >
           <option value="">Phòng ban: Tất cả</option>
           {departments.map((d) => (
@@ -261,7 +285,7 @@ export default function InternManagementView({
         <CustomSelect
           className="filter-select"
           value={filterTruong}
-            onChange={(e) => { setLoading(true); setFilterTruong(e.target.value); }}
+          onChange={(e) => { setLoading(true); setFilterTruong(e.target.value); setPage(1); }}
         >
           <option value="">Trường ĐH: Tất cả</option>
           {universities.map((u) => (
@@ -286,7 +310,7 @@ export default function InternManagementView({
       <div className="card intern-list-card">
         <div className="card-header">
           <div className="card-title-box">
-            <h2>Hồ sơ sinh viên ({interns.length})</h2>
+            <h2>Hồ sơ sinh viên ({totalItems})</h2>
           </div>
           <button 
             className="btn btn-secondary btn-sm"
@@ -420,11 +444,43 @@ export default function InternManagementView({
             </tbody>
           </table>
         </div>
+        <div className="table-pagination" aria-label="Phân trang hồ sơ thực tập sinh">
+          <span className="table-pagination-summary">
+            Đang hiển thị {firstVisibleItem}–{lastVisibleItem} trên {totalItems} hồ sơ
+          </span>
+          <div className="table-pagination-controls">
+            <label className="table-page-size">
+              <span>Số dòng</span>
+              <select className="form-select" aria-label="Số dòng mỗi trang" value={pageSize} onChange={changePageSize}>
+                {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => changePage(currentPage - 1)} disabled={currentPage <= 1 || loading}>
+              <ChevronLeft size={15} /><span>Trước</span>
+            </button>
+            {totalPages > 5 && visiblePages[0] > 1 && <><button type="button" className="btn btn-secondary btn-sm" onClick={() => changePage(1)}>1</button><span className="table-page-ellipsis">…</span></>}
+            {visiblePages.map((pageNumber) => (
+              <button
+                key={pageNumber}
+                type="button"
+                className={`btn btn-sm table-page-number${pageNumber === currentPage ? ' is-current' : ''}`}
+                aria-current={pageNumber === currentPage ? 'page' : undefined}
+                onClick={() => changePage(pageNumber)}
+                disabled={loading}
+              >{pageNumber}</button>
+            ))}
+            {totalPages > 5 && visiblePages[visiblePages.length - 1] < totalPages && <><span className="table-page-ellipsis">…</span><button type="button" className="btn btn-secondary btn-sm" onClick={() => changePage(totalPages)}>{totalPages}</button></>}
+            <span className="table-page-count">Trang {currentPage} / {totalPages}</span>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => changePage(currentPage + 1)} disabled={currentPage >= totalPages || loading}>
+              <span>Tiếp</span><ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
       </div>
 
       <FloatingTableScrollbar
         scrollContainerRef={tableScrollRef}
-        refreshKey={`${interns.length}:${loading}`}
+        refreshKey={`${interns.length}:${loading}:${page}`}
         label="Cuộn ngang bảng thực tập sinh"
       />
 

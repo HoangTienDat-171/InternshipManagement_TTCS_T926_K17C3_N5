@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 
 from ..database import get_db
 from .document_routes import MAX_FILE_SIZE, UPLOAD_ROOT, valid_file_content
@@ -74,8 +74,13 @@ def get_program(db: sqlite3.Connection, program_id: int):
     return row
 
 
-@router.get("", response_model=list[ProgramDetail])
-def list_programs(request: Request, db: sqlite3.Connection = Depends(get_db)):
+@router.get("")
+def list_programs(
+    request: Request,
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, alias="pageSize", ge=1, le=100),
+    db: sqlite3.Connection = Depends(get_db),
+):
     user = require_role(request, "Admin", "HR", "ThucTapSinh")
     profile_id = None
     where_clause = ""
@@ -87,6 +92,21 @@ def list_programs(request: Request, db: sqlite3.Connection = Depends(get_db)):
         profile_id = profile["ma_ho_so"] if profile else None
         where_clause = "WHERE c.trang_thai = 'DangMo'"
 
+    paginated = page is not None or page_size is not None
+    effective_size = page_size or 10
+    if paginated:
+        count_clause = "WHERE c.trang_thai = 'DangMo'" if user["vai_tro"] == "ThucTapSinh" else ""
+        total_items = db.execute(
+            f"SELECT COUNT(*) AS total_items FROM CHUONG_TRINH_THUC_TAP c {count_clause}"
+        ).fetchone()["total_items"]
+        total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
+        effective_page = min(page or 1, total_pages) if total_pages else 1
+        limit_clause = " LIMIT ? OFFSET ?"
+        paging_params = (effective_size, (effective_page - 1) * effective_size)
+    else:
+        total_items = total_pages = effective_page = None
+        limit_clause = ""
+        paging_params = ()
     rows = db.execute(f"""
         SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ma_phong_ban,
                p.ten_phong_ban AS phong_ban, c.ngay_bat_dau, c.ngay_ket_thuc,
@@ -101,8 +121,17 @@ def list_programs(request: Request, db: sqlite3.Connection = Depends(get_db)):
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = c.ma_phong_ban
         {where_clause}
         ORDER BY c.ma_chuong_trinh DESC
-    """, (profile_id,)).fetchall()
-    return [dict(row) for row in rows]
+    """ + limit_clause, (profile_id, *paging_params)).fetchall()
+    items = [dict(row) for row in rows]
+    if not paginated:
+        return items
+    return {
+        "items": items,
+        "page": effective_page,
+        "pageSize": effective_size,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }
 
 
 @router.post("", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
@@ -268,14 +297,34 @@ async def apply_to_program(
     }
 
 
-@router.get("/{program_id}/applications", response_model=list[ProgramApplicationDetail])
+@router.get("/{program_id}/applications")
 def list_program_applications(
     program_id: int,
     request: Request,
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, alias="pageSize", ge=1, le=100),
     db: sqlite3.Connection = Depends(get_db),
 ):
     require_role(request, "Admin", "HR")
     get_program(db, program_id)
+    paginated = page is not None or page_size is not None
+    effective_size = page_size or 10
+    if paginated:
+        total_items = db.execute("""
+        SELECT COUNT(*) AS total_items
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        WHERE a.ma_chuong_trinh = ? AND u.vai_tro = 'ThucTapSinh'
+        """, (program_id,)).fetchone()["total_items"]
+        total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
+        effective_page = min(page or 1, total_pages) if total_pages else 1
+        limit_clause = " LIMIT ? OFFSET ?"
+        paging_params = (effective_size, (effective_page - 1) * effective_size)
+    else:
+        total_items = total_pages = effective_page = None
+        limit_clause = ""
+        paging_params = ()
     rows = db.execute("""
         SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, a.ma_ho_so,
                u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
@@ -287,9 +336,18 @@ def list_program_applications(
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
         WHERE a.ma_chuong_trinh = ? AND u.vai_tro = 'ThucTapSinh'
         ORDER BY CASE a.trang_thai WHEN 'ChoDuyet' THEN 0 WHEN 'DaDuyet' THEN 1 ELSE 2 END,
-                 a.ngay_ung_tuyen DESC
-    """, (program_id,)).fetchall()
-    return [dict(row) for row in rows]
+                 a.ngay_ung_tuyen DESC, a.ma_ung_tuyen DESC
+    """ + limit_clause, (program_id, *paging_params)).fetchall()
+    items = [dict(row) for row in rows]
+    if not paginated:
+        return items
+    return {
+        "items": items,
+        "page": effective_page,
+        "pageSize": effective_size,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }
 
 
 @router.put("/{program_id}/applications/{application_id}", response_model=dict[str, Any])
