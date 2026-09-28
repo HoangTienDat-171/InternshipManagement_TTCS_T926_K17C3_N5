@@ -1,5 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import CustomSelect from '../components/CustomSelect';
+import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
+import DashboardMetrics from '../components/DashboardMetrics';
+import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import {
   Check,
   Clock,
@@ -68,6 +72,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [applicants, setApplicants] = useState([]);
   const [applicantsLoading, setApplicantsLoading] = useState(false);
   const [pendingClose, setPendingClose] = useState(null);
+  const tableScrollRef = useRef(null);
 
   const requestPrograms = useCallback(async () => {
     const response = await apiFetch('/api/programs');
@@ -81,6 +86,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
     try {
       setPrograms(await requestPrograms());
       setErrorMsg('');
+      signalDashboardMetricsChanged();
     } catch (error) {
       setErrorMsg(error.message);
     } finally {
@@ -259,6 +265,8 @@ export default function ProgramManagementView({ departments, onShowToast, curren
         )}
       </div>
 
+      {isManager && <DashboardMetrics section="programs" />}
+
       {isAdmin && showForm && (
         <div className="card program-form-card">
           <div className="card-header">
@@ -278,12 +286,12 @@ export default function ProgramManagementView({ departments, onShowToast, curren
               </div>
               <div className="form-group">
                 <label className="form-label">Phòng ban <span className="required">*</span></label>
-                <select name="ma_phong_ban" className="form-select" required value={form.ma_phong_ban} onChange={handleChange}>
+                <CustomSelect name="ma_phong_ban" className="form-select" required value={form.ma_phong_ban} onChange={handleChange}>
                   <option value="">-- Chọn phòng ban --</option>
                   {departments.map((department) => (
                     <option key={department.ma_phong_ban} value={department.ma_phong_ban}>{department.ten_phong_ban}</option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
               <div className="form-group">
                 <label className="form-label">Chỉ tiêu số lượng <span className="required">*</span></label>
@@ -327,7 +335,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span>Làm mới</span>
           </button>
         </div>
-        <div className="table-responsive program-table-scroll">
+        <div className="table-responsive program-table-scroll" ref={tableScrollRef}>
           <table className="data-table program-data-table">
             <thead><tr>
               <th>Mã CT</th><th>Tên chương trình</th><th>Phòng ban</th><th>Thời gian</th>
@@ -361,6 +369,12 @@ export default function ProgramManagementView({ departments, onShowToast, curren
           </table>
         </div>
       </div>
+
+      <FloatingTableScrollbar
+        scrollContainerRef={tableScrollRef}
+        refreshKey={`${programs.length}:${loading}:${isManager}`}
+        label="Cuộn ngang danh sách chương trình thực tập"
+      />
 
       {detailProgram && (
         <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && setDetailProgram(null)}>

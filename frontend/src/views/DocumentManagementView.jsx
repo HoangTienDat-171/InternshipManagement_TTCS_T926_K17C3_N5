@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { FolderUp, FileText, UploadCloud, Eye, Check, XCircle, RefreshCw } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import CustomSelect from '../components/CustomSelect';
 
 const typeLabels = {
   CV: 'CV',
@@ -168,18 +169,18 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
           <div className="form-grid document-upload-fields">
             <div className="form-group">
               <label className="form-label" htmlFor="document-intern">Thực tập sinh nộp tài liệu</label>
-              <select id="document-intern" className="form-select" value={selectedIntern} required onChange={(event) => setSelectedIntern(event.target.value)}>
+              <CustomSelect id="document-intern" className="form-select" value={selectedIntern} required onChange={(event) => setSelectedIntern(event.target.value)}>
                 <option value="">-- Chọn hồ sơ --</option>
                 {interns.map((intern) => <option key={intern.ma_ho_so} value={intern.ma_ho_so}>{intern.ho_ten} · #{intern.ma_ho_so}</option>)}
-              </select>
+              </CustomSelect>
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="document-type">Loại tài liệu</label>
-              <select id="document-type" className="form-select" value={selectedType} onChange={(event) => setSelectedType(event.target.value)}>
+              <CustomSelect id="document-type" className="form-select" value={selectedType} onChange={(event) => setSelectedType(event.target.value)}>
                 <option value="CV">CV ứng tuyển</option>
                 <option value="DonXinThucTap">Đơn xin thực tập</option>
                 <option value="GiayGioiThieu">Giấy giới thiệu từ nhà trường</option>
-              </select>
+              </CustomSelect>
             </div>
           </div>
 

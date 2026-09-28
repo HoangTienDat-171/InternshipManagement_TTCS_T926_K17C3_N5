@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, X } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
+import CustomSelect from '../components/CustomSelect';
 import ConfirmDialog from '../components/ConfirmDialog';
+import DashboardMetrics from '../components/DashboardMetrics';
+import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
@@ -41,6 +44,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
     try {
       setUsers(await requestUsers());
       setErrorMsg('');
+      signalDashboardMetricsChanged();
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -292,6 +296,8 @@ export default function AccountManagementView({ departments, onShowToast, curren
         </div>
       </div>
 
+      <DashboardMetrics section="accounts" />
+
       <div className="card account-management-card">
           <div className="card-header">
             <div className="card-title-box">
@@ -359,7 +365,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
                       {/* Phân quyền Vai trò */}
                       <td>
                         {isAdmin ? (
-                          <select
+                          <CustomSelect
                             className="form-select"
                             style={{ padding: '4px 8px', fontSize: '12px', width: 'auto', fontWeight: 600 }}
                             value={u.vai_tro}
@@ -370,7 +376,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
                             <option value="HR">Quản lý thực tập sinh</option>
                             <option value="Mentor">Mentor</option>
                             <option value="ThucTapSinh">Thực tập sinh</option>
-                          </select>
+                          </CustomSelect>
                         ) : (
                           getRoleBadge(u.vai_tro)
                         )}
@@ -466,19 +472,19 @@ export default function AccountManagementView({ departments, onShowToast, curren
                 <PhoneField value={formData.so_dien_thoai} onChange={(value) => setFormData((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0988776655" />
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-role">Vai trò ban đầu</label>
-                  <select id="new-user-role" name="vai_tro" className="form-select" value={formData.vai_tro} onChange={handleChange}>
+                  <CustomSelect id="new-user-role" name="vai_tro" className="form-select" value={formData.vai_tro} onChange={handleChange}>
                     <option value="ThucTapSinh">Thực tập sinh (Mặc định)</option>
                     <option value="Mentor">Mentor (Người hướng dẫn)</option>
                     <option value="HR">Quản lý thực tập sinh</option>
                     <option value="Admin">Admin (Quản trị viên)</option>
-                  </select>
+                  </CustomSelect>
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-department">Phòng ban</label>
-                  <select id="new-user-department" name="ma_phong_ban" className="form-select" value={formData.ma_phong_ban} onChange={handleChange}>
+                  <CustomSelect id="new-user-department" name="ma_phong_ban" className="form-select" value={formData.ma_phong_ban} onChange={handleChange}>
                     <option value="">-- Không chỉ định --</option>
                     {departments.map((d) => <option key={d.ma_phong_ban} value={d.ma_phong_ban}>{d.ten_phong_ban}</option>)}
-                  </select>
+                  </CustomSelect>
                 </div>
               </form>
             </div>

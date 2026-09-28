@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { UserPlus, Mail, Phone, RefreshCw, Users, Pencil, X, UserRoundPlus, Trash2 } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
+import CustomSelect from '../components/CustomSelect';
+import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
+import DashboardMetrics from '../components/DashboardMetrics';
+import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
@@ -18,6 +22,7 @@ export default function MentorManagementView({ departments, onShowToast, current
   const [mentors, setMentors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
+  const tableScrollRef = useRef(null);
 
   const [form, setForm] = useState({
     ho_ten: '',
@@ -42,6 +47,7 @@ export default function MentorManagementView({ departments, onShowToast, current
     try {
       setMentors(await requestMentors());
       setErrorMsg('');
+      signalDashboardMetricsChanged();
     } catch (error) {
       setErrorMsg(error.message);
     } finally {
@@ -213,6 +219,8 @@ export default function MentorManagementView({ departments, onShowToast, current
         </button>
       </div>
 
+      <DashboardMetrics section="mentors" />
+
       {/* Form Thêm mới Mentor */}
       {showAddForm && (
         <div className="card" style={{ marginBottom: '24px' }}>
@@ -263,7 +271,7 @@ export default function MentorManagementView({ departments, onShowToast, current
 
               <div className="form-group">
                 <label className="form-label">Phòng ban</label>
-                <select
+                <CustomSelect
                   name="ma_phong_ban"
                   className="form-select"
                   value={form.ma_phong_ban}
@@ -275,7 +283,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                       {d.ten_phong_ban}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group">
@@ -328,7 +336,7 @@ export default function MentorManagementView({ departments, onShowToast, current
           </button>
         </div>
 
-        <div className="table-responsive mentor-table-scroll">
+        <div className="table-responsive mentor-table-scroll" ref={tableScrollRef}>
           <table className="data-table mentor-data-table">
             <colgroup>
               <col className="mentor-col-name" />
@@ -420,6 +428,12 @@ export default function MentorManagementView({ departments, onShowToast, current
           </table>
         </div>
       </div>
+
+      <FloatingTableScrollbar
+        scrollContainerRef={tableScrollRef}
+        refreshKey={`${mentors.length}:${loading}`}
+        label="Cuộn ngang danh sách Mentor"
+      />
 
       {editingMentor && <div className="modal-overlay" onClick={() => setEditingMentor(null)}>
         <div className="modal-container" onClick={(e) => e.stopPropagation()}>

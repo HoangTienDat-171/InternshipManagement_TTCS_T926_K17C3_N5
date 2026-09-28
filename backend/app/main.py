@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .security import get_session_user, session_connections
-from .routes import auth_routes, document_routes, intern_routes, master_routes, mentor_routes, notification_routes, program_routes
+from .routes import auth_routes, document_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -34,6 +34,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+SESSION_REVALIDATION_INTERVAL_SECONDS = 5
 
 
 @app.middleware("http")
@@ -78,6 +80,7 @@ app.include_router(document_routes.router)
 app.include_router(mentor_routes.router)
 app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
+app.include_router(metrics_routes.router)
 
 
 @app.websocket("/api/auth/events")
@@ -92,13 +95,16 @@ async def session_events(websocket: WebSocket, token: str = ""):
         while True:
             # Revalidate after network interruptions and periodically while connected.
             try:
-                await asyncio.wait_for(websocket.receive_text(), timeout=20)
+                await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=SESSION_REVALIDATION_INTERVAL_SECONDS,
+                )
             except asyncio.TimeoutError:
                 pass
             if not get_session_user(token):
                 await websocket.send_json({
                     "type": "FORCE_LOGOUT",
-                    "message": "Tài khoản của bạn vừa được đăng nhập trên một thiết bị khác.",
+                    "message": "Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.",
                 })
                 await websocket.close(code=4401)
                 break

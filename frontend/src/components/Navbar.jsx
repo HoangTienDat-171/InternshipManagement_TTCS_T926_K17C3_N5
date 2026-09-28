@@ -1,11 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown, Bell } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown, Bell, Menu, Moon, Sun } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({ 
   currentUser, 
   onLogout, 
-  onOpenAccount
+  onOpenAccount,
+  onToggleSidebar,
+  sidebarOpen = false,
+  theme = 'light',
+  onToggleTheme
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -51,7 +55,9 @@ export default function Navbar({
   const formatNotificationDate = (value) => {
     if (!value) return '';
     const normalized = value.includes('T') ? value : value.replace(' ', 'T');
-    const date = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(normalized) ? normalized : `${normalized}Z`);
+    // MySQL DATETIME values have no timezone; parse them as local wall-clock time.
+    // Appending Z here incorrectly shifted local database timestamps by UTC+7.
+    const date = new Date(normalized);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
   };
 
@@ -76,6 +82,16 @@ export default function Navbar({
   return (
     <header className="top-navbar">
       <div className="navbar-title-group">
+        <button
+          type="button"
+          className="navigation-toggle"
+          aria-label={sidebarOpen ? 'Thu gọn danh mục' : 'Mở danh mục'}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-navigation"
+          onClick={onToggleSidebar}
+        >
+          <Menu size={20} />
+        </button>
         <h2 className="navbar-title" style={{ fontSize: '17px', fontWeight: 700 }}>
           Hệ thống Quản lý Thực tập sinh
         </h2>
@@ -108,6 +124,16 @@ export default function Navbar({
             </>}
           </div>
         )}
+        <button
+          type="button"
+          className="theme-toggle"
+          aria-label={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}
+          aria-pressed={theme === 'dark'}
+          title={theme === 'dark' ? 'Giao diện tối' : 'Giao diện sáng'}
+          onClick={onToggleTheme}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
         {currentUser && (
           <div className="account-menu-wrap">
             <button type="button" className="account-menu-trigger" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>

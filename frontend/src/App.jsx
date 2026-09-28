@@ -49,6 +49,15 @@ export default function App() {
     try { return Boolean(JSON.parse(localStorage.getItem('ims_preferences'))?.compact); }
     catch { return false; }
   });
+  const [theme, setTheme] = useState(() => {
+    let savedTheme = 'light';
+    try { savedTheme = localStorage.getItem('ims_theme') === 'dark' ? 'dark' : 'light'; }
+    catch { /* Keep the light theme when storage is unavailable. */ }
+    document.documentElement.dataset.theme = savedTheme;
+    return savedTheme;
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [accountSection, setAccountSection] = useState('profile');
   const [sessionNotice, setSessionNotice] = useState('');
 
@@ -66,6 +75,46 @@ export default function App() {
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   useEffect(() => {
+    const handleSessionExpired = (event) => {
+      const expiredToken = event.detail?.token;
+      if (expiredToken && localStorage.getItem('ims_token') !== expiredToken) return;
+
+      localStorage.removeItem('ims_token');
+      localStorage.removeItem('ims_user');
+      setCurrentUser(null);
+      setSessionNotice(event.detail?.message || 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.');
+    };
+
+    window.addEventListener('ims-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('ims-session-expired', handleSessionExpired);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('ims_theme', theme); }
+    catch { /* The active theme still works for this session without storage. */ }
+  }, [theme]);
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    const closeOnDesktop = () => {
+      if (window.innerWidth > 1000) setSidebarOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('resize', closeOnDesktop);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('resize', closeOnDesktop);
+    };
+  }, [sidebarOpen]);
+
+  useEffect(() => {
     const handlePreferencesChange = (event) => setCompactLayout(Boolean(event.detail?.compact));
     window.addEventListener('ims-preferences-change', handlePreferencesChange);
     return () => window.removeEventListener('ims-preferences-change', handlePreferencesChange);
@@ -73,18 +122,24 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUserId) return;
+    const token = localStorage.getItem('ims_token');
+    if (!token) return;
     apiFetch('/api/auth/me')
       .then(async (response) => {
         if (!response.ok) throw new Error('Phiên đăng nhập không còn hợp lệ.');
         const user = await response.json();
+        if (localStorage.getItem('ims_token') !== token) return;
         localStorage.setItem('ims_user', JSON.stringify(user));
         setCurrentUser(user);
       })
       .catch(() => {
-        localStorage.removeItem('ims_token');
-        localStorage.removeItem('ims_user');
-        setCurrentUser(null);
-        setSessionNotice('Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.');
+        if (localStorage.getItem('ims_token') !== token) return;
+        window.dispatchEvent(new CustomEvent('ims-session-expired', {
+          detail: {
+            token,
+            message: 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.',
+          },
+        }));
       });
   }, [currentUserId]);
 
@@ -138,10 +193,9 @@ export default function App() {
         const message = JSON.parse(event.data);
         if (message.type === 'FORCE_LOGOUT') {
           disposed = true;
-          localStorage.removeItem('ims_token');
-          localStorage.removeItem('ims_user');
-          setCurrentUser(null);
-          setSessionNotice(message.message || 'Phiên đăng nhập đã bị kết thúc.');
+          window.dispatchEvent(new CustomEvent('ims-session-expired', {
+            detail: { token, message: message.message },
+          }));
         } else if (message.type === 'ACCOUNT_UPDATED' && message.user) {
           setCurrentUser((previous) => {
             const updated = { ...previous, ...message.user };
@@ -156,10 +210,9 @@ export default function App() {
         window.clearInterval(heartbeatTimer);
         if (event.code === 4401) {
           disposed = true;
-          localStorage.removeItem('ims_token');
-          localStorage.removeItem('ims_user');
-          setCurrentUser(null);
-          setSessionNotice('Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.');
+          window.dispatchEvent(new CustomEvent('ims-session-expired', {
+            detail: { token, message: 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.' },
+          }));
         } else if (!disposed) {
           reconnectTimer = window.setTimeout(connect, 2000);
         }
@@ -176,6 +229,7 @@ export default function App() {
 
   const handleLoginSuccess = (user) => {
     setSessionNotice('');
+    setSidebarOpen(false);
     setCurrentUser(user);
     showToast(`Đăng nhập thành công! Chào mừng ${user.ho_ten}.`);
   };
@@ -188,8 +242,17 @@ export default function App() {
     }
     localStorage.removeItem('ims_token');
     localStorage.removeItem('ims_user');
+    setSidebarOpen(false);
     setCurrentUser(null);
     showToast('Đã đăng xuất khỏi hệ thống.');
+  };
+
+  const handleNavigationToggle = () => {
+    if (window.innerWidth <= 1000) {
+      setSidebarOpen((open) => !open);
+      return;
+    }
+    setDesktopSidebarCollapsed((collapsed) => !collapsed);
   };
 
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
@@ -205,7 +268,7 @@ export default function App() {
 
   // TRANG CHỦ HỆ THỐNG
   return (
-    <div className={`app-layout${compactLayout ? ' compact' : ''}`}>
+    <div className={`app-layout${compactLayout ? ' compact' : ''}${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       {/* Toast Notification */}
       {toast && (
         <div style={{
@@ -235,7 +298,18 @@ export default function App() {
         activeTab={visibleActiveTab}
         onTabChange={setActiveTab}
         currentUser={currentUser}
+        isOpen={sidebarOpen}
+        isCollapsed={window.innerWidth > 1000 && desktopSidebarCollapsed}
+        onClose={() => setSidebarOpen(false)}
       />
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-overlay"
+          aria-label="Đóng danh mục"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* Main Content Area */}
       <div className="app-main">
@@ -244,6 +318,10 @@ export default function App() {
           currentUser={currentUser}
           onLogout={handleLogout}
           onOpenAccount={(section) => { setAccountSection(section); setActiveTab('profile'); }}
+          onToggleSidebar={handleNavigationToggle}
+          sidebarOpen={window.innerWidth <= 1000 ? sidebarOpen : !desktopSidebarCollapsed}
+          theme={theme}
+          onToggleTheme={() => setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')}
         />
 
         <main className="content-wrapper">
@@ -288,7 +366,7 @@ export default function App() {
           )}
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-dashboard' && (
-            <InternWorkspaceView currentUser={currentUser} />
+            <InternWorkspaceView currentUser={currentUser} onNavigatePrograms={() => setActiveTab('programs')} />
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (

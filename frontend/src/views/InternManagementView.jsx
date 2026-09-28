@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../utils/api';
 import { 
   Search, 
@@ -13,6 +13,10 @@ import {
   XCircle
 } from 'lucide-react';
 import InternModal from '../components/InternModal';
+import CustomSelect from '../components/CustomSelect';
+import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
+import DashboardMetrics from '../components/DashboardMetrics';
+import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 
 export default function InternManagementView({ 
   departments, 
@@ -39,6 +43,7 @@ export default function InternManagementView({
 
   // Detail view modal
   const [detailModalIntern, setDetailModalIntern] = useState(null);
+  const tableScrollRef = useRef(null);
 
   const requestInterns = useCallback(async (query = appliedSearch) => {
     const params = new URLSearchParams();
@@ -58,6 +63,7 @@ export default function InternManagementView({
       const data = await requestInterns(query);
       setInterns(data);
       setErrorMsg('');
+      signalDashboardMetricsChanged();
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -196,6 +202,8 @@ export default function InternManagementView({
         </button>
       </div>
 
+      <DashboardMetrics section="interns" filters={{ ma_phong_ban: filterPhongBan, ma_truong: filterTruong }} />
+
       {errorMsg && (
         <div className="alert-banner error" style={{ padding: '10px 14px', marginBottom: '16px' }}>
           <AlertCircle size={16} />
@@ -215,7 +223,7 @@ export default function InternManagementView({
           />
         </form>
 
-        <select 
+        <CustomSelect
           className="filter-select"
           value={filterDuyet}
             onChange={(e) => { setLoading(true); setFilterDuyet(e.target.value); }}
@@ -224,9 +232,9 @@ export default function InternManagementView({
           <option value="ChoDuyet">Chờ duyệt</option>
           <option value="DaDuyet">Đã duyệt</option>
           <option value="TuChoi">Từ chối</option>
-        </select>
+        </CustomSelect>
 
-        <select 
+        <CustomSelect
           className="filter-select"
           value={filterThucTap}
             onChange={(e) => { setLoading(true); setFilterThucTap(e.target.value); }}
@@ -235,9 +243,9 @@ export default function InternManagementView({
           <option value="DangThucTap">Đang thực tập</option>
           <option value="HoanThanh">Hoàn thành</option>
           <option value="ThoiHoc">Thôi học</option>
-        </select>
+        </CustomSelect>
 
-        <select 
+        <CustomSelect
           className="filter-select"
           value={filterPhongBan}
             onChange={(e) => { setLoading(true); setFilterPhongBan(e.target.value); }}
@@ -248,9 +256,9 @@ export default function InternManagementView({
               {d.ten_phong_ban}
             </option>
           ))}
-        </select>
+        </CustomSelect>
 
-        <select 
+        <CustomSelect
           className="filter-select"
           value={filterTruong}
             onChange={(e) => { setLoading(true); setFilterTruong(e.target.value); }}
@@ -261,7 +269,7 @@ export default function InternManagementView({
               {u.ten_truong}
             </option>
           ))}
-        </select>
+        </CustomSelect>
 
         <button 
           type="button" 
@@ -290,8 +298,8 @@ export default function InternManagementView({
           </button>
         </div>
 
-        <div className="table-responsive intern-table-scroll">
-          <table className="data-table intern-data-table">
+        <div className="table-responsive intern-table-scroll" ref={tableScrollRef}>
+          <table id="intern-management-table" className="data-table intern-data-table">
             <colgroup>
               <col className="intern-col-id" />
               <col className="intern-col-name" />
@@ -414,6 +422,12 @@ export default function InternManagementView({
         </div>
       </div>
 
+      <FloatingTableScrollbar
+        scrollContainerRef={tableScrollRef}
+        refreshKey={`${interns.length}:${loading}`}
+        label="Cuộn ngang bảng thực tập sinh"
+      />
+
       {/* Intern Create/Edit Modal */}
       <InternModal
         key={modalSession}
@@ -469,6 +483,22 @@ export default function InternManagementView({
                 <div>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Trạng thái thực tập:</span>
                   <div>{getThucTapBadge(detailModalIntern.trang_thai_thuc_tap)}</div>
+                </div>
+                <div style={{ gridColumn: '1 / -1', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Mentor phụ trách:</span>
+                  {detailModalIntern.mentor_ho_ten ? (
+                    <div style={{ marginTop: '4px' }}>
+                      <div style={{ fontWeight: 600, fontSize: '15px' }}>{detailModalIntern.mentor_ho_ten}</div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                        {[detailModalIntern.mentor_email, detailModalIntern.mentor_so_dien_thoai, detailModalIntern.mentor_phong_ban].filter(Boolean).join(' · ') || 'Chưa cập nhật thông tin liên hệ'}
+                      </div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Chuyên môn: {detailModalIntern.mentor_chuyen_mon || 'Chưa cập nhật'} · Kinh nghiệm: {detailModalIntern.mentor_kinh_nghiem != null ? `${detailModalIntern.mentor_kinh_nghiem} năm` : 'Chưa cập nhật'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>Chưa được phân công Mentor.</div>
+                  )}
                 </div>
               </div>
             </div>
