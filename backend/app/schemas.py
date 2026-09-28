@@ -76,6 +76,13 @@ class InternDetail(BaseModel):
     trang_thai_xet_duyet: str
     trang_thai_thuc_tap: str
     ngay_tao: Optional[str] = None
+    mentor_ma_nguoi_dung: Optional[int] = None
+    mentor_ho_ten: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_so_dien_thoai: Optional[str] = None
+    mentor_phong_ban: Optional[str] = None
+    mentor_chuyen_mon: Optional[str] = None
+    mentor_kinh_nghiem: Optional[int] = None
 
 class Department(BaseModel):
     ma_phong_ban: int

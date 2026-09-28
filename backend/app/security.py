@@ -71,7 +71,7 @@ session_connections = SessionConnections()
 async def publish_force_logout(user_id: int, session_id: str | None = None):
     await session_connections.publish(user_id, {
         "type": "FORCE_LOGOUT",
-        "message": "Tài khoản của bạn vừa được đăng nhập trên một thiết bị khác.",
+        "message": "Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.",
     }, session_id)
 
 

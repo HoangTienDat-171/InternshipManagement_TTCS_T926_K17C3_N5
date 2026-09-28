@@ -7,10 +7,11 @@ import {
   Building2,
   GraduationCap,
   LayoutDashboard,
-  UsersRound
+  UsersRound,
+  X
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, onTabChange, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, currentUser, isOpen = false, isCollapsed = false, onClose }) {
   const isAdmin = currentUser?.vai_tro === 'Admin';
   const canManage = isAdmin || currentUser?.vai_tro === 'HR';
   const canViewPrograms = canManage || currentUser?.vai_tro === 'ThucTapSinh';
@@ -50,7 +51,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser }) {
   ];
 
   return (
-    <aside className="app-sidebar">
+    <aside id="app-navigation" className={`app-sidebar${isOpen ? ' is-open' : ''}`} aria-hidden={isCollapsed ? 'true' : undefined}>
       <div className="sidebar-header">
         <div className="brand-icon">
           <Building2 size={22} />
@@ -59,6 +60,9 @@ export default function Sidebar({ activeTab, onTabChange, currentUser }) {
           <h1>IMS PORTAL</h1>
           <span>Quản lý thực tập sinh</span>
         </div>
+        <button type="button" className="sidebar-close" aria-label="Đóng danh mục" onClick={onClose}>
+          <X size={20} />
+        </button>
       </div>
 
       <nav className="sidebar-nav">
@@ -68,7 +72,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser }) {
             key={item.id}
             type="button"
             className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => onTabChange(item.id)}
+            onClick={() => { onTabChange(item.id); onClose?.(); }}
           >
             {item.icon}
             <span>{item.label}</span>

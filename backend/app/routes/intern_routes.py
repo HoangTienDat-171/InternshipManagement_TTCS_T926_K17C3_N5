@@ -132,11 +132,21 @@ def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends
         SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
                h.ma_truong, t.ten_truong, h.chuyen_nganh, h.trang_thai_xet_duyet,
-               h.trang_thai_thuc_tap, h.ngay_tao
+               h.trang_thai_thuc_tap, h.ngay_tao,
+               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
+               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
+               mentor.so_dien_thoai AS mentor_so_dien_thoai,
+               mentor_department.ten_phong_ban AS mentor_phong_ban,
+               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
+        LEFT JOIN PHAN_CONG_MENTOR_TTS assignment ON assignment.ma_ho_so = h.ma_ho_so
+        LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
+            AND mentor.vai_tro = 'Mentor'
+        LEFT JOIN PHONG_BAN mentor_department ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
     
@@ -252,11 +262,21 @@ def list_interns(
                u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
                h.ma_truong, t.ten_truong,
                h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
-               h.ngay_tao
+               h.ngay_tao,
+               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
+               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
+               mentor.so_dien_thoai AS mentor_so_dien_thoai,
+               mentor_department.ten_phong_ban AS mentor_phong_ban,
+               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
+        LEFT JOIN PHAN_CONG_MENTOR_TTS assignment ON assignment.ma_ho_so = h.ma_ho_so
+        LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
+            AND mentor.vai_tro = 'Mentor'
+        LEFT JOIN PHONG_BAN mentor_department ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
         WHERE u.vai_tro = 'ThucTapSinh'
     """
     params = []

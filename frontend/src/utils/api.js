@@ -2,7 +2,24 @@ export function apiFetch(input, init = {}) {
   const headers = new Headers(init.headers || {});
   const token = localStorage.getItem('ims_token');
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+
+  return fetch(input, { ...init, headers }).then((response) => {
+    const requestUrl = typeof input === 'string' || input instanceof URL ? input : input.url;
+    const requestPath = new URL(requestUrl, window.location.origin).pathname;
+    const publicAuthPaths = ['/api/auth/login', '/api/auth/register', '/api/auth/register-with-cv'];
+
+    if (response.status === 401 && token && !publicAuthPaths.includes(requestPath)
+      && localStorage.getItem('ims_token') === token) {
+      window.dispatchEvent(new CustomEvent('ims-session-expired', {
+        detail: {
+          token,
+          message: 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.',
+        },
+      }));
+    }
+
+    return response;
+  });
 }
 
 export async function readJsonResponse(response) {

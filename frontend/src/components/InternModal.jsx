@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import PhoneField from './PhoneField';
+import CustomSelect from './CustomSelect';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
@@ -178,7 +179,7 @@ export default function InternModal({
 
               <div className="form-group">
                 <label className="form-label">Trường Đại học</label>
-                <select
+                <CustomSelect
                   name="ma_truong"
                   className="form-select"
                   value={formData.ma_truong}
@@ -190,7 +191,7 @@ export default function InternModal({
                       {u.ten_truong}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group">
@@ -207,7 +208,7 @@ export default function InternModal({
 
               <div className="form-group">
                 <label className="form-label">Phòng ban</label>
-                <select
+                <CustomSelect
                   name="ma_phong_ban"
                   className="form-select"
                   value={formData.ma_phong_ban}
@@ -219,12 +220,12 @@ export default function InternModal({
                       {d.ten_phong_ban}
                     </option>
                   ))}
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group">
                 <label className="form-label">Xét duyệt</label>
-                <select
+                <CustomSelect
                   name="trang_thai_xet_duyet"
                   className="form-select"
                   value={formData.trang_thai_xet_duyet}
@@ -233,12 +234,12 @@ export default function InternModal({
                   <option value="ChoDuyet">Chờ duyệt</option>
                   <option value="DaDuyet">Đã duyệt</option>
                   <option value="TuChoi">Từ chối</option>
-                </select>
+                </CustomSelect>
               </div>
 
               <div className="form-group">
                 <label className="form-label">Trạng thái</label>
-                <select
+                <CustomSelect
                   name="trang_thai_thuc_tap"
                   className="form-select"
                   value={formData.trang_thai_thuc_tap}
@@ -247,7 +248,7 @@ export default function InternModal({
                   <option value="DangThucTap">Đang thực tập</option>
                   <option value="HoanThanh">Hoàn thành</option>
                   <option value="ThoiHoc">Thôi học</option>
-                </select>
+                </CustomSelect>
               </div>
             </form>
           )}
