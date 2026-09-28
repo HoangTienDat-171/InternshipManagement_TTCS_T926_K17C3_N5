@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { FolderUp, FileText, UploadCloud, Eye, Check, XCircle, RefreshCw } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
 import CustomSelect from '../components/CustomSelect';
+import TablePagination from '../components/TablePagination';
 
 const typeLabels = {
   CV: 'CV',
@@ -21,6 +22,10 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
   const canManage = ['Admin', 'HR'].includes(currentUser?.vai_tro);
   const [documents, setDocuments] = useState([]);
   const [interns, setInterns] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalDocuments, setTotalDocuments] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [selectedType, setSelectedType] = useState('CV');
   const [selectedIntern, setSelectedIntern] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -28,48 +33,78 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const requestDocuments = useCallback(async () => {
-    const response = await apiFetch('/api/documents');
+  const requestDocuments = useCallback(async (requestedPage, requestedPageSize, signal) => {
+    const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
+    const response = await apiFetch('/api/documents?' + params.toString(), { signal });
     const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách tài liệu.');
     return data;
   }, []);
 
   const requestInterns = useCallback(async () => {
-    const response = await apiFetch('/api/interns');
-    const data = await readJsonResponse(response);
-    if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách thực tập sinh.');
-    return data;
+    const rows = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const response = await apiFetch(`/api/interns?page=${page}&pageSize=100`);
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách thực tập sinh.');
+      rows.push(...(Array.isArray(data.items) ? data.items : []));
+      totalPages = Number(data.totalPages) || 0;
+      page += 1;
+    } while (page <= totalPages);
+    return rows;
   }, []);
 
-  const refreshData = async () => {
-    setLoading(true);
+  const refreshData = useCallback(async (requestedPage = page, requestedPageSize = pageSize, signal) => {
     try {
-      const [documentRows, internRows] = await Promise.all([requestDocuments(), requestInterns()]);
+      const [documentData, internRows] = await Promise.all([
+        requestDocuments(requestedPage, requestedPageSize, signal),
+        requestInterns(),
+      ]);
+      const documentRows = Array.isArray(documentData)
+        ? documentData
+        : (Array.isArray(documentData.items) ? documentData.items : []);
       setDocuments(documentRows);
+      setPage(Array.isArray(documentData) ? 1 : Number(documentData.page) || requestedPage);
+      setPageSize(Array.isArray(documentData) ? requestedPageSize : Number(documentData.pageSize) || requestedPageSize);
+      setTotalDocuments(Array.isArray(documentData) ? documentRows.length : Number(documentData.totalItems) || 0);
+      setTotalPages(Array.isArray(documentData) ? (documentRows.length ? 1 : 0) : Number(documentData.totalPages) || 0);
       setInterns(internRows);
       setSelectedIntern((previous) => previous || (internRows[0] ? String(internRows[0].ma_ho_so) : ''));
       setErrorMsg('');
     } catch (error) {
-      setErrorMsg(error.message);
+      if (error.name !== 'AbortError') setErrorMsg(error.message);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [page, pageSize, requestDocuments, requestInterns]);
 
   useEffect(() => {
     let current = true;
-    Promise.all([requestDocuments(), requestInterns()])
-      .then(([documentRows, internRows]) => {
+    const controller = new AbortController();
+    Promise.all([
+      requestDocuments(page, pageSize, controller.signal),
+      requestInterns(),
+    ])
+      .then(([documentData, internRows]) => {
         if (!current) return;
+        const documentRows = Array.isArray(documentData)
+          ? documentData
+          : (Array.isArray(documentData.items) ? documentData.items : []);
         setDocuments(documentRows);
+        setPage(Array.isArray(documentData) ? 1 : Number(documentData.page) || page);
+        setPageSize(Array.isArray(documentData) ? pageSize : Number(documentData.pageSize) || pageSize);
+        setTotalDocuments(Array.isArray(documentData) ? documentRows.length : Number(documentData.totalItems) || 0);
+        setTotalPages(Array.isArray(documentData) ? (documentRows.length ? 1 : 0) : Number(documentData.totalPages) || 0);
         setInterns(internRows);
-        setSelectedIntern(internRows[0] ? String(internRows[0].ma_ho_so) : '');
+        setSelectedIntern((previous) => previous || (internRows[0] ? String(internRows[0].ma_ho_so) : ''));
+        setErrorMsg('');
       })
-      .catch((error) => { if (current) setErrorMsg(error.message); })
+      .catch((error) => { if (current && error.name !== 'AbortError') setErrorMsg(error.message); })
       .finally(() => { if (current) setLoading(false); });
-    return () => { current = false; };
-  }, [requestDocuments, requestInterns]);
+    return () => { current = false; controller.abort(); };
+  }, [requestDocuments, requestInterns, page, pageSize]);
 
   const uploadDocument = async (event) => {
     event.preventDefault();
@@ -94,7 +129,9 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
       onShowToast(`Đã lưu tài liệu: ${data.ten_file}`);
       setSelectedFile(null);
       document.getElementById('docUploadInput').value = '';
-      await refreshData();
+      setPage(1);
+      setLoading(true);
+      await refreshData(1, pageSize);
     } catch (error) {
       onShowToast(error.message, 'error');
     } finally {
@@ -207,8 +244,8 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title-box"><h2>Tài liệu đã lưu trữ{loading || errorMsg ? '' : ` (${documents.length})`}</h2></div>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshData} disabled={loading}>
+          <div className="card-title-box"><h2>Tài liệu đã lưu trữ{loading || errorMsg ? '' : ` (${totalDocuments})`}</h2></div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); refreshData(); }} disabled={loading}>
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span>Làm mới</span>
           </button>
         </div>
@@ -240,6 +277,16 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
             </tbody>
           </table>
         </div>
+        <TablePagination
+          page={page}
+          pageSize={pageSize}
+          totalItems={totalDocuments}
+          totalPages={totalPages}
+          itemLabel="tài liệu"
+          disabled={loading}
+          onPageChange={(nextPage) => { setLoading(true); setPage(nextPage); }}
+          onPageSizeChange={(size) => { setLoading(true); setPage(1); setPageSize(size); }}
+        />
       </div>
     </div>
   );

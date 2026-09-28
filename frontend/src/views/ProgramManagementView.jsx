@@ -3,6 +3,7 @@ import { apiFetch, readJsonResponse } from '../utils/api';
 import CustomSelect from '../components/CustomSelect';
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
+import TablePagination from '../components/TablePagination';
 import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import {
   Check,
@@ -59,6 +60,10 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const isIntern = currentUser?.vai_tro === 'ThucTapSinh';
 
   const [programs, setPrograms] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPrograms, setTotalPrograms] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -70,41 +75,58 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [applicationProgram, setApplicationProgram] = useState(null);
   const [applicationCv, setApplicationCv] = useState(null);
   const [applicants, setApplicants] = useState([]);
+  const [applicantPage, setApplicantPage] = useState(1);
+  const [applicantPageSize, setApplicantPageSize] = useState(10);
+  const [applicantTotal, setApplicantTotal] = useState(0);
+  const [applicantTotalPages, setApplicantTotalPages] = useState(0);
   const [applicantsLoading, setApplicantsLoading] = useState(false);
   const [pendingClose, setPendingClose] = useState(null);
   const tableScrollRef = useRef(null);
 
-  const requestPrograms = useCallback(async () => {
-    const response = await apiFetch('/api/programs');
+  const requestPrograms = useCallback(async (requestedPage, requestedPageSize, signal) => {
+    const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
+    const response = await apiFetch('/api/programs?' + params.toString(), { signal });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách chương trình.');
     return data;
   }, []);
 
-  const refreshPrograms = useCallback(async () => {
-    setLoading(true);
+  const refreshPrograms = useCallback(async (requestedPage = page, requestedPageSize = pageSize, signal) => {
     try {
-      setPrograms(await requestPrograms());
+      const data = await requestPrograms(requestedPage, requestedPageSize, signal);
+      setPrograms(Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []));
+      setPage(Array.isArray(data) ? 1 : Number(data.page) || requestedPage);
+      setPageSize(Array.isArray(data) ? requestedPageSize : Number(data.pageSize) || requestedPageSize);
+      setTotalPrograms(Array.isArray(data) ? data.length : Number(data.totalItems) || 0);
+      setTotalPages(Array.isArray(data) ? (data.length ? 1 : 0) : Number(data.totalPages) || 0);
       setErrorMsg('');
       signalDashboardMetricsChanged();
     } catch (error) {
-      setErrorMsg(error.message);
+      if (error.name !== 'AbortError') setErrorMsg(error.message);
     } finally {
       setLoading(false);
     }
-  }, [requestPrograms]);
+  }, [page, pageSize, requestPrograms]);
 
   useEffect(() => {
     let current = true;
-    requestPrograms().then((data) => {
-      if (current) setPrograms(data);
-    }).catch((error) => {
-      if (current) setErrorMsg(error.message);
-    }).finally(() => {
-      if (current) setLoading(false);
-    });
-    return () => { current = false; };
-  }, [requestPrograms]);
+    const controller = new AbortController();
+    requestPrograms(page, pageSize, controller.signal)
+      .then((data) => {
+        if (!current) return;
+        const rows = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+        setPrograms(rows);
+        setPage(Array.isArray(data) ? 1 : Number(data.page) || page);
+        setPageSize(Array.isArray(data) ? pageSize : Number(data.pageSize) || pageSize);
+        setTotalPrograms(Array.isArray(data) ? rows.length : Number(data.totalItems) || 0);
+        setTotalPages(Array.isArray(data) ? (rows.length ? 1 : 0) : Number(data.totalPages) || 0);
+        setErrorMsg('');
+        signalDashboardMetricsChanged();
+      })
+      .catch((error) => { if (current && error.name !== 'AbortError') setErrorMsg(error.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; controller.abort(); };
+  }, [requestPrograms, page, pageSize]);
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -167,7 +189,9 @@ export default function ProgramManagementView({ departments, onShowToast, curren
       if (!response.ok) throw new Error(data.detail || 'Không thể lưu chương trình.');
       onShowToast(data.message);
       resetForm();
-      await refreshPrograms();
+      setPage(1);
+      setLoading(true);
+      await refreshPrograms(1, pageSize);
     } catch (error) {
       onShowToast(error.message, 'error');
     } finally {
@@ -199,15 +223,19 @@ export default function ProgramManagementView({ departments, onShowToast, curren
     }
   };
 
-  const loadApplicants = async (program) => {
+  const loadApplicants = async (program, requestedPage = applicantPage, requestedPageSize = applicantPageSize) => {
     setApplicantProgram(program);
-    setApplicants([]);
     setApplicantsLoading(true);
     try {
-      const response = await apiFetch(`/api/programs/${program.ma_chuong_trinh}/applications`);
+      const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
+      const response = await apiFetch(`/api/programs/${program.ma_chuong_trinh}/applications?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách ứng viên.');
-      setApplicants(data);
+      setApplicants(Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []));
+      setApplicantPage(Array.isArray(data) ? 1 : Number(data.page) || requestedPage);
+      setApplicantPageSize(Array.isArray(data) ? requestedPageSize : Number(data.pageSize) || requestedPageSize);
+      setApplicantTotal(Array.isArray(data) ? data.length : Number(data.totalItems) || 0);
+      setApplicantTotalPages(Array.isArray(data) ? (data.length ? 1 : 0) : Number(data.totalPages) || 0);
     } catch (error) {
       onShowToast(error.message, 'error');
       setApplicantProgram(null);
@@ -330,8 +358,8 @@ export default function ProgramManagementView({ departments, onShowToast, curren
 
       <div className="card program-list-card">
         <div className="card-header">
-          <div className="card-title-box"><h2>{isIntern ? 'Danh sách chương trình đang mở' : 'Các chương trình đào tạo'}{loading || errorMsg ? '' : ` (${programs.length})`}</h2></div>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshPrograms} disabled={loading}>
+          <div className="card-title-box"><h2>{isIntern ? 'Danh sách chương trình đang mở' : 'Các chương trình đào tạo'}{loading || errorMsg ? '' : ` (${totalPrograms})`}</h2></div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); refreshPrograms(); }} disabled={loading}>
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /><span>Làm mới</span>
           </button>
         </div>
@@ -368,6 +396,16 @@ export default function ProgramManagementView({ departments, onShowToast, curren
             </tbody>
           </table>
         </div>
+        <TablePagination
+          page={page}
+          pageSize={pageSize}
+          totalItems={totalPrograms}
+          totalPages={totalPages}
+          itemLabel="chương trình"
+          disabled={loading}
+          onPageChange={(nextPage) => { setLoading(true); setPage(nextPage); }}
+          onPageSizeChange={(size) => { setLoading(true); setPage(1); setPageSize(size); }}
+        />
       </div>
 
       <FloatingTableScrollbar
@@ -406,7 +444,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
             <div className="modal-body program-applicants-body">
               {applicantsLoading ? <div className="program-modal-message">Đang tải danh sách...</div>
                 : applicants.length === 0 ? <div className="program-modal-message">Chưa có ứng viên đăng ký.</div>
-                  : <div className="table-responsive"><table className="data-table program-applicants-table">
+                  : <><div className="table-responsive program-applicants-scroll"><table className="data-table program-applicants-table">
                     <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th>{isAdmin && <th>Thao tác</th>}</tr></thead>
                     <tbody>{applicants.map((application) => <tr key={application.ma_ung_tuyen}>
                       <td><strong>{application.ho_ten}</strong><small>{application.email}<br />{application.so_dien_thoai || 'Chưa có SĐT'}</small></td>
@@ -418,7 +456,22 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => reviewApplicant(application, 'TuChoi')}><XCircle size={13} />Từ chối</button>
                       </div> : <span className="program-applicant-count">Đã xử lý</span>}</td>}
                     </tr>)}</tbody>
-                  </table></div>}
+                  </table></div>
+                    <TablePagination
+                      page={applicantPage}
+                      pageSize={applicantPageSize}
+                      totalItems={applicantTotal}
+                      totalPages={applicantTotalPages}
+                      itemLabel="ứng viên"
+                      disabled={applicantsLoading}
+                      onPageChange={(nextPage) => loadApplicants(applicantProgram, nextPage, applicantPageSize)}
+                      onPageSizeChange={(size) => {
+                        setApplicantPage(1);
+                        setApplicantPageSize(size);
+                        loadApplicants(applicantProgram, 1, size);
+                      }}
+                    />
+                  </>}
             </div>
           </section>
         </div>

@@ -2,7 +2,7 @@ import re
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 
 from ..database import get_db, hash_password
 from ..schemas import (
@@ -79,9 +79,28 @@ def mentor_intern_detail(profile_id: int, request: Request, db: sqlite3.Connecti
     return {"intern": dict(intern), "documents": [dict(row) for row in documents], "programs": [dict(row) for row in programs]}
 
 
-@router.get("", response_model=list[MentorDetail])
-def list_mentors(request: Request, db: sqlite3.Connection = Depends(get_db)):
+@router.get("")
+def list_mentors(
+    request: Request,
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, alias="pageSize", ge=1, le=100),
+    db: sqlite3.Connection = Depends(get_db),
+):
     require_role(request, "Admin", "HR")
+    paginated = page is not None or page_size is not None
+    effective_size = page_size or 10
+    if paginated:
+        total_items = db.execute(
+            "SELECT COUNT(*) AS total_items FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'"
+        ).fetchone()["total_items"]
+        total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
+        effective_page = min(page or 1, total_pages) if total_pages else 1
+        limit_clause = " LIMIT ? OFFSET ?"
+        paging_params = (effective_size, (effective_page - 1) * effective_size)
+    else:
+        total_items = total_pages = effective_page = None
+        limit_clause = ""
+        paging_params = ()
     rows = db.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban AS phong_ban,
@@ -93,8 +112,17 @@ def list_mentors(request: Request, db: sqlite3.Connection = Depends(get_db)):
         LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE u.vai_tro = 'Mentor'
         ORDER BY u.ma_nguoi_dung DESC
-    """).fetchall()
-    return [dict(row) for row in rows]
+    """ + limit_clause, paging_params).fetchall()
+    items = [dict(row) for row in rows]
+    if not paginated:
+        return items
+    return {
+        "items": items,
+        "page": effective_page,
+        "pageSize": effective_size,
+        "totalItems": total_items,
+        "totalPages": total_pages,
+    }
 
 
 @router.get("/unassigned-interns", response_model=list[InternAssignmentCandidate])

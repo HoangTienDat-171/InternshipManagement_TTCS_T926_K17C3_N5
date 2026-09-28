@@ -4,12 +4,17 @@ import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DashboardMetrics from '../components/DashboardMetrics';
+import TablePagination from '../components/TablePagination';
 import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
 export default function AccountManagementView({ departments, onShowToast, currentUser }) {
   const [users, setUsers] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -30,9 +35,10 @@ export default function AccountManagementView({ departments, onShowToast, curren
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
 
-  const requestUsers = useCallback(async () => {
+  const requestUsers = useCallback(async (requestedPage, requestedPageSize, signal) => {
     if (!isAdmin) return [];
-    const res = await apiFetch('/api/auth/users');
+    const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
+    const res = await apiFetch('/api/auth/users?' + params.toString(), { signal });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData.detail || 'Không thể tải danh sách tài khoản');
@@ -40,40 +46,49 @@ export default function AccountManagementView({ departments, onShowToast, curren
     return res.json();
   }, [isAdmin]);
 
-  const fetchUsers = async () => {
+  const loadUsers = useCallback(async (requestedPage, requestedPageSize, signal) => {
     try {
-      setUsers(await requestUsers());
+      const data = await requestUsers(requestedPage, requestedPageSize, signal);
+      const rows = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+      setUsers(rows);
+      setPage(Array.isArray(data) ? 1 : Number(data.page) || requestedPage);
+      setPageSize(Array.isArray(data) ? requestedPageSize : Number(data.pageSize) || requestedPageSize);
+      setTotalUsers(Array.isArray(data) ? rows.length : Number(data.totalItems) || 0);
+      setTotalPages(Array.isArray(data) ? (rows.length ? 1 : 0) : Number(data.totalPages) || 0);
       setErrorMsg('');
       signalDashboardMetricsChanged();
+      return data;
     } catch (err) {
-      setErrorMsg(err.message);
+      if (err.name !== 'AbortError') setErrorMsg(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [requestUsers]);
 
   const refreshUsers = () => {
     setLoading(true);
-    fetchUsers();
+    return loadUsers(page, pageSize);
   };
 
   useEffect(() => {
     let current = true;
-    requestUsers()
+    const controller = new AbortController();
+    requestUsers(page, pageSize, controller.signal)
       .then((data) => {
-        if (current) {
-          setUsers(data);
-          setErrorMsg('');
-        }
+        if (!current) return;
+        const rows = Array.isArray(data) ? data : (Array.isArray(data.items) ? data.items : []);
+        setUsers(rows);
+        setPage(Array.isArray(data) ? 1 : Number(data.page) || page);
+        setPageSize(Array.isArray(data) ? pageSize : Number(data.pageSize) || pageSize);
+        setTotalUsers(Array.isArray(data) ? rows.length : Number(data.totalItems) || 0);
+        setTotalPages(Array.isArray(data) ? (rows.length ? 1 : 0) : Number(data.totalPages) || 0);
+        setErrorMsg('');
+        signalDashboardMetricsChanged();
       })
-      .catch((err) => {
-        if (current) setErrorMsg(err.message);
-      })
-      .finally(() => {
-        if (current) setLoading(false);
-      });
-    return () => { current = false; };
-  }, [requestUsers]);
+      .catch((error) => { if (current && error.name !== 'AbortError') setErrorMsg(error.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; controller.abort(); };
+  }, [requestUsers, page, pageSize]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -128,7 +143,9 @@ export default function AccountManagementView({ departments, onShowToast, curren
         ma_phong_ban: ''
       });
       setShowCreateModal(false);
-      refreshUsers();
+      setPage(1);
+      setLoading(true);
+      await loadUsers(1, pageSize);
     } catch (err) {
       setFormError(err.message);
     } finally {
@@ -149,7 +166,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể đổi vai trò');
       onShowToast(data.message);
-      refreshUsers();
+      await refreshUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
@@ -168,7 +185,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Không thể cập nhật trạng thái');
       onShowToast(data.message);
-      refreshUsers();
+      await refreshUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
@@ -191,22 +208,40 @@ export default function AccountManagementView({ departments, onShowToast, curren
       if (!res.ok) throw new Error(data.detail || 'Không thể xóa người dùng');
       onShowToast(data.message);
       setPendingDelete(null);
-      refreshUsers();
+      await refreshUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
   };
 
-  const exportUsers = () => {
-    const columns = ['ID', 'Họ và tên', 'Email', 'Số điện thoại', 'Vai trò', 'Trạng thái', 'Phòng ban'];
-    const rows = users.map((user) => [user.ma_nguoi_dung, user.ho_ten, user.email, user.so_dien_thoai || '', user.vai_tro, user.trang_thai, user.ten_phong_ban || '']);
-    const csv = [columns, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'danh-sach-nguoi-dung.csv';
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  const exportUsers = async () => {
+    try {
+      const allUsers = [];
+      let exportPage = 1;
+      let exportTotalPages = 1;
+      do {
+        const data = await requestUsers(exportPage, 100);
+        if (Array.isArray(data)) {
+          allUsers.push(...data);
+          exportTotalPages = 0;
+        } else {
+          allUsers.push(...(Array.isArray(data.items) ? data.items : []));
+          exportTotalPages = Number(data.totalPages) || 0;
+        }
+        exportPage += 1;
+      } while (exportPage <= exportTotalPages);
+      const columns = ['ID', 'Họ và tên', 'Email', 'Số điện thoại', 'Vai trò', 'Trạng thái', 'Phòng ban'];
+      const rows = allUsers.map((user) => [user.ma_nguoi_dung, user.ho_ten, user.email, user.so_dien_thoai || '', user.vai_tro, user.trang_thai, user.ten_phong_ban || '']);
+      const csv = [columns, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
+      const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'danh-sach-nguoi-dung.csv';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      onShowToast(error.message || 'Không thể xuất danh sách tài khoản.', 'error');
+    }
   };
 
   const getRoleBadge = (role) => {
@@ -302,7 +337,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
           <div className="card-header">
             <div className="card-title-box">
               <div>
-                <h2>Danh sách người dùng ({users.length})</h2>
+                <h2>Danh sách người dùng ({totalUsers})</h2>
                 <p className="account-list-description">Quản lý vai trò, trạng thái và thông tin tài khoản</p>
               </div>
             </div>
@@ -310,7 +345,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
               <button className="btn btn-primary btn-sm" onClick={() => { setFormError(''); setShowCreateModal(true); }}>
                 <UserPlus size={15} /><span>Thêm tài khoản</span>
               </button>
-              <button className="btn btn-secondary btn-sm" onClick={exportUsers} disabled={!users.length}>
+              <button className="btn btn-secondary btn-sm" onClick={exportUsers} disabled={!totalUsers}>
                 <Download size={13} /><span>Xuất danh sách</span>
               </button>
               <button className="btn btn-secondary btn-sm" onClick={refreshUsers} disabled={loading}>
@@ -439,6 +474,16 @@ export default function AccountManagementView({ departments, onShowToast, curren
               </tbody>
             </table>
           </div>
+          <TablePagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={totalUsers}
+            totalPages={totalPages}
+            itemLabel="tài khoản"
+            disabled={loading}
+            onPageChange={(nextPage) => { setLoading(true); setPage(nextPage); }}
+            onPageSizeChange={(size) => { setLoading(true); setPage(1); setPageSize(size); }}
+          />
       </div>
       {showCreateModal && (
         <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && !formSubmitting && setShowCreateModal(false)}>

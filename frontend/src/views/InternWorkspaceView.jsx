@@ -16,6 +16,7 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
+  const [documentType, setDocumentType] = useState('CV');
   const fileInput = useRef(null);
 
   const refresh = useCallback(async () => {
@@ -41,13 +42,13 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
     catch (err) { setError(err.message); }
   };
 
-  const uploadCv = async (event) => {
+  const uploadDocument = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = '';
     const extension = file.name.split('.').pop()?.toLowerCase();
-    if (!['pdf', 'docx', 'png'].includes(extension) || file.size > 15 * 1024 * 1024) {
-      setError('CV phải có định dạng PDF, DOCX hoặc PNG và dung lượng tối đa 15 MB.');
+    if (!['pdf', 'docx', 'png'].includes(extension) || file.size === 0 || file.size > 15 * 1024 * 1024) {
+      setError('Tài liệu phải có định dạng PDF, DOCX hoặc PNG, dung lượng từ 1 byte đến 15 MB.');
       return;
     }
     setUploading(true);
@@ -55,12 +56,12 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
     setUploadMessage('');
     try {
       const formData = new FormData();
-      formData.append('loai_tai_lieu', 'CV');
+      formData.append('loai_tai_lieu', documentType);
       formData.append('file', file);
       const response = await apiFetch('/api/documents', { method: 'POST', body: formData });
       const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể nộp CV.');
-      setUploadMessage('Đã nộp CV thành công. Hồ sơ đang chờ duyệt.');
+      if (!response.ok) throw new Error(data.detail || 'Không thể nộp tài liệu.');
+      setUploadMessage(`Đã nộp ${documentType === 'CV' ? 'CV' : 'đơn xin thực tập'} thành công. Hồ sơ đang chờ duyệt.`);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -90,9 +91,9 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
     </article>
 
     <div className="workspace-lower-grid">
-      <article className="workspace-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">HỒ SƠ ĐÃ NỘP</span><h3>Tài liệu & CV <small>{documents.length}</small></h3></div><div className="intern-workspace-actions"><input ref={fileInput} type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" hidden onChange={uploadCv} /><button type="button" className="btn btn-primary btn-sm" disabled={uploading} onClick={() => fileInput.current?.click()}><UploadCloud size={15} />{uploading ? 'Đang tải…' : 'Nộp CV'}</button></div></div>
+      <article className="workspace-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">HỒ SƠ ĐÃ NỘP</span><h3>Tài liệu & CV <small>{documents.length}</small></h3></div><div className="intern-workspace-actions"><label className="workspace-document-type"><span>Loại tài liệu</span><select className="form-select" aria-label="Loại tài liệu cần nộp" value={documentType} onChange={(event) => setDocumentType(event.target.value)} disabled={uploading}><option value="CV">CV</option><option value="DonXinThucTap">Đơn xin thực tập</option></select></label><input ref={fileInput} type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" hidden onChange={uploadDocument} /><button type="button" className="btn btn-primary btn-sm" disabled={uploading} onClick={() => fileInput.current?.click()}><UploadCloud size={15} />{uploading ? 'Đang tải…' : `Nộp ${documentType === 'CV' ? 'CV' : 'đơn'}`}</button></div></div>
         {uploadMessage && <p role="status" style={{ color: '#059669', fontSize: 12, margin: '0 0 10px' }}>{uploadMessage}</p>}
-        {documents.length ? <div className="workspace-document-list">{documents.map((document) => <div className="workspace-document-row" key={document.ma_tai_lieu}><span className="workspace-file-icon"><FileText size={16} /></span><div><strong>{document.ten_file || document.loai_tai_lieu}</strong><small>{document.loai_tai_lieu} · {document.ngay_tai_len || 'Ngày tải chưa rõ'}</small></div><StatusPill status={document.trang_thai_duyet} /><button type="button" className="workspace-icon-button" title="Tải tài liệu" onClick={() => download(document)}><Download size={15} /></button></div>)}</div> : <div className="workspace-empty"><FileText size={22} /><span>Bạn chưa nộp CV hồ sơ. Chọn nút “Nộp CV” tại mục này để tải CV lên; CV ứng tuyển chương trình được đính kèm riêng khi gửi hồ sơ.</span></div>}
+        {documents.length ? <div className="workspace-document-list">{documents.map((document) => <div className="workspace-document-row" key={document.ma_tai_lieu}><span className="workspace-file-icon"><FileText size={16} /></span><div><strong>{document.ten_file || document.loai_tai_lieu}</strong><small>{document.loai_tai_lieu} · {document.ngay_tai_len || 'Ngày tải chưa rõ'}</small></div><StatusPill status={document.trang_thai_duyet} /><button type="button" className="workspace-icon-button" title="Tải tài liệu" onClick={() => download(document)}><Download size={15} /></button></div>)}</div> : <div className="workspace-empty"><FileText size={22} /><span>Bạn chưa nộp tài liệu. Chọn loại CV hoặc đơn xin thực tập rồi tải tệp lên tại đây.</span></div>}
       </article>
       <article className="workspace-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">THEO DÕI ĐĂNG KÝ</span><h3>Chương trình đã ứng tuyển <small>{applications.length}</small></h3></div><CircleCheck size={19} /></div>
         {applications.length ? <div className="workspace-application-list">{applications.map((application) => <div className="workspace-application-row" key={application.ma_chuong_trinh}><div><strong>{application.ten_ct}</strong><small>{application.ma_ct} · Nộp {application.ngay_ung_tuyen || '—'}</small></div><StatusPill status={application.trang_thai_ung_tuyen} map={applicationStatus} /></div>)}</div> : <div className="workspace-empty"><CalendarDays size={22} /><span>Bạn chưa ứng tuyển chương trình nào.</span></div>}
