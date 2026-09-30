@@ -4,6 +4,7 @@ from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
+from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
 from .routes import auth_routes, document_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
 
@@ -63,6 +64,12 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
+    start_email_worker()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await stop_email_worker()
 
 @app.get("/")
 def root():

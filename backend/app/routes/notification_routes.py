@@ -12,9 +12,13 @@ router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
 def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db)):
     user = require_role(request)
     rows = db.execute("""
-        SELECT ma_thong_bao, tieu_de, noi_dung, da_doc, thoi_gian_gui
-        FROM THONG_BAO WHERE ma_nguoi_dung = ?
-        ORDER BY ma_thong_bao DESC LIMIT 50
+        SELECT n.ma_thong_bao, n.tieu_de, n.noi_dung, n.da_doc, n.thoi_gian_gui,
+               n.thoi_gian_doc, n.loai,
+               (SELECT e.status FROM EMAIL_OUTBOX e
+                WHERE e.reference_type='notification' AND e.reference_id=CAST(n.ma_thong_bao AS CHAR)
+                ORDER BY e.id DESC LIMIT 1) AS email_status
+        FROM THONG_BAO n WHERE n.ma_nguoi_dung = ?
+        ORDER BY n.ma_thong_bao DESC LIMIT 50
     """, (user["ma_nguoi_dung"],)).fetchall()
     return [dict(row) for row in rows]
 
@@ -23,10 +27,21 @@ def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db
 def mark_notification_read(notification_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
     user = require_role(request)
     cursor = db.execute("""
-        UPDATE THONG_BAO SET da_doc = 1
+        UPDATE THONG_BAO SET da_doc = 1, thoi_gian_doc = COALESCE(thoi_gian_doc, CURRENT_TIMESTAMP)
         WHERE ma_thong_bao = ? AND ma_nguoi_dung = ?
     """, (notification_id, user["ma_nguoi_dung"]))
     if cursor.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy thông báo.")
     db.commit()
     return {"ma_thong_bao": notification_id, "da_doc": True}
+
+
+@router.get("/email-outbox")
+def list_email_outbox(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    require_role(request, "Admin", "HR")
+    rows = db.execute("""
+        SELECT id, recipient_email, subject, status, retry_count, max_retry,
+               last_error, next_retry_at, created_at, sent_at, updated_at
+        FROM EMAIL_OUTBOX ORDER BY id DESC LIMIT 100
+    """).fetchall()
+    return [dict(row) for row in rows]

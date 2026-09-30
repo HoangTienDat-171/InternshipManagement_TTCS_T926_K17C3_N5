@@ -416,7 +416,7 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
     cursor = db.cursor()
     cursor.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.vai_tro, u.trang_thai,
-               h.trang_thai_xet_duyet AS trang_thai_ho_so
+               h.ma_ho_so, h.trang_thai_xet_duyet AS trang_thai_ho_so
         FROM NGUOI_DUNG u LEFT JOIN HO_SO_THUC_TAP h ON h.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE u.ma_nguoi_dung = ?
     """, (id,))
@@ -431,7 +431,12 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
     sync_intern_approval(cursor, id, "DaDuyet")
     if user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong":
-        create_notification(db, id, "Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt.")
+        create_notification(
+            db, id, "Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt.",
+            notification_type="internship_review_result", reference_type="intern_profile",
+            reference_id=user["ma_ho_so"], email_recipient=user["email"],
+            email_deduplication_key=f"us08:intern_profile:{user['ma_ho_so']}:DaDuyet",
+        )
     db.commit()
 
     return {
@@ -454,8 +459,8 @@ def reject_user(id: int, request: Request, background_tasks: BackgroundTasks, db
 
     cursor = db.cursor()
     cursor.execute("""
-        SELECT u.ma_nguoi_dung, u.ho_ten, u.vai_tro, u.trang_thai,
-               h.trang_thai_xet_duyet AS trang_thai_ho_so, s.session_id
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.vai_tro, u.trang_thai,
+               h.ma_ho_so, h.trang_thai_xet_duyet AS trang_thai_ho_so, s.session_id
         FROM NGUOI_DUNG u LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN HO_SO_THUC_TAP h ON h.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE u.ma_nguoi_dung = ?
@@ -471,7 +476,12 @@ def reject_user(id: int, request: Request, background_tasks: BackgroundTasks, db
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
     sync_intern_approval(cursor, id, "TuChoi")
     if user["trang_thai_ho_so"] != "TuChoi" or user["trang_thai"] != "Khoa":
-        create_notification(db, id, "Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết.")
+        create_notification(
+            db, id, "Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết.",
+            notification_type="internship_review_result", reference_type="intern_profile",
+            reference_id=user["ma_ho_so"], email_recipient=user["email"],
+            email_deduplication_key=f"us08:intern_profile:{user['ma_ho_so']}:TuChoi",
+        )
     db.commit()
     if user["session_id"]:
         background_tasks.add_task(publish_force_logout, id, user["session_id"])

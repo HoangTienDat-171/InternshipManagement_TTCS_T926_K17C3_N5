@@ -361,7 +361,7 @@ def review_program_application(
     reviewer = require_role(request, "Admin")
     program = get_program(db, program_id)
     application = db.execute("""
-        SELECT a.ma_ung_tuyen, a.trang_thai, h.ma_nguoi_dung, u.ho_ten
+        SELECT a.ma_ung_tuyen, a.trang_thai, h.ma_nguoi_dung, u.ho_ten, u.email
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -391,6 +391,10 @@ def review_program_application(
         application["ma_nguoi_dung"],
         "Kết quả ứng tuyển chương trình",
         f"Đơn ứng tuyển {program['ten_ct']} của bạn đã {'được duyệt' if approved else 'bị từ chối'}.",
+        notification_type="program_application_result",
+        reference_type="program_application", reference_id=application_id,
+        email_recipient=application["email"],
+        email_deduplication_key=f"us08:program_application:{application_id}:{data.trang_thai}",
     )
     db.commit()
     return {"message": f"Đã {'duyệt' if approved else 'từ chối'} ứng viên {application['ho_ten']}."}

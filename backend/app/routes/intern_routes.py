@@ -173,7 +173,7 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
         SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet,
-               u.ho_ten, u.trang_thai AS trang_thai_tai_khoan, s.session_id
+               u.ho_ten, u.email, u.trang_thai AS trang_thai_tai_khoan, s.session_id
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
@@ -230,7 +230,15 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
             "DaDuyet": ("Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt."),
             "TuChoi": ("Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết."),
         }[data.trang_thai_xet_duyet]
-        create_notification(db, ma_nguoi_dung, title, message)
+        decision = data.trang_thai_xet_duyet
+        create_notification(
+            db, ma_nguoi_dung, title, message,
+            notification_type="internship_review_result",
+            reference_type="intern_profile", reference_id=id,
+            email_recipient=(data.email.strip().lower() if decision in {"DaDuyet", "TuChoi"} else None),
+            email_deduplication_key=(f"us08:intern_profile:{id}:{decision}"
+                                     if decision in {"DaDuyet", "TuChoi"} else None),
+        )
 
     db.commit()
     if previous_session_id and data.trang_thai_xet_duyet != "DaDuyet":
