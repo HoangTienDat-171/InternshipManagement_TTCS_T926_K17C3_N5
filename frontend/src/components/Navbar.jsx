@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, GraduationCap, Users, Settings, KeyRound, ChevronDown, Bell, Menu, Moon, Sun } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, GraduationCap, Users, KeyRound, ChevronDown, Bell, Menu, Moon, Sun } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({ 
@@ -57,6 +57,12 @@ export default function Navbar({
       window.clearTimeout(initialLoad);
       window.clearInterval(refreshTimer);
     };
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    const refreshAfterMailboxRead = () => loadNotifications();
+    window.addEventListener('ims-mailbox-read', refreshAfterMailboxRead);
+    return () => window.removeEventListener('ims-mailbox-read', refreshAfterMailboxRead);
   }, [loadNotifications]);
 
   const markNotificationRead = async (notificationId) => {
@@ -181,7 +187,6 @@ export default function Navbar({
               <div className="account-menu-panel">
                 <div className="account-menu-heading"><strong>{currentUser.ho_ten}</strong><span>{currentUser.email}</span></div>
                 <button type="button" onClick={() => { onOpenAccount('profile'); setMenuOpen(false); }}><User size={16} /> Tài khoản</button>
-                <button type="button" onClick={() => { onOpenAccount('settings'); setMenuOpen(false); }}><Settings size={16} /> Cài đặt</button>
                 <button type="button" onClick={() => { onOpenAccount('password'); setMenuOpen(false); }}><KeyRound size={16} /> Cập nhật mật khẩu</button>
                 <div className="account-menu-divider" />
                 <button type="button" className="account-menu-logout" onClick={onLogout}><LogOut size={16} /> Đăng xuất</button>

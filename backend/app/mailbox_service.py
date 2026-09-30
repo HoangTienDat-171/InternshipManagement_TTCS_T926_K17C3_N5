@@ -320,6 +320,11 @@ def get_message_detail(db, message_id: int, user_id: int):
             SET is_read=1, read_at=CURRENT_TIMESTAMP
             WHERE message_id=? AND receiver_id=?
         """, (message_id, user_id))
+        db.execute("""
+            UPDATE THONG_BAO SET da_doc=1,
+                thoi_gian_doc=COALESCE(thoi_gian_doc, CURRENT_TIMESTAMP)
+            WHERE ma_nguoi_dung=? AND reference_type='internal_message' AND reference_id=?
+        """, (user_id, str(message_id)))
         db.commit()
     item = dict(row)
     item["is_read"] = True if not item["is_sender"] else bool(item["is_read"])
