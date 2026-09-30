@@ -13,11 +13,24 @@ import MentorWorkspaceView from './views/MentorWorkspaceView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
+function clearSavedSession() {
+  try {
+    localStorage.removeItem('ims_token');
+    localStorage.removeItem('ims_user');
+  } catch {
+    // The login screen must remain usable when browser storage is unavailable.
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('interns');
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
+    if (window.location.pathname === '/login') {
+      clearSavedSession();
+      return null;
+    }
     try {
       const savedUser = localStorage.getItem('ims_user');
       return savedUser && localStorage.getItem('ims_token') ? JSON.parse(savedUser) : null;
@@ -87,6 +100,17 @@ export default function App() {
 
     window.addEventListener('ims-session-expired', handleSessionExpired);
     return () => window.removeEventListener('ims-session-expired', handleSessionExpired);
+  }, []);
+
+  useEffect(() => {
+    const clearSessionOnLoginRoute = () => {
+      if (window.location.pathname !== '/login') return;
+      clearSavedSession();
+      setCurrentUser(null);
+      setSessionNotice('');
+    };
+    window.addEventListener('popstate', clearSessionOnLoginRoute);
+    return () => window.removeEventListener('popstate', clearSessionOnLoginRoute);
   }, []);
 
   useEffect(() => {
@@ -228,6 +252,7 @@ export default function App() {
   }, [currentUserId]);
 
   const handleLoginSuccess = (user) => {
+    if (window.location.pathname === '/login') window.history.replaceState(null, '', '/');
     setSessionNotice('');
     setSidebarOpen(false);
     setCurrentUser(user);
@@ -235,15 +260,19 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    const token = localStorage.getItem('ims_token');
+    clearSavedSession();
+    setSidebarOpen(false);
+    setCurrentUser(null);
+    window.history.replaceState(null, '', '/login');
     try {
-      await apiFetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch {
       // ignore
     }
-    localStorage.removeItem('ims_token');
-    localStorage.removeItem('ims_user');
-    setSidebarOpen(false);
-    setCurrentUser(null);
     showToast('Đã đăng xuất khỏi hệ thống.');
   };
 

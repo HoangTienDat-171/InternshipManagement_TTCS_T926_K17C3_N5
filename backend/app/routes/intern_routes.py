@@ -319,6 +319,13 @@ def list_interns(
                h.ma_truong, t.ten_truong,
                h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
                h.ngay_tao,
+               (SELECT e.status
+                FROM EMAIL_OUTBOX e
+                JOIN THONG_BAO n ON e.reference_type = 'notification'
+                    AND e.reference_id = CAST(n.ma_thong_bao AS CHAR)
+                WHERE n.reference_type = 'intern_profile'
+                    AND n.reference_id = CAST(h.ma_ho_so AS CHAR)
+                ORDER BY e.id DESC LIMIT 1) AS email_status,
                mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
                mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
                mentor.so_dien_thoai AS mentor_so_dien_thoai,

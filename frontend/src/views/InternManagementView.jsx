@@ -206,6 +206,24 @@ export default function InternManagementView({
     }
   };
 
+  const getEmailStatusBadge = (status) => {
+    if (!status) return null;
+    const presentation = {
+      PENDING: { label: 'Đang chờ gửi', tone: 'warning' },
+      PROCESSING: { label: 'Đang gửi', tone: 'warning' },
+      SENT: { label: 'Đã gửi email', tone: 'success' },
+      RETRY: { label: 'Đang thử lại', tone: 'danger' },
+      FAILED: { label: 'Gửi thất bại', tone: 'danger' },
+    }[status] || { label: 'Chưa rõ trạng thái', tone: 'info' };
+    return (
+      <div className="intern-email-status">
+        <span className={`badge badge-${presentation.tone}`}><span className="badge-dot" />Email: {presentation.label}</span>
+        {status === 'RETRY' && <small>Hệ thống sẽ tự thử gửi lại.</small>}
+        {status === 'FAILED' && <small>Hãy xem mục Thông báo để biết thêm.</small>}
+      </div>
+    );
+  };
+
   return (
     <div className="intern-management-page">
       {/* Header and Actions */}
@@ -395,7 +413,7 @@ export default function InternManagementView({
                         {intern.ten_phong_ban || 'Chưa phân'}
                       </span>
                     </td>
-                    <td>{getDuyetBadge(intern.trang_thai_xet_duyet)}</td>
+                    <td><div className="intern-review-status">{getDuyetBadge(intern.trang_thai_xet_duyet)}{getEmailStatusBadge(intern.email_status)}</div></td>
                     <td>{getAccountBadge(intern.trang_thai_tai_khoan)}</td>
                     <td>{getThucTapBadge(intern.trang_thai_thuc_tap)}</td>
                     <td style={{ textAlign: 'right' }}>

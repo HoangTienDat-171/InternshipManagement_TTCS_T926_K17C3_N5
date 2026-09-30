@@ -497,6 +497,11 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
         self.assertEqual(rejected_email_status, "PENDING")
+        status_code, intern_rows, _ = self.json_request(
+            f"/api/interns?search={approved_email}", token=admin_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(intern_rows["items"][0]["email_status"], "PENDING")
 
         status_code, outbox, _ = self.json_request("/api/notifications/email-outbox", token=admin_token)
         self.assertEqual(status_code, 200)

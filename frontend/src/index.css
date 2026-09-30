@@ -1567,8 +1567,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .workspace-heading p { margin: 0; color: #78819b; font-size: 13px; }
 .intern-workspace-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .intern-workspace-actions .btn { white-space: nowrap; }
+.intern-review-status, .intern-email-status { display: grid; justify-items: start; gap: 4px; }
+.intern-email-status small { color: var(--text-muted); font-size: 10px; line-height: 1.35; }
 .workspace-document-type { display: grid; gap: 3px; color: var(--text-muted); font-size: 10px; }
-.workspace-document-type .form-select { min-width: 142px; min-height: 34px; padding: 6px 32px 6px 9px; color: var(--text-body); font-size: 12px; }
+.workspace-document-heading { align-items: flex-end; flex-wrap: wrap; }
+.workspace-document-controls { align-items: flex-end; flex: 0 1 auto; min-width: 0; }
+.workspace-document-type { min-width: 0; flex: 1 1 142px; }
+.workspace-document-type .form-select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 32px 6px 9px; color: var(--text-body); font-size: 12px; }
+.workspace-document-controls .btn { flex: 0 0 auto; }
 .intern-program-empty { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .intern-program-empty p { flex: 1 1 360px; line-height: 1.6; }
 .workspace-empty > span { max-width: 460px; line-height: 1.6; }
@@ -1658,6 +1664,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .workspace-contact-grid { grid-template-columns: 1fr; }
   .mentor-workspace-layout, .mentor-workspace-summary { grid-template-columns: 1fr; }
   .workspace-heading { align-items: flex-start; flex-direction: column; }
+  .workspace-document-heading { align-items: flex-start; flex-direction: column; }
+  .workspace-document-controls { width: 100%; }
   .intern-workspace-actions { justify-content: flex-start; }
   .table-pagination { align-items: flex-start; flex-direction: column; }
   .table-pagination-controls { justify-content: flex-start; width: 100%; }
