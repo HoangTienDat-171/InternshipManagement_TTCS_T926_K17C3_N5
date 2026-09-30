@@ -473,13 +473,14 @@ body {
 }
 
 .btn-danger {
-  background-color: #fee2e2;
-  color: var(--danger-text);
-  border-color: var(--danger-border);
+  background-color: #ffffff;
+  color: #e11d48;
+  border-color: #fecdd3;
 }
 
 .btn-danger:hover {
-  background-color: #fecaca;
+  background-color: #fff1f2;
+  border-color: #fda4af;
 }
 
 .btn-sm {
@@ -1045,6 +1046,10 @@ body { background: var(--bg-app); }
 .filter-select { min-height: 42px; }
 .btn-primary { background: linear-gradient(135deg, var(--primary-500), var(--primary-600)); box-shadow: 0 4px 10px rgb(79 70 229 / 18%); }
 .btn-primary:hover { background: linear-gradient(135deg, var(--primary-600), var(--primary-700)); box-shadow: 0 7px 15px rgb(79 70 229 / 23%); }
+.btn-primary:active { transform: scale(.97); }
+.btn-success { background: #059669; border-color: #059669; color: #fff; box-shadow: 0 3px 8px rgb(5 150 105 / 18%); }
+.btn-success:hover { background: #047857; border-color: #047857; box-shadow: 0 6px 12px rgb(5 150 105 / 24%); transform: translateY(-1px); }
+.btn-success:active { transform: scale(.97); }
 .btn-outline-primary { color: var(--primary-700); border-color: var(--primary-200); }
 .data-table th { background: linear-gradient(180deg, #f7f7ff, #f8f9fc); color: #656b85; font-size: 10px; letter-spacing: .75px; padding-top: 15px; padding-bottom: 15px; }
 .data-table td { border-bottom-color: #eceef5; padding-top: 17px; padding-bottom: 17px; }
@@ -1949,6 +1954,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root[data-theme='dark'] .badge-warning { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
 :root[data-theme='dark'] .badge-danger { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
 :root[data-theme='dark'] .badge-info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+:root[data-theme='dark'] .btn-danger { background: rgb(244 63 94 / 10%); color: #fda4af; border-color: rgb(251 113 133 / 35%); }
+:root[data-theme='dark'] .btn-danger:hover { background: rgb(244 63 94 / 18%); border-color: rgb(251 113 133 / 50%); }
 
 :root[data-theme='dark'] .theme-toggle { color: #c7d2fe; }
 :root[data-theme='dark'] .theme-toggle:hover { background: #30315f; color: #fff; }

@@ -421,8 +421,7 @@ export default function InternManagementView({
                         {(currentUser?.vai_tro === 'HR' || currentUser?.vai_tro === 'Admin') && intern.trang_thai_xet_duyet === 'ChoDuyet' && (
                           <>
                           <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: '#10b981', color: 'white', padding: '4px 10px', fontSize: '12px' }}
+                            className="btn btn-sm btn-success"
                             title="Quản lý thực tập sinh xét duyệt kích hoạt tài khoản"
                             onClick={() => handleApproveIntern(intern)}
                           >
