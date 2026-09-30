@@ -195,3 +195,41 @@ class DocumentDetail(BaseModel):
     ngay_tai_len: Optional[str] = None
     trang_thai_duyet: str
     thuc_tap_sinh: str
+
+
+MailboxCategory = Literal[
+    "XIN_HO_TRO", "XIN_XET_DUYET", "THAC_MAC_LICH_LAM_VIEC",
+    "BO_SUNG_HO_SO", "THONG_BAO_CHUNG", "KET_QUA_XET_DUYET",
+]
+
+
+class MailboxMessageCreate(BaseModel):
+    receiverIds: List[int] = Field(default_factory=list, max_length=100)
+    groupKeys: List[str] = Field(default_factory=list, max_length=20)
+    category: MailboxCategory
+    subject: str = Field(min_length=1, max_length=255)
+    contentHtml: str = Field(min_length=1, max_length=50_000)
+    sendEmail: bool = False
+    templateId: Optional[int] = None
+
+
+class MailboxReplyCreate(BaseModel):
+    contentHtml: str = Field(min_length=1, max_length=50_000)
+    sendEmail: bool = False
+
+
+class MailboxTemplateCreate(BaseModel):
+    templateCode: str = Field(pattern=r"^[A-Z0-9_]+$", min_length=3, max_length=100)
+    title: str = Field(min_length=1, max_length=255)
+    subject: str = Field(min_length=1, max_length=255)
+    bodyHtml: str = Field(min_length=1, max_length=50_000)
+    category: MailboxCategory
+    isActive: bool = True
+
+
+class MailboxTemplateUpdate(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    subject: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    bodyHtml: Optional[str] = Field(default=None, min_length=1, max_length=50_000)
+    category: Optional[MailboxCategory] = None
+    isActive: Optional[bool] = None
