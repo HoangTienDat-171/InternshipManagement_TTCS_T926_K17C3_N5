@@ -507,32 +507,32 @@ body {
 }
 
 .badge-success {
-  background-color: var(--success-bg);
-  color: var(--success-text);
-  border-color: var(--success-border);
+  background-color: #ecfdf5;
+  color: #047857;
+  border-color: #d1fae5;
 }
-.badge-success .badge-dot { background-color: var(--success-text); }
+.badge-success .badge-dot { background-color: #10b981; }
 
 .badge-warning {
-  background-color: var(--warning-bg);
-  color: var(--warning-text);
-  border-color: var(--warning-border);
+  background-color: #fffbeb;
+  color: #b45309;
+  border-color: #fef3c7;
 }
-.badge-warning .badge-dot { background-color: var(--warning-text); }
+.badge-warning .badge-dot { background-color: #f59e0b; }
 
 .badge-danger {
-  background-color: var(--danger-bg);
-  color: var(--danger-text);
-  border-color: var(--danger-border);
+  background-color: #fff1f2;
+  color: #be123c;
+  border-color: #ffe4e6;
 }
-.badge-danger .badge-dot { background-color: var(--danger-text); }
+.badge-danger .badge-dot { background-color: #f43f5e; }
 
 .badge-info {
-  background-color: var(--info-bg);
-  color: var(--info-text);
-  border-color: var(--info-border);
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border-color: #dbeafe;
 }
-.badge-info .badge-dot { background-color: var(--info-text); }
+.badge-info .badge-dot { background-color: #3b82f6; }
 .badge-secondary { background: #f1f5f9; color: #475569; border-color: #cbd5e1; }
 .badge-secondary .badge-dot { background-color: #64748b; }
 
