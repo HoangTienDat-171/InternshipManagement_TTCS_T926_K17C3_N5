@@ -489,6 +489,21 @@ body {
   border-radius: var(--radius-sm);
 }
 
+.btn-icon {
+  display: inline-grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border-color: #e2e8f0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #64748b;
+}
+.btn-icon:hover { transform: none; border-color: #cbd5e1; background: #f1f5f9; color: #334155; box-shadow: none; }
+.btn-icon:active { transform: scale(.95); }
+
 /* Status Badges */
 .badge {
   display: inline-flex;
@@ -1617,7 +1632,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .workspace-status.is-success { border-color: #a8efcf; background: #effcf6; color: #0a9a69; }
 .workspace-status.is-warning { border-color: #f7dfa0; background: #fff9e9; color: #b97900; }
 .workspace-status.is-danger { border-color: #ffc7c9; background: #fff3f3; color: #d1444b; }
-.workspace-icon-button { display: grid; flex: 0 0 32px; width: 32px; height: 32px; place-items: center; border: 1px solid #e2e5ef; border-radius: 9px; background: #fff; color: #5d55d8; cursor: pointer; }
+.workspace-icon-button { display: grid; flex: 0 0 32px; width: 32px; height: 32px; place-items: center; border: 1px solid #e2e5ef; border-radius: 9px; background: #fff; color: #5d55d8; cursor: pointer; transition: var(--transition); }
+.workspace-icon-button:hover { border-color: #c7c4ff; background: #f5f4ff; color: #4f46e5; box-shadow: 0 4px 10px rgb(79 70 229 / 10%); transform: translateY(-1px); }
+.workspace-icon-button:active { transform: scale(.95); }
 .workspace-empty, .workspace-loading { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 120px; color: #858ca1; font-size: 13px; text-align: center; }
 .workspace-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; border: 1px solid #ffc9ca; border-radius: 11px; background: #fff5f5; color: #be343b; font-size: 13px; }
 .workspace-error.compact { padding: 10px 13px; }
@@ -1956,6 +1973,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root[data-theme='dark'] .badge-info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
 :root[data-theme='dark'] .btn-danger { background: rgb(244 63 94 / 10%); color: #fda4af; border-color: rgb(251 113 133 / 35%); }
 :root[data-theme='dark'] .btn-danger:hover { background: rgb(244 63 94 / 18%); border-color: rgb(251 113 133 / 50%); }
+:root[data-theme='dark'] .btn-icon { background: var(--surface-card); color: var(--text-body); border-color: var(--border-color); }
+:root[data-theme='dark'] .btn-icon:hover { background: var(--surface-card-hover); color: var(--text-main); border-color: #64748b; }
 
 :root[data-theme='dark'] .theme-toggle { color: #c7d2fe; }
 :root[data-theme='dark'] .theme-toggle:hover { background: #30315f; color: #fff; }

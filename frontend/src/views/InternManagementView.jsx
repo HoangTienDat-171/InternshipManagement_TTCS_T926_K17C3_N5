@@ -439,8 +439,9 @@ export default function InternManagementView({
                           </>
                         )}
                         <button
-                          className="btn btn-secondary btn-sm"
+                          className="btn btn-icon"
                           title="Xem chi tiết"
+                          aria-label="Xem chi tiết"
                           onClick={() => setDetailModalIntern(intern)}
                         >
                           <Eye size={13} />
