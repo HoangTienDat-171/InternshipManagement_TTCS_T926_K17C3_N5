@@ -68,6 +68,11 @@ def mark_message_read(message_id: int, request: Request, db: sqlite3.Connection 
     user = require_role(request)
     if not mark_read(db, message_id, user["ma_nguoi_dung"], True):
         raise HTTPException(status_code=404, detail="Không tìm thấy thư trong hộp thư đến.")
+    db.execute("""
+        UPDATE THONG_BAO SET da_doc=1,
+            thoi_gian_doc=COALESCE(thoi_gian_doc, CURRENT_TIMESTAMP)
+        WHERE ma_nguoi_dung=? AND reference_type='internal_message' AND reference_id=?
+    """, (user["ma_nguoi_dung"], str(message_id)))
     db.commit()
     return {"messageId": message_id, "isRead": True}
 
@@ -77,6 +82,10 @@ def mark_message_unread(message_id: int, request: Request, db: sqlite3.Connectio
     user = require_role(request)
     if not mark_read(db, message_id, user["ma_nguoi_dung"], False):
         raise HTTPException(status_code=404, detail="Không tìm thấy thư trong hộp thư đến.")
+    db.execute("""
+        UPDATE THONG_BAO SET da_doc=0, thoi_gian_doc=NULL
+        WHERE ma_nguoi_dung=? AND reference_type='internal_message' AND reference_id=?
+    """, (user["ma_nguoi_dung"], str(message_id)))
     db.commit()
     return {"messageId": message_id, "isRead": False}
 
