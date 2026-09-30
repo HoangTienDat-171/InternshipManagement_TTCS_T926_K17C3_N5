@@ -455,6 +455,74 @@ class Sprint1RuntimeTests(unittest.TestCase):
         })
         self.assertEqual(status_code, 403)
 
+    def test_us08_approval_email_outbox_and_notification_ownership(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        suffix = str(time.time_ns())
+        approved_email = f"us08.approved.{suffix}@test.invalid"
+        rejected_email = f"us08.rejected.{suffix}@test.invalid"
+        approved_data = {
+            "ho_ten": "US08 Approved", "email": approved_email, "ma_phong_ban": 1,
+            "ma_truong": 1, "chuyen_nganh": "QA", "trang_thai_xet_duyet": "ChoDuyet",
+            "trang_thai_thuc_tap": "DangThucTap",
+        }
+        status_code, approved, _ = self.json_request("/api/interns", "POST", admin_token, approved_data)
+        self.assertEqual(status_code, 201, approved)
+        approved_data["trang_thai_xet_duyet"] = "DaDuyet"
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{approved['ma_ho_so']}", "PUT", admin_token, approved_data,
+        )
+        self.assertEqual(status_code, 200)
+
+        rejected_data = {**approved_data, "ho_ten": "US08 Rejected", "email": rejected_email,
+                         "trang_thai_xet_duyet": "ChoDuyet"}
+        status_code, rejected, _ = self.json_request("/api/interns", "POST", admin_token, rejected_data)
+        self.assertEqual(status_code, 201, rejected)
+        rejected_data["trang_thai_xet_duyet"] = "TuChoi"
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{rejected['ma_ho_so']}", "PUT", admin_token, rejected_data,
+        )
+        self.assertEqual(status_code, 200)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            approved_notification = db.execute(
+                "SELECT ma_thong_bao FROM THONG_BAO WHERE ma_nguoi_dung=?", (approved["ma_nguoi_dung"],),
+            ).fetchone()[0]
+            rejected_notification = db.execute(
+                "SELECT ma_thong_bao FROM THONG_BAO WHERE ma_nguoi_dung=?", (rejected["ma_nguoi_dung"],),
+            ).fetchone()[0]
+            rejected_email_status = db.execute(
+                "SELECT status FROM EMAIL_OUTBOX WHERE recipient_email=?", (rejected_email,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(rejected_email_status, "PENDING")
+
+        status_code, outbox, _ = self.json_request("/api/notifications/email-outbox", token=admin_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual({row["recipient_email"] for row in outbox if row["recipient_email"] in {
+            approved_email, rejected_email}}, {approved_email, rejected_email})
+        self.assertTrue(all("last_error" in row for row in outbox))
+
+        approved_token, _ = self.login(approved_email)
+        status_code, own_notifications, _ = self.json_request("/api/notifications", token=approved_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(len(own_notifications), 1)
+        self.assertEqual(own_notifications[0]["email_status"], "PENDING")
+        status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.json_request(
+            f"/api/notifications/{approved_notification}/read", "PUT", approved_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertIsNotNone(self.json_request("/api/notifications", token=approved_token)[1][0]["thoi_gian_doc"])
+
+        self.assertNotIn(rejected_notification, {item["ma_thong_bao"] for item in own_notifications})
+        status_code, _, _ = self.json_request(
+            f"/api/notifications/{rejected_notification}/read", "PUT", approved_token,
+        )
+        self.assertEqual(status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

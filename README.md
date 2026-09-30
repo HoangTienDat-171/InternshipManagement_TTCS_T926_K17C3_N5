@@ -68,4 +68,24 @@ Quá trình kiểm thử cần virtualenv Backend và khởi chạy API trên m�
 - Thông tin hồ sơ/TTS, Mentor, tài liệu, chương trình, ứng tuyển, tài khoản và phiên đăng nhập dùng chung MySQL; nội dung tệp tài liệu nằm trong `backend/app/uploads/`.
 - Thao tác dữ liệu phát sự kiện thông báo/WebSocket sau khi ghi MySQL thành công; giao diện tải lại danh sách qua API hiện hành.
 
+## Sprint 2: US08 email kết quả xét duyệt
+
+Khi Admin/HR duyệt hoặc từ chối hồ sơ thực tập, hoặc Admin duyệt/từ chối đơn ứng tuyển chương trình, backend ghi thông báo trong app và email vào `EMAIL_OUTBOX` trong cùng transaction. Worker nền gửi SMTP, chống claim đồng thời, retry theo cấp số nhân (30, 60, 120, 240 giây) và chuyển sang `FAILED` khi hết 5 lần thử. Notification và outbox có khóa deduplication theo hồ sơ/đơn và kết quả.
+
+Thêm cấu hình SMTP vào `backend/.env` (không commit tệp này):
+
+    SMTP_HOST=smtp.example.com
+    SMTP_PORT=587
+    SMTP_USERNAME=mailer@example.com
+    SMTP_PASSWORD=<SMTP app password>
+    SMTP_FROM=mailer@example.com
+    SMTP_USE_SSL=false
+    SMTP_USE_STARTTLS=true
+    SMTP_TIMEOUT_SECONDS=15
+    EMAIL_WORKER_INTERVAL_SECONDS=5
+
+Port 465 thường dùng `SMTP_USE_SSL=true` và `SMTP_USE_STARTTLS=false`. Admin/HR xem hàng đợi và lỗi gửi gần đây tại `GET /api/notifications/email-outbox`; người dùng chỉ thấy trạng thái email trên thông báo của họ. Lỗi SMTP không chứa stack trace trong API và mật khẩu được che khỏi thông tin lỗi.
+
+Để kiểm tra lỗi kết nối thực tế ở môi trường local, cấu hình `SMTP_HOST=127.0.0.1`, `SMTP_PORT=1`, duyệt một hồ sơ test rồi xem trạng thái `RETRY` và số lần thử tại endpoint trên. Worker dùng backoff nên lần retry kế tiếp cách 30 giây; các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
+
 Xem docs/audit/2026-09-26-repo-audit.md và AGENTS.md trước khi thay đổi cấu trúc hoặc bảo mật.

@@ -16,7 +16,11 @@ export default function Navbar({
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState('');
+  const [emailOutbox, setEmailOutbox] = useState([]);
+  const [emailOutboxError, setEmailOutboxError] = useState('');
+  const [emailOutboxLoading, setEmailOutboxLoading] = useState(false);
   const userId = currentUser?.ma_nguoi_dung;
+  const canReviewEmailStatus = ['Admin', 'HR'].includes(currentUser?.vai_tro);
 
   const loadNotifications = useCallback(async () => {
     if (!userId) return;
@@ -31,7 +35,20 @@ export default function Navbar({
     } finally {
       setNotificationsLoading(false);
     }
-  }, [userId]);
+    if (canReviewEmailStatus) {
+      setEmailOutboxLoading(true);
+      try {
+        const response = await apiFetch('/api/notifications/email-outbox');
+        if (!response.ok) throw new Error('Không tải được trạng thái email.');
+        setEmailOutbox(await response.json());
+        setEmailOutboxError('');
+      } catch (error) {
+        setEmailOutboxError(error.message || 'Không tải được trạng thái email.');
+      } finally {
+        setEmailOutboxLoading(false);
+      }
+    }
+  }, [userId, canReviewEmailStatus]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => loadNotifications(), 0);
@@ -62,6 +79,10 @@ export default function Navbar({
   };
 
   const unreadCount = notifications.filter((item) => !item.da_doc).length;
+  const emailStatusLabel = (status) => ({
+    PENDING: 'Đang chờ gửi', PROCESSING: 'Đang gửi', SENT: 'Đã gửi',
+    RETRY: 'Đang thử lại', FAILED: 'Gửi thất bại',
+  }[status] || 'Chưa gửi email');
   const getRoleBadge = (role) => {
     switch (role) {
       case 'Admin':
@@ -115,11 +136,25 @@ export default function Navbar({
                       <button type="button" key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`} onClick={() => item.da_doc ? null : markNotificationRead(item.ma_thong_bao)}>
                         <span className="notification-item-title">{item.tieu_de}</span>
                         <span>{item.noi_dung}</span>
+                        {item.email_status && <small>Email: {emailStatusLabel(item.email_status)}</small>}
                         <small>{formatNotificationDate(item.thoi_gian_gui)}</small>
                       </button>
                     ))}
                   </div>
                 )}
+                {canReviewEmailStatus && <div className="notification-email-outbox">
+                  <div className="notification-panel-heading"><strong>Trạng thái email</strong><button type="button" onClick={loadNotifications}>Làm mới</button></div>
+                  {emailOutboxError && <p className="notification-message notification-error">{emailOutboxError}</p>}
+                  {emailOutboxLoading && emailOutbox.length === 0 ? <p className="notification-message">Đang tải trạng thái email…</p> : null}
+                  {!emailOutboxLoading && !emailOutboxError && emailOutbox.length === 0 ? <p className="notification-message">Chưa có email trong hàng đợi.</p> : null}
+                  {emailOutbox.map((item) => (
+                    <div className="notification-email-item" key={item.id}>
+                      <strong>{item.subject}</strong>
+                      <small>{item.recipient_email} · {emailStatusLabel(item.status)} ({item.retry_count}/{item.max_retry})</small>
+                      {item.last_error && <small className="notification-error">Chi tiết: {item.last_error}</small>}
+                    </div>
+                  ))}
+                </div>}
               </section>
             </>}
           </div>
