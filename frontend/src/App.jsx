@@ -10,6 +10,7 @@ import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
+import MailboxView from './views/MailboxView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -27,7 +28,9 @@ export default function App() {
   const pendingContractPath = new URLSearchParams(window.location.search).get('next')?.match(/^\/contracts\/\d+$/)?.[0];
   const requestedContractPath = initialContractPath || pendingContractPath;
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
-  const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : 'interns');
+  const [activeTab, setActiveTab] = useState(() => requestedContractPath
+    ? 'contract-link'
+    : window.location.pathname === '/mailbox' ? 'mailbox' : 'interns');
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -288,8 +291,24 @@ export default function App() {
 
   const navigateToTab = (tab) => {
     if (passwordChangeRequired) return;
+    const nextPath = tab === 'mailbox' ? '/mailbox' : '/';
+    if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
     setActiveTab(tab);
   };
+
+  useEffect(() => {
+    const syncTabWithPath = () => {
+      if (window.location.pathname === '/mailbox') {
+        setActiveTab('mailbox');
+      } else if (/^\/contracts\/\d+$/.test(window.location.pathname)) {
+        setActiveTab('contract-link');
+      } else {
+        setActiveTab((current) => current === 'mailbox' || current === 'contract-link' ? 'interns' : current);
+      }
+    };
+    window.addEventListener('popstate', syncTabWithPath);
+    return () => window.removeEventListener('popstate', syncTabWithPath);
+  }, []);
 
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
@@ -449,6 +468,10 @@ export default function App() {
               onUserUpdated={handleUserUpdated}
               onShowToast={showToast}
             />
+          )}
+
+          {visibleActiveTab === 'mailbox' && (
+            <MailboxView currentUser={currentUser} onShowToast={showToast} />
           )}
 
         </main>

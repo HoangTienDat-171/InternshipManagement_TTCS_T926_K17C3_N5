@@ -7,6 +7,7 @@ import {
   Building2,
   GraduationCap,
   LayoutDashboard,
+  Mail,
   UsersRound,
   LogOut,
   X
@@ -43,6 +44,11 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
     }] : []),
+    {
+      id: 'mailbox',
+      label: 'Hộp thư',
+      icon: <Mail size={18} />
+    },
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
       id: 'accounts',
