@@ -196,6 +196,26 @@ def get_db_connection():
     return conn
 
 
+def _default_email_templates():
+    return [
+        ("MAU_DUYET_HO_SO", "Duyệt hồ sơ", "Hồ sơ thực tập của bạn đã được duyệt",
+         "<p>Xin chào {ten_tts},</p><p>Hồ sơ đăng ký chương trình <strong>{ten_chuong_trinh}</strong> của bạn đã được duyệt.</p>",
+         "KET_QUA_XET_DUYET"),
+        ("MAU_TU_CHOI_HO_SO", "Từ chối hồ sơ", "Kết quả xét duyệt hồ sơ thực tập",
+         "<p>Xin chào {ten_tts},</p><p>Hồ sơ đăng ký chương trình <strong>{ten_chuong_trinh}</strong> hiện chưa đáp ứng yêu cầu.</p>",
+         "KET_QUA_XET_DUYET"),
+        ("MAU_NHAC_BAO_CAO", "Nhắc nộp báo cáo", "Nhắc nộp báo cáo thực tập",
+         "<p>Xin chào {ten_tts},</p><p>Vui lòng hoàn thành báo cáo thực tập trước ngày {ngay_het_han}.</p>",
+         "THONG_BAO_CHUNG"),
+        ("MAU_BO_SUNG_HO_SO", "Bổ sung hồ sơ", "Yêu cầu bổ sung hồ sơ thực tập",
+         "<p>Xin chào {ten_tts},</p><p>Vui lòng kiểm tra và bổ sung các tài liệu còn thiếu trong hồ sơ.</p>",
+         "BO_SUNG_HO_SO"),
+        ("MAU_THONG_BAO_LICH", "Thông báo lịch", "Thông báo lịch thực tập",
+         "<p>Xin chào {ten_tts},</p><p>Lịch thực tập của chương trình {ten_chuong_trinh} bắt đầu từ {ngay_bat_dau} đến {ngay_ket_thuc}.</p>",
+         "THONG_BAO_CHUNG"),
+    ]
+
+
 def init_mysql_db():
     conn = get_db_connection()
     try:
@@ -248,6 +268,61 @@ def init_mysql_db():
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                recipient_email VARCHAR(254) NOT NULL, subject VARCHAR(255) NOT NULL,
+                body TEXT NOT NULL, template_type VARCHAR(80) NOT NULL,
+                reference_type VARCHAR(80), reference_id VARCHAR(100),
+                deduplication_key VARCHAR(190) NOT NULL UNIQUE,
+                status ENUM('PENDING','PROCESSING','SENT','FAILED','RETRY') NOT NULL DEFAULT 'PENDING',
+                retry_count INT NOT NULL DEFAULT 0, max_retry INT NOT NULL DEFAULT 5,
+                last_error TEXT, next_retry_at DATETIME NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_email_outbox_due (status, next_retry_at, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS EMAIL_TEMPLATES (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                template_code VARCHAR(100) NOT NULL UNIQUE,
+                title VARCHAR(255) NOT NULL, subject VARCHAR(255) NOT NULL,
+                body_html TEXT NOT NULL, category VARCHAR(50) NOT NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1, created_by INT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                deleted_at DATETIME NULL,
+                KEY idx_email_templates_active (is_active, category),
+                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_THREADS (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY, subject VARCHAR(255) NOT NULL,
+                created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGES (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id BIGINT NOT NULL,
+                sender_id INT NULL, category VARCHAR(50) NOT NULL,
+                subject VARCHAR(255) NOT NULL, content_html TEXT NOT NULL,
+                parent_id BIGINT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                deleted_at DATETIME NULL,
+                KEY idx_internal_messages_thread (thread_id, created_at),
+                KEY idx_internal_messages_sender (sender_id, created_at),
+                FOREIGN KEY (thread_id) REFERENCES INTERNAL_MESSAGE_THREADS(id) ON DELETE RESTRICT,
+                FOREIGN KEY (sender_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+                FOREIGN KEY (parent_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_RECIPIENTS (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL,
+                receiver_id INT NULL, is_read TINYINT(1) NOT NULL DEFAULT 0,
+                read_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_internal_message_receiver (message_id, receiver_id),
+                KEY idx_internal_recipient_inbox (receiver_id, is_read, created_at),
+                KEY idx_internal_recipient_message (message_id),
+                FOREIGN KEY (message_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE RESTRICT,
+                FOREIGN KEY (receiver_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
         ]
         for statement in statements:
             conn.execute(statement)
@@ -261,6 +336,20 @@ def init_mysql_db():
             conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN ten_file VARCHAR(255) NULL")
         if "kich_thuoc" not in column_names:
             conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN kich_thuoc BIGINT UNSIGNED NULL")
+
+        notification_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'THONG_BAO'
+        """).fetchall()
+        notification_column_names = {row["COLUMN_NAME"] for row in notification_columns}
+        for name, definition in (
+            ("loai", "VARCHAR(80) NOT NULL DEFAULT 'general'"),
+            ("reference_type", "VARCHAR(80) NULL"),
+            ("reference_id", "VARCHAR(100) NULL"),
+            ("thoi_gian_doc", "DATETIME NULL"),
+        ):
+            if name not in notification_column_names:
+                conn.execute(f"ALTER TABLE THONG_BAO ADD COLUMN {name} {definition}")
 
         if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
             conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
@@ -284,6 +373,11 @@ def init_mysql_db():
             INSERT IGNORE INTO HO_SO_THUC_TAP (ma_nguoi_dung)
             SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro = 'ThucTapSinh'
         """)
+        conn.executemany("""
+            INSERT IGNORE INTO EMAIL_TEMPLATES
+                (template_code, title, subject, body_html, category)
+            VALUES (?, ?, ?, ?, ?)
+        """, _default_email_templates())
         conn.commit()
     except Exception:
         conn.rollback()
@@ -458,9 +552,119 @@ def init_db():
         kenh TEXT DEFAULT 'Email' CHECK(kenh IN ('Email', 'App')),
         da_doc INTEGER DEFAULT 0,
         thoi_gian_gui DATETIME DEFAULT CURRENT_TIMESTAMP,
+        loai TEXT NOT NULL DEFAULT 'general',
+        reference_type TEXT,
+        reference_id TEXT,
+        thoi_gian_doc DATETIME,
         FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
     );
     """)
+
+    notification_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(THONG_BAO)")}
+    for name, definition in (
+        ("loai", "TEXT NOT NULL DEFAULT 'general'"),
+        ("reference_type", "TEXT"),
+        ("reference_id", "TEXT"),
+        ("thoi_gian_doc", "DATETIME"),
+    ):
+        if name not in notification_columns:
+            cursor.execute(f"ALTER TABLE THONG_BAO ADD COLUMN {name} {definition}")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient_email TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        template_type TEXT NOT NULL,
+        reference_type TEXT,
+        reference_id TEXT,
+        deduplication_key TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'PENDING'
+            CHECK(status IN ('PENDING', 'PROCESSING', 'SENT', 'FAILED', 'RETRY')),
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        max_retry INTEGER NOT NULL DEFAULT 5,
+        last_error TEXT,
+        next_retry_at DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        sent_at DATETIME,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_outbox_due
+        ON EMAIL_OUTBOX(status, next_retry_at, created_at)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS EMAIL_TEMPLATES (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_code TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body_html TEXT NOT NULL,
+        category TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_by INTEGER,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deleted_at DATETIME,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_templates_active
+        ON EMAIL_TEMPLATES(is_active, category)
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_THREADS (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject TEXT NOT NULL,
+        created_by INTEGER,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGES (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id INTEGER NOT NULL,
+        sender_id INTEGER,
+        category TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content_html TEXT NOT NULL,
+        parent_id INTEGER,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deleted_at DATETIME,
+        FOREIGN KEY (thread_id) REFERENCES INTERNAL_MESSAGE_THREADS(id) ON DELETE RESTRICT,
+        FOREIGN KEY (sender_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+        FOREIGN KEY (parent_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_messages_thread ON INTERNAL_MESSAGES(thread_id, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_messages_sender ON INTERNAL_MESSAGES(sender_id, created_at)")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_RECIPIENTS (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        receiver_id INTEGER,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        read_at DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(message_id, receiver_id),
+        FOREIGN KEY (message_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE RESTRICT,
+        FOREIGN KEY (receiver_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_recipient_inbox ON INTERNAL_MESSAGE_RECIPIENTS(receiver_id, is_read, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_recipient_message ON INTERNAL_MESSAGE_RECIPIENTS(message_id)")
+    cursor.executemany("""
+        INSERT OR IGNORE INTO EMAIL_TEMPLATES
+            (template_code, title, subject, body_html, category)
+        VALUES (?, ?, ?, ?, ?)
+    """, _default_email_templates())
 
     # Giai đoạn 3: Cơ chế phòng thủ tầng ứng dụng (Application Layer Defense)
     # 7. Bảng theo dõi số lần đăng nhập sai chống Brute-force & Account Lockout

@@ -173,7 +173,7 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
         SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet,
-               u.ho_ten, u.trang_thai AS trang_thai_tai_khoan, s.session_id
+               u.ho_ten, u.email, u.trang_thai AS trang_thai_tai_khoan, s.session_id
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
@@ -207,6 +207,29 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         record["trang_thai_tai_khoan"] != target_account_status
         and record["trang_thai_tai_khoan"] != "Khoa"
     )
+    internship_status = data.trang_thai_thuc_tap if data.trang_thai_xet_duyet == "DaDuyet" else None
+    if approval_changed:
+        cursor.execute("""
+            UPDATE HO_SO_THUC_TAP
+            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
+            WHERE ma_ho_so = ? AND trang_thai_xet_duyet = ?
+        """, (
+            data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet,
+            internship_status, id, record["trang_thai_xet_duyet"],
+        ))
+        if cursor.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Hồ sơ vừa được HR/Admin khác xử lý. Tải lại dữ liệu trước khi thử lại.",
+            )
+    else:
+        cursor.execute("""
+            UPDATE HO_SO_THUC_TAP
+            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
+            WHERE ma_ho_so = ?
+        """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, internship_status, id))
+
     if approval_changed or account_status_drift:
         sync_intern_approval(cursor, ma_nguoi_dung, data.trang_thai_xet_duyet)
 
@@ -217,20 +240,23 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         WHERE ma_nguoi_dung = ?
     """, (data.ho_ten.strip(), data.email.strip().lower(), data.so_dien_thoai, data.ma_phong_ban, ma_nguoi_dung))
 
-    # 3. Cập nhật bảng HO_SO_THUC_TAP
-    cursor.execute("""
-        UPDATE HO_SO_THUC_TAP
-        SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
-        WHERE ma_ho_so = ?
-    """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, data.trang_thai_thuc_tap, id))
-
     if approval_changed or account_status_drift:
         title, message = {
             "ChoDuyet": ("Hồ sơ đang chờ duyệt", "Hồ sơ thực tập của bạn đang chờ xét duyệt."),
             "DaDuyet": ("Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt."),
             "TuChoi": ("Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết."),
         }[data.trang_thai_xet_duyet]
-        create_notification(db, ma_nguoi_dung, title, message)
+        decision = data.trang_thai_xet_duyet
+        create_notification(
+            db, ma_nguoi_dung, title, message,
+            notification_type="internship_review_result",
+            reference_type="intern_profile", reference_id=id,
+            email_recipient=(data.email.strip().lower() if decision in {"DaDuyet", "TuChoi"} else None),
+            email_deduplication_key=(f"us08:intern_profile:{id}:{decision}"
+                                     if decision in {"DaDuyet", "TuChoi"} else None),
+            email_reference_type="intern_profile",
+            email_reference_id=id,
+        )
 
     db.commit()
     if previous_session_id and data.trang_thai_xet_duyet != "DaDuyet":
@@ -311,6 +337,13 @@ def list_interns(
                h.ma_truong, t.ten_truong,
                h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
                h.ngay_tao,
+               (SELECT e.status
+                FROM EMAIL_OUTBOX e
+                JOIN THONG_BAO n ON e.reference_type = 'notification'
+                    AND e.reference_id = CAST(n.ma_thong_bao AS CHAR)
+                WHERE n.reference_type = 'intern_profile'
+                    AND n.reference_id = CAST(h.ma_ho_so AS CHAR)
+                ORDER BY e.id DESC LIMIT 1) AS email_status,
                mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
                mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
                mentor.so_dien_thoai AS mentor_so_dien_thoai,

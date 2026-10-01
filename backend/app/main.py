@@ -4,8 +4,9 @@ from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
+from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import auth_routes, document_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
+from .routes import auth_routes, document_routes, intern_routes, mailbox_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -56,13 +57,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 @app.on_event("startup")
 def on_startup():
     init_db()
+    start_email_worker()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await stop_email_worker()
 
 @app.get("/")
 def root():
@@ -81,6 +88,7 @@ app.include_router(mentor_routes.router)
 app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(metrics_routes.router)
+app.include_router(mailbox_routes.router)
 
 
 @app.websocket("/api/auth/events")

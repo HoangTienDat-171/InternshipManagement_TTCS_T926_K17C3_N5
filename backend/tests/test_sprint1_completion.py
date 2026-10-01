@@ -1,5 +1,6 @@
 """Focused Sprint 1 API regressions using a disposable SQLite database."""
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import socket
@@ -95,6 +96,12 @@ class Sprint1RuntimeTests(unittest.TestCase):
         environment["IMS_DATABASE_BACKEND"] = "sqlite"
         environment["IMS_SQLITE_PATH"] = str(cls.db_path)
         environment["PYTHONIOENCODING"] = "utf-8"
+        environment["SMTP_HOST"] = ""
+        environment["SMTP_USERNAME"] = ""
+        environment["SMTP_PASSWORD"] = ""
+        environment["SMTP_FROM"] = ""
+        environment["IMS_COMPANY_NAME"] = "Test Organization"
+        environment["IMS_PORTAL_URL"] = "https://ims.example.test"
         cls.log_path = cls.temp_path / "uvicorn.log"
         cls.log_file = cls.log_path.open("w", encoding="utf-8")
         cls.server = subprocess.Popen(
@@ -454,6 +461,262 @@ class Sprint1RuntimeTests(unittest.TestCase):
             "ho_ten": "Unauthorized", "email": "unauthorized2@test.invalid",
         })
         self.assertEqual(status_code, 403)
+
+    def test_us08_approval_email_outbox_and_notification_ownership(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        suffix = str(time.time_ns())
+        approved_email = f"us08.approved.{suffix}@test.invalid"
+        rejected_email = f"us08.rejected.{suffix}@test.invalid"
+        db = sqlite3.connect(self.db_path)
+        try:
+            password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='admin@internship.vn'",
+            ).fetchone()[0]
+            profiles = {}
+            for full_name, email in (("US08 Approved", approved_email), ("US08 Rejected", rejected_email)):
+                cursor = db.execute("""
+                    INSERT INTO NGUOI_DUNG
+                        (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                    VALUES (1, ?, ?, ?, 'ThucTapSinh', 'HoatDong')
+                """, (full_name, email, password_hash))
+                user_id = cursor.lastrowid
+                cursor = db.execute("""
+                    INSERT INTO HO_SO_THUC_TAP
+                        (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                    VALUES (?, 1, 'QA', 'ChoDuyet', NULL)
+                """, (user_id,))
+                profiles[email] = (user_id, cursor.lastrowid)
+            db.commit()
+        finally:
+            db.close()
+
+        approved_user_id, approved_profile_id = profiles[approved_email]
+        rejected_user_id, rejected_profile_id = profiles[rejected_email]
+        approved_data = {
+            "ho_ten": "US08 Approved", "email": approved_email, "ma_phong_ban": 1,
+            "ma_truong": 1, "chuyen_nganh": "QA", "trang_thai_xet_duyet": "DaDuyet",
+            "trang_thai_thuc_tap": "DangThucTap",
+        }
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{approved_profile_id}", "PUT", admin_token, approved_data,
+        )
+        self.assertEqual(status_code, 200)
+
+        rejected_data = {**approved_data, "ho_ten": "US08 Rejected", "email": rejected_email,
+                         "trang_thai_xet_duyet": "TuChoi"}
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{rejected_profile_id}", "PUT", admin_token, rejected_data,
+        )
+        self.assertEqual(status_code, 200)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            approved_notification = db.execute(
+                "SELECT ma_thong_bao FROM THONG_BAO WHERE ma_nguoi_dung=?", (approved_user_id,),
+            ).fetchone()[0]
+            rejected_notification = db.execute(
+                "SELECT ma_thong_bao FROM THONG_BAO WHERE ma_nguoi_dung=?", (rejected_user_id,),
+            ).fetchone()[0]
+            rejected_email_status = db.execute(
+                "SELECT status FROM EMAIL_OUTBOX WHERE recipient_email=?", (rejected_email,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(rejected_email_status, "PENDING")
+        status_code, intern_rows, _ = self.json_request(
+            f"/api/interns?search={approved_email}", token=admin_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(intern_rows["items"][0]["email_status"], "PENDING")
+
+        status_code, outbox, _ = self.json_request("/api/notifications/email-outbox", token=admin_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual({row["recipient_email"] for row in outbox if row["recipient_email"] in {
+            approved_email, rejected_email}}, {approved_email, rejected_email})
+        self.assertTrue(all("last_error" in row for row in outbox))
+        self.assertTrue(all("body" not in row for row in outbox))
+        self.assertTrue(all("attempts_made" in row for row in outbox))
+        hr_token, _ = self.login("hr@internship.vn")
+        self.assertEqual(self.json_request("/api/notifications/email-outbox", token=hr_token)[0], 200)
+
+        approved_token, _ = self.login(approved_email)
+        status_code, own_notifications, _ = self.json_request("/api/notifications", token=approved_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(len(own_notifications), 1)
+        self.assertNotIn("email_status", own_notifications[0])
+        status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.json_request(
+            f"/api/notifications/{approved_notification}/read", "PUT", approved_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertIsNotNone(self.json_request("/api/notifications", token=approved_token)[1][0]["thoi_gian_doc"])
+
+        self.assertNotIn(rejected_notification, {item["ma_thong_bao"] for item in own_notifications})
+        status_code, _, _ = self.json_request(
+            f"/api/notifications/{rejected_notification}/read", "PUT", approved_token,
+        )
+        self.assertEqual(status_code, 404)
+
+    def test_us08_concurrent_profile_reviews_commit_only_one_result(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        hr_token, _ = self.login("hr@internship.vn")
+        email = f"us08.concurrent.{time.time_ns()}@test.invalid"
+        db = sqlite3.connect(self.db_path)
+        try:
+            password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='admin@internship.vn'",
+            ).fetchone()[0]
+            cursor = db.execute("""
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                VALUES (1, 'US08 Concurrent', ?, ?, 'ThucTapSinh', 'HoatDong')
+            """, (email, password_hash))
+            user_id = cursor.lastrowid
+            cursor = db.execute("""
+                INSERT INTO HO_SO_THUC_TAP
+                    (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                VALUES (?, 1, 'QA', 'ChoDuyet', NULL)
+            """, (user_id,))
+            profile_id = cursor.lastrowid
+            db.commit()
+        finally:
+            db.close()
+
+        def review(decision, token):
+            return self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
+                "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
+                "ma_truong": 1, "chuyen_nganh": "QA",
+                "trang_thai_xet_duyet": decision, "trang_thai_thuc_tap": "DangThucTap",
+            })
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(
+                lambda values: review(*values),
+                (("DaDuyet", admin_token), ("TuChoi", hr_token)),
+            ))
+        self.assertEqual(sorted(code for code, _, _ in outcomes), [200, 409])
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            final_status = db.execute(
+                "SELECT trang_thai_xet_duyet FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_id,),
+            ).fetchone()[0]
+            email_count = db.execute(
+                "SELECT COUNT(*) FROM EMAIL_OUTBOX WHERE deduplication_key LIKE ?",
+                (f"us08:intern_profile:{profile_id}:%",),
+            ).fetchone()[0]
+            notification_count = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE ma_nguoi_dung=?", (user_id,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertIn(final_status, {"DaDuyet", "TuChoi"})
+        self.assertEqual((email_count, notification_count), (1, 1))
+
+    def test_us08_program_review_is_serialized_and_queues_complete_result_emails(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        hr_token, _ = self.login("hr@internship.vn")
+        suffix = str(time.time_ns())[-12:]
+        program_name = f"US08 Review {suffix}"
+        status_code, program, _ = self.json_request("/api/programs", "POST", admin_token, {
+            "ma_ct": f"US08-{suffix}", "ten_ct": program_name, "ma_phong_ban": 1,
+            "ngay_bat_dau": "2026-11-01", "ngay_ket_thuc": "2026-12-01",
+            "chi_tieu": 1, "mo_ta_cong_viec": "US08 test program",
+            "yeu_cau": "Test only", "quyen_loi": "Test",
+        })
+        self.assertEqual(status_code, 201, program)
+        program_id = program["ma_chuong_trinh"]
+
+        test_emails = (
+            "tuan.lm@internship.vn",
+            "minh.khoi.nguyen@internship.vn",
+            "ngoc.tran@internship.vn",
+        )
+        db = sqlite3.connect(self.db_path)
+        try:
+            placeholders = ",".join("?" for _ in test_emails)
+            profiles = db.execute(f"""
+                SELECT h.ma_ho_so, u.email
+                FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
+                WHERE u.email IN ({placeholders})
+            """, test_emails).fetchall()
+            profile_by_email = {email: profile_id for profile_id, email in profiles}
+            self.assertEqual(set(profile_by_email), set(test_emails))
+            application_ids = {}
+            for email in test_emails:
+                cursor = db.execute("""
+                    INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai)
+                    VALUES (?, ?, 'ChoDuyet')
+                """, (program_id, profile_by_email[email]))
+                application_ids[email] = cursor.lastrowid
+            db.commit()
+        finally:
+            db.close()
+
+        def approve(application_id, token):
+            return self.json_request(
+                f"/api/programs/{program_id}/applications/{application_id}", "PUT", token,
+                {"trang_thai": "DaDuyet"},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(
+                lambda values: approve(*values),
+                ((application_ids[test_emails[0]], admin_token),
+                 (application_ids[test_emails[1]], hr_token)),
+            ))
+        self.assertEqual(sorted(status for status, _, _ in outcomes), [200, 400])
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            decisions = dict(db.execute("""
+                SELECT ma_ung_tuyen, trang_thai FROM UNG_TUYEN_CHUONG_TRINH
+                WHERE ma_chuong_trinh = ?
+            """, (program_id,)).fetchall())
+        finally:
+            db.close()
+        approved_id = next(app_id for app_id, decision in decisions.items() if decision == "DaDuyet")
+        pending_ids = [app_id for app_id, decision in decisions.items() if decision == "ChoDuyet"]
+        self.assertEqual(len(pending_ids), 2)
+        rejected_id = pending_ids[0]
+        status_code, rejected_response, _ = self.json_request(
+            f"/api/programs/{program_id}/applications/{rejected_id}", "PUT", hr_token,
+            {"trang_thai": "TuChoi", "reject_reason": "Thiếu kinh nghiệm chuyên môn."},
+        )
+        self.assertEqual(status_code, 200, rejected_response)
+        blank_reason_id = pending_ids[1]
+        status_code, blank_response, _ = self.json_request(
+            f"/api/programs/{program_id}/applications/{blank_reason_id}", "PUT", admin_token,
+            {"trang_thai": "TuChoi", "reject_reason": "  "},
+        )
+        self.assertEqual(status_code, 200, blank_response)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            rows = db.execute("""
+                SELECT reference_id, subject, body, status, retry_count, max_retry
+                FROM EMAIL_OUTBOX WHERE reference_type='program_application'
+                  AND reference_id IN (?, ?, ?)
+            """, tuple(str(application_ids[email]) for email in test_emails)).fetchall()
+        finally:
+            db.close()
+        self.assertEqual(len(rows), 3)
+        by_application = {int(row[0]): row for row in rows}
+        approved_mail = by_application[approved_id]
+        self.assertIn("[Test Organization] Thông báo kết quả xét duyệt hồ sơ thực tập sinh", approved_mail[1])
+        for expected in ("Chúc mừng", program_name, "Test Organization", "2026-11-01",
+                         "2026-12-01", "Bước tiếp theo", "hợp đồng", "https://ims.example.test"):
+            self.assertIn(expected, approved_mail[2])
+        self.assertNotIn("None", approved_mail[2])
+        self.assertEqual((approved_mail[3], approved_mail[4], approved_mail[5]), ("PENDING", 0, 4))
+
+        rejected_mail = by_application[rejected_id]
+        self.assertIn("Thiếu kinh nghiệm chuyên môn.", rejected_mail[2])
+        self.assertIn("lưu hồ sơ", rejected_mail[2])
+        blank_reason_mail = by_application[blank_reason_id]
+        self.assertNotIn("Ghi chú từ HR:", blank_reason_mail[2])
+        self.assertNotIn("None", blank_reason_mail[2])
 
 
 if __name__ == "__main__":

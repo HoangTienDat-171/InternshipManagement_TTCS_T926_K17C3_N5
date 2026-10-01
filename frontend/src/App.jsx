@@ -10,14 +10,28 @@ import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
+import MailboxView from './views/MailboxView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
+function clearSavedSession() {
+  try {
+    localStorage.removeItem('ims_token');
+    localStorage.removeItem('ims_user');
+  } catch {
+    // The login screen must remain usable when browser storage is unavailable.
+  }
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('interns');
+  const [activeTab, setActiveTab] = useState(() => window.location.pathname === '/mailbox' ? 'mailbox' : 'interns');
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
+    if (window.location.pathname === '/login') {
+      clearSavedSession();
+      return null;
+    }
     try {
       const savedUser = localStorage.getItem('ims_user');
       return savedUser && localStorage.getItem('ims_token') ? JSON.parse(savedUser) : null;
@@ -45,10 +59,6 @@ export default function App() {
   // Toast notifications
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
-  const [compactLayout, setCompactLayout] = useState(() => {
-    try { return Boolean(JSON.parse(localStorage.getItem('ims_preferences'))?.compact); }
-    catch { return false; }
-  });
   const [theme, setTheme] = useState(() => {
     let savedTheme = 'light';
     try { savedTheme = localStorage.getItem('ims_theme') === 'dark' ? 'dark' : 'light'; }
@@ -62,9 +72,6 @@ export default function App() {
   const [sessionNotice, setSessionNotice] = useState('');
 
   const showToast = (message, type = 'success') => {
-    try {
-      if (JSON.parse(localStorage.getItem('ims_preferences'))?.notifications === false) return;
-    } catch { /* Use the default enabled setting when preferences are unreadable. */ }
     setToast({ message, type });
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => {
@@ -87,6 +94,17 @@ export default function App() {
 
     window.addEventListener('ims-session-expired', handleSessionExpired);
     return () => window.removeEventListener('ims-session-expired', handleSessionExpired);
+  }, []);
+
+  useEffect(() => {
+    const clearSessionOnLoginRoute = () => {
+      if (window.location.pathname !== '/login') return;
+      clearSavedSession();
+      setCurrentUser(null);
+      setSessionNotice('');
+    };
+    window.addEventListener('popstate', clearSessionOnLoginRoute);
+    return () => window.removeEventListener('popstate', clearSessionOnLoginRoute);
   }, []);
 
   useEffect(() => {
@@ -113,12 +131,6 @@ export default function App() {
       window.removeEventListener('resize', closeOnDesktop);
     };
   }, [sidebarOpen]);
-
-  useEffect(() => {
-    const handlePreferencesChange = (event) => setCompactLayout(Boolean(event.detail?.compact));
-    window.addEventListener('ims-preferences-change', handlePreferencesChange);
-    return () => window.removeEventListener('ims-preferences-change', handlePreferencesChange);
-  }, []);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -228,6 +240,7 @@ export default function App() {
   }, [currentUserId]);
 
   const handleLoginSuccess = (user) => {
+    if (window.location.pathname === '/login') window.history.replaceState(null, '', '/');
     setSessionNotice('');
     setSidebarOpen(false);
     setCurrentUser(user);
@@ -235,15 +248,19 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    const token = localStorage.getItem('ims_token');
+    clearSavedSession();
+    setSidebarOpen(false);
+    setCurrentUser(null);
+    window.history.replaceState(null, '', '/login');
     try {
-      await apiFetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch('/api/auth/logout', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
     } catch {
       // ignore
     }
-    localStorage.removeItem('ims_token');
-    localStorage.removeItem('ims_user');
-    setSidebarOpen(false);
-    setCurrentUser(null);
     showToast('Đã đăng xuất khỏi hệ thống.');
   };
 
@@ -254,6 +271,20 @@ export default function App() {
     }
     setDesktopSidebarCollapsed((collapsed) => !collapsed);
   };
+
+  const navigateToTab = (tab) => {
+    const nextPath = tab === 'mailbox' ? '/mailbox' : '/';
+    if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
+    setActiveTab(tab);
+  };
+
+  useEffect(() => {
+    const syncTabWithPath = () => {
+      if (window.location.pathname === '/mailbox') setActiveTab('mailbox');
+    };
+    window.addEventListener('popstate', syncTabWithPath);
+    return () => window.removeEventListener('popstate', syncTabWithPath);
+  }, []);
 
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
   if (!currentUser) {
@@ -268,7 +299,7 @@ export default function App() {
 
   // TRANG CHỦ HỆ THỐNG
   return (
-    <div className={`app-layout${compactLayout ? ' compact' : ''}${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+    <div className={`app-layout${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       {/* Toast Notification */}
       {toast && (
         <div style={{
@@ -296,8 +327,9 @@ export default function App() {
       {/* Sidebar */}
       <Sidebar 
         activeTab={visibleActiveTab}
-        onTabChange={setActiveTab}
+        onTabChange={navigateToTab}
         currentUser={currentUser}
+        onLogout={handleLogout}
         isOpen={sidebarOpen}
         isCollapsed={window.innerWidth > 1000 && desktopSidebarCollapsed}
         onClose={() => setSidebarOpen(false)}
@@ -317,7 +349,7 @@ export default function App() {
         <Navbar
           currentUser={currentUser}
           onLogout={handleLogout}
-          onOpenAccount={(section) => { setAccountSection(section); setActiveTab('profile'); }}
+          onOpenAccount={(section) => { setAccountSection(section); navigateToTab('profile'); }}
           onToggleSidebar={handleNavigationToggle}
           sidebarOpen={window.innerWidth <= 1000 ? sidebarOpen : !desktopSidebarCollapsed}
           theme={theme}
@@ -366,7 +398,7 @@ export default function App() {
           )}
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-dashboard' && (
-            <InternWorkspaceView currentUser={currentUser} onNavigatePrograms={() => setActiveTab('programs')} />
+            <InternWorkspaceView currentUser={currentUser} onNavigatePrograms={() => navigateToTab('programs')} />
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
@@ -381,6 +413,10 @@ export default function App() {
               onUserUpdated={setCurrentUser}
               onShowToast={showToast}
             />
+          )}
+
+          {visibleActiveTab === 'mailbox' && (
+            <MailboxView currentUser={currentUser} onShowToast={showToast} />
           )}
         </main>
       </div>

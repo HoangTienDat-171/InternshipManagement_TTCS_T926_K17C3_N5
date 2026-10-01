@@ -7,11 +7,13 @@ import {
   Building2,
   GraduationCap,
   LayoutDashboard,
+  Mail,
   UsersRound,
+  LogOut,
   X
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, onTabChange, currentUser, isOpen = false, isCollapsed = false, onClose }) {
+export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout, isOpen = false, isCollapsed = false, onClose }) {
   const isAdmin = currentUser?.vai_tro === 'Admin';
   const canManage = isAdmin || currentUser?.vai_tro === 'HR';
   const canViewPrograms = canManage || currentUser?.vai_tro === 'ThucTapSinh';
@@ -42,6 +44,11 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, isOpen = 
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
     }] : []),
+    {
+      id: 'mailbox',
+      label: 'Hộp thư',
+      icon: <Mail size={18} />
+    },
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
       id: 'accounts',
@@ -81,19 +88,10 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, isOpen = 
       </nav>
 
       <div className="sidebar-footer">
-        {currentUser && (
-          <div className="user-profile-badge">
-            <div className="user-avatar">
-              {currentUser.ho_ten ? currentUser.ho_ten.charAt(0).toUpperCase() : 'U'}
-            </div>
-            <div className="user-details">
-              <div className="user-name" title={currentUser.ho_ten}>{currentUser.ho_ten}</div>
-              <div className="user-role-label">
-                {currentUser.vai_tro === 'HR' ? 'Quản lý TTS' : currentUser.vai_tro}
-              </div>
-            </div>
-          </div>
-        )}
+        <button type="button" className="sidebar-logout-button" onClick={onLogout}>
+          <LogOut size={18} aria-hidden="true" />
+          <span>Đăng xuất</span>
+        </button>
       </div>
     </aside>
   );

@@ -70,8 +70,32 @@ CREATE TABLE IF NOT EXISTS THONG_BAO (
     kenh ENUM('Email', 'App') DEFAULT 'Email',
     da_doc BOOLEAN DEFAULT FALSE,
     thoi_gian_gui DATETIME DEFAULT CURRENT_TIMESTAMP,
+    loai VARCHAR(80) NOT NULL DEFAULT 'general',
+    reference_type VARCHAR(80),
+    reference_id VARCHAR(100),
+    thoi_gian_doc DATETIME,
     FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    recipient_email VARCHAR(254) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    template_type VARCHAR(80) NOT NULL,
+    reference_type VARCHAR(80),
+    reference_id VARCHAR(100),
+    deduplication_key VARCHAR(190) NOT NULL UNIQUE,
+    status ENUM('PENDING','PROCESSING','SENT','FAILED','RETRY') NOT NULL DEFAULT 'PENDING',
+    retry_count INT NOT NULL DEFAULT 0,
+    max_retry INT NOT NULL DEFAULT 4,
+    last_error TEXT,
+    next_retry_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at DATETIME NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_email_outbox_due (status, next_retry_at, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Thông tin chuyên môn riêng của Mentor; tài khoản vẫn dùng NGUOI_DUNG.
 CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (

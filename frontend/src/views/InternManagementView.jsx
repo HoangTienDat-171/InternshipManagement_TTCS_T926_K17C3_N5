@@ -50,6 +50,11 @@ export default function InternManagementView({
 
   // Detail view modal
   const [detailModalIntern, setDetailModalIntern] = useState(null);
+  const [emailOutboxOpen, setEmailOutboxOpen] = useState(false);
+  const [emailOutbox, setEmailOutbox] = useState([]);
+  const [emailOutboxLoading, setEmailOutboxLoading] = useState(false);
+  const [emailOutboxError, setEmailOutboxError] = useState('');
+  const [emailOutboxRefresh, setEmailOutboxRefresh] = useState(0);
   const tableScrollRef = useRef(null);
 
   const requestInterns = useCallback(async ({ signal } = {}) => {
@@ -87,6 +92,31 @@ export default function InternManagementView({
       });
     return () => controller.abort();
   }, [requestInterns, refreshVersion]);
+
+  useEffect(() => {
+    if (!emailOutboxOpen) return undefined;
+    const controller = new AbortController();
+    apiFetch('/api/notifications/email-outbox', { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Không thể tải trạng thái gửi email.');
+        return res.json();
+      })
+      .then((rows) => {
+        if (!controller.signal.aborted) {
+          setEmailOutbox(Array.isArray(rows) ? rows : []);
+          setEmailOutboxError('');
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError' && !controller.signal.aborted) {
+          setEmailOutboxError(err.message || 'Không thể tải trạng thái gửi email.');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEmailOutboxLoading(false);
+      });
+    return () => controller.abort();
+  }, [emailOutboxOpen, emailOutboxRefresh]);
 
   const refreshInterns = () => {
     setLoading(true);
@@ -206,6 +236,48 @@ export default function InternManagementView({
     }
   };
 
+  const getEmailStatusBadge = (status) => {
+    if (!status) return null;
+    const presentation = {
+      PENDING: { label: 'Đang chờ gửi', tone: 'warning' },
+      PROCESSING: { label: 'Đang gửi', tone: 'warning' },
+      SENT: { label: 'Đã gửi email', tone: 'success' },
+      RETRY: { label: 'Đang thử lại', tone: 'danger' },
+      FAILED: { label: 'Gửi thất bại', tone: 'danger' },
+    }[status] || { label: 'Chưa rõ trạng thái', tone: 'info' };
+    return (
+      <div className="intern-email-status">
+        <span className={`badge badge-${presentation.tone}`}><span className="badge-dot" />Email: {presentation.label}</span>
+        {status === 'RETRY' && <small>Hệ thống sẽ tự thử gửi lại.</small>}
+        {status === 'FAILED' && <small>Hãy xem mục Thông báo để biết thêm.</small>}
+      </div>
+    );
+  };
+
+  const getEmailStatus = (status) => {
+    const labels = {
+      PENDING: ['badge-warning', 'Đang chờ gửi'],
+      PROCESSING: ['badge-info', 'Đang gửi'],
+      RETRY: ['badge-warning', 'Đang thử lại'],
+      SENT: ['badge-success', 'Đã gửi'],
+      FAILED: ['badge-danger', 'Gửi thất bại'],
+    };
+    const [className, label] = labels[status] || ['badge-secondary', status || 'Chưa rõ'];
+    return <span className={`badge ${className}`}><span className="badge-dot" />{label}</span>;
+  };
+
+  const getEmailTemplate = (template) => ({
+    temporary_credentials: 'Mật khẩu tạm',
+    approval_result: 'Kết quả xét duyệt hồ sơ',
+  }[template] || 'Kết quả ứng tuyển');
+
+  const getEmailError = (error) => {
+    if (!error) return '';
+    if (error.includes('SMTPAuthenticationError')) return 'SMTP từ chối xác thực. Kiểm tra tài khoản gửi và App Password.';
+    if (/timeout|timed out/i.test(error)) return 'Máy chủ SMTP hết thời gian phản hồi.';
+    if (/connection|network|socket|OSError/i.test(error)) return 'Không kết nối được máy chủ SMTP.';
+    return 'Máy chủ SMTP không gửi được email. Kiểm tra cấu hình và thử lại sau.';
+  };
   return (
     <div className="intern-management-page">
       {/* Header and Actions */}
@@ -217,13 +289,28 @@ export default function InternManagementView({
           </p>
         </div>
 
-        <button 
-          className="btn btn-primary"
-          onClick={() => openInternModal()}
-        >
-          <UserPlus size={16} />
-          <span>Thêm thực tập sinh</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setEmailOutboxError('');
+              setEmailOutboxLoading(true);
+              setEmailOutboxOpen(true);
+            }}
+          >
+            <Mail size={16} />
+            <span>Trạng thái email</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => openInternModal()}
+          >
+            <UserPlus size={16} />
+            <span>Thêm thực tập sinh</span>
+          </button>
+        </div>
       </div>
 
       <DashboardMetrics section="interns" filters={{ ma_phong_ban: filterPhongBan, ma_truong: filterTruong }} />
@@ -395,7 +482,7 @@ export default function InternManagementView({
                         {intern.ten_phong_ban || 'Chưa phân'}
                       </span>
                     </td>
-                    <td>{getDuyetBadge(intern.trang_thai_xet_duyet)}</td>
+                    <td><div className="intern-review-status">{getDuyetBadge(intern.trang_thai_xet_duyet)}{getEmailStatusBadge(intern.email_status)}</div></td>
                     <td>{getAccountBadge(intern.trang_thai_tai_khoan)}</td>
                     <td>{getThucTapBadge(intern.trang_thai_thuc_tap)}</td>
                     <td style={{ textAlign: 'right' }}>
@@ -403,8 +490,7 @@ export default function InternManagementView({
                         {(currentUser?.vai_tro === 'HR' || currentUser?.vai_tro === 'Admin') && intern.trang_thai_xet_duyet === 'ChoDuyet' && (
                           <>
                           <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: '#10b981', color: 'white', padding: '4px 10px', fontSize: '12px' }}
+                            className="btn btn-sm btn-success"
                             title="Quản lý thực tập sinh xét duyệt kích hoạt tài khoản"
                             onClick={() => handleApproveIntern(intern)}
                           >
@@ -422,8 +508,9 @@ export default function InternManagementView({
                           </>
                         )}
                         <button
-                          className="btn btn-secondary btn-sm"
+                          className="btn btn-icon"
                           title="Xem chi tiết"
+                          aria-label="Xem chi tiết"
                           onClick={() => setDetailModalIntern(intern)}
                         >
                           <Eye size={13} />
@@ -483,6 +570,104 @@ export default function InternManagementView({
         refreshKey={`${interns.length}:${loading}:${page}`}
         label="Cuộn ngang bảng thực tập sinh"
       />
+
+      {emailOutboxOpen && (
+        <div
+          className="modal-overlay"
+          onMouseDown={(event) => event.target === event.currentTarget && setEmailOutboxOpen(false)}
+        >
+          <section
+            className="modal-container"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-outbox-title"
+            style={{ maxWidth: '1100px' }}
+          >
+            <div className="modal-header">
+              <div>
+                <h3 id="email-outbox-title">Trạng thái gửi email</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '4px' }}>
+                  Nhật ký gần đây của email được gửi qua hệ thống.
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setEmailOutboxLoading(true);
+                    setEmailOutboxRefresh((version) => version + 1);
+                  }}
+                  disabled={emailOutboxLoading}
+                >
+                  <RefreshCw size={14} /> Làm mới
+                </button>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  aria-label="Đóng trạng thái email"
+                  onClick={() => setEmailOutboxOpen(false)}
+                >×</button>
+              </div>
+            </div>
+            <div className="modal-body" style={{ overflow: 'auto' }}>
+              {emailOutboxError && (
+                <div className="alert-banner error" role="alert" style={{ marginBottom: '14px' }}>
+                  <AlertCircle size={16} /><span>{emailOutboxError}</span>
+                </div>
+              )}
+              {emailOutboxLoading && (
+                <p role="status" style={{ color: 'var(--text-muted)', padding: '8px 0' }}>Đang tải nhật ký email...</p>
+              )}
+              {!emailOutboxLoading && !emailOutboxError && emailOutbox.length === 0 && (
+                <p style={{ color: 'var(--text-muted)', padding: '12px 0' }}>Chưa có email nào trong hàng đợi.</p>
+              )}
+              {emailOutbox.length > 0 && (
+                <div className="table-responsive">
+                  <table className="data-table" style={{ minWidth: '850px' }}>
+                    <thead>
+                      <tr>
+                        <th>Người nhận</th>
+                        <th>Loại email</th>
+                        <th>Trạng thái</th>
+                        <th>Số lần đã thử</th>
+                        <th>Thời gian</th>
+                        <th>Lỗi gần nhất</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {emailOutbox.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.recipient_email}</td>
+                          <td>
+                            <div>{getEmailTemplate(item.template_type)}</div>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '12px', maxWidth: '300px', overflowWrap: 'anywhere' }}>
+                              {item.subject}
+                            </div>
+                          </td>
+                          <td>{getEmailStatus(item.status)}</td>
+                          <td>{item.attempts_made ?? item.retry_count ?? 0} / {item.max_retry || 4}</td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>
+                            <div>{item.sent_at || item.updated_at || item.created_at || '—'}</div>
+                            {item.status === 'RETRY' && item.next_retry_at && (
+                              <div style={{ color: 'var(--text-muted)', marginTop: '3px' }}>
+                                Thử lại: {item.next_retry_at}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)', fontSize: '12px', minWidth: '190px' }}>
+                            {item.last_error ? getEmailError(item.last_error) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Intern Create/Edit Modal */}
       <InternModal
