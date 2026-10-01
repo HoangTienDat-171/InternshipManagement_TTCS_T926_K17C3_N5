@@ -5,7 +5,13 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
-from ..database import get_db, hash_password, verify_password
+from ..database import get_db, hash_password, verify_password, has_password_change_column
+from ..account_credentials import (
+    create_temporary_password,
+    queue_temporary_password_email,
+    require_password_change_schema,
+    temporary_password_email_body,
+)
 from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange
 from ..security import new_session_token, token_digest, require_role, publish_force_logout, session_connections
 from ..intern_workflow import sync_intern_approval
@@ -90,11 +96,7 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     2. Sau khi tạo tài khoản thì phải đợi Quản lý thực tập sinh xét duyệt (trang_thai='ChoDuyet').
     """
     validate_phone_number(data.so_dien_thoai)
-    if len(data.mat_khau) < 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chính sách bảo mật: Mật khẩu phải có độ dài tối thiểu 6 ký tự!"
-        )
+    require_password_change_schema(db)
 
     email = data.email.strip().lower()
     cursor = db.cursor()
@@ -110,32 +112,39 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     # Trạng thái ban đầu: Phải đợi Quản lý thực tập sinh xét duyệt
     initial_status = 'ChoDuyet'
 
-    hashed_pw = hash_password(data.mat_khau)
+    temporary_password = create_temporary_password()
+    hashed_pw = hash_password(temporary_password)
 
     cursor.execute("""
-        INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
+        INSERT INTO NGUOI_DUNG
+            (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+    """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
     
     new_user_id = cursor.lastrowid
 
     # Tạo hồ sơ thực tập sinh ban đầu ở trạng thái chờ duyệt
     cursor.execute("""
         INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-        VALUES (?, ?, 'ChoDuyet', 'DangThucTap')
+        VALUES (?, ?, 'ChoDuyet', NULL)
     """, (new_user_id, "Chưa cập nhật"))
 
     client_ip = request.client.host if request.client else "127.0.0.1"
-    record_login_attempt(email, True, "Đăng ký tài khoản (Chờ duyệt)", client_ip, db)
+    cursor.execute("""
+        INSERT INTO NHAT_KY_DANG_NHAP (email, ip_address, thanh_cong, thong_tin)
+        VALUES (?, ?, 1, 'Đăng ký tài khoản (Chờ duyệt)')
+    """, (email, client_ip))
 
     managers = cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro IN ('Admin', 'HR') AND trang_thai = 'HoatDong'").fetchall()
     for manager in managers:
         create_notification(db, manager["ma_nguoi_dung"], "Thực tập sinh mới chờ duyệt", f"{data.ho_ten.strip()} đã đăng ký tài khoản và đang chờ xét duyệt.")
 
+    queue_temporary_password_email(db, new_user_id, data.ho_ten.strip(), email, temporary_password)
+
     db.commit()
 
     return {
-        "message": "Đăng ký tài khoản thành công! Tài khoản đang chờ Quản lý thực tập sinh xét duyệt trước khi có thể đăng nhập.",
+        "message": "Đăng ký thành công. Email mật khẩu tạm đang được gửi; tài khoản có thể đăng nhập sau khi được duyệt.",
         "ma_nguoi_dung": new_user_id,
         "email": email,
         "ho_ten": data.ho_ten,
@@ -149,7 +158,6 @@ async def register_user_with_cv(
     request: Request,
     ho_ten: str = Form(...),
     email: str = Form(...),
-    mat_khau: str = Form(...),
     so_dien_thoai: Optional[str] = Form(None),
     cv: Optional[UploadFile] = File(None),
     db: sqlite3.Connection = Depends(get_db),
@@ -157,9 +165,8 @@ async def register_user_with_cv(
     """Đăng ký TTS và tùy chọn nộp CV trong cùng một giao dịch."""
     absolute_path = None
     try:
+        require_password_change_schema(db)
         validate_phone_number(so_dien_thoai)
-        if len(mat_khau) < 6:
-            raise HTTPException(status_code=400, detail="Mật khẩu phải có tối thiểu 6 ký tự.")
         clean_name = ho_ten.strip()
         clean_email = email.strip().lower()
         if not clean_name or len(clean_name) > 255 or not clean_email:
@@ -183,14 +190,16 @@ async def register_user_with_cv(
         if cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (clean_email,)).fetchone():
             raise HTTPException(status_code=400, detail="Email đã được đăng ký trong hệ thống!")
 
+        temporary_password = create_temporary_password()
         cursor.execute("""
-            INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-            VALUES (NULL, ?, ?, ?, ?, 'ThucTapSinh', 'ChoDuyet')
-        """, (clean_name, clean_email, hash_password(mat_khau), so_dien_thoai))
+            INSERT INTO NGUOI_DUNG
+                (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (NULL, ?, ?, ?, 1, ?, 'ThucTapSinh', 'ChoDuyet')
+        """, (clean_name, clean_email, hash_password(temporary_password), so_dien_thoai))
         new_user_id = cursor.lastrowid
         cursor.execute("""
             INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-            VALUES (?, ?, 'ChoDuyet', 'DangThucTap')
+            VALUES (?, ?, 'ChoDuyet', NULL)
         """, (new_user_id, "Chưa cập nhật"))
         profile_id = cursor.lastrowid
 
@@ -223,9 +232,10 @@ async def register_user_with_cv(
                 "Thực tập sinh mới chờ duyệt",
                 f"{clean_name} đã đăng ký tài khoản" + (" và nộp CV" if cv_content is not None else "") + " đang chờ xét duyệt.",
             )
+        queue_temporary_password_email(db, new_user_id, clean_name, clean_email, temporary_password)
         db.commit()
         return {
-            "message": "Đăng ký thành công. " + ("CV đã được gửi và đang chờ duyệt. " if cv_content is not None else "") + "Tài khoản đang chờ Admin/HR xét duyệt.",
+            "message": "Đăng ký thành công. Email mật khẩu tạm đang được gửi. " + ("CV đã được gửi và đang chờ duyệt. " if cv_content is not None else "") + "Tài khoản có thể đăng nhập sau khi được Admin/HR duyệt.",
             "ma_nguoi_dung": new_user_id,
             "email": clean_email,
             "ho_ten": clean_name,
@@ -252,13 +262,14 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     check_account_lockout(email_clean, db)
 
     cursor = db.cursor()
+    password_flag = "u.must_change_password" if has_password_change_column(db) else "0 AS must_change_password"
     cursor.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.mat_khau, u.so_dien_thoai, 
-               u.vai_tro, u.trang_thai, u.ma_phong_ban, p.ten_phong_ban
+               u.vai_tro, u.trang_thai, u.ma_phong_ban, p.ten_phong_ban, {password_flag}
         FROM NGUOI_DUNG u
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         WHERE LOWER(u.email) = ?
-    """, (email_clean,))
+    """.format(password_flag=password_flag), (email_clean,))
     user = cursor.fetchone()
 
     # 2. Chống Timing Attack
@@ -315,7 +326,8 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
         "vai_tro": user["vai_tro"],
         "ma_phong_ban": user["ma_phong_ban"],
         "ten_phong_ban": user["ten_phong_ban"],
-        "trang_thai": user["trang_thai"]
+        "trang_thai": user["trang_thai"],
+        "must_change_password": bool(user["must_change_password"]),
     }
 
     session_token, session_id = new_session_token()
@@ -351,12 +363,7 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
         )
 
     validate_phone_number(data.so_dien_thoai)
-
-    if len(data.mat_khau) < 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chính sách bảo mật: Mật khẩu phải có độ dài tối thiểu 6 ký tự!"
-        )
+    require_password_change_schema(db)
 
     email = data.email.strip().lower()
     cursor = db.cursor()
@@ -370,11 +377,13 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
     valid_roles = ['Admin', 'HR', 'Mentor', 'ThucTapSinh']
     user_role = data.vai_tro if data.vai_tro in valid_roles else 'ThucTapSinh'
 
-    hashed_pw = hash_password(data.mat_khau)
+    temporary_password = create_temporary_password()
+    hashed_pw = hash_password(temporary_password)
     cursor.execute("""
-        INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, ?, ?, 'HoatDong')
-    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, user_role))
+        INSERT INTO NGUOI_DUNG
+            (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+        VALUES (?, ?, ?, ?, 1, ?, ?, 'HoatDong')
+    """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role))
     
     new_user_id = cursor.lastrowid
 
@@ -387,13 +396,14 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
     elif user_role == 'Mentor':
         cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (new_user_id,))
 
+    queue_temporary_password_email(db, new_user_id, data.ho_ten.strip(), email, temporary_password)
     client_ip = request.client.host if request.client else "127.0.0.1"
     record_login_attempt(email, True, f"Admin tạo tài khoản ({user_role})", client_ip, db)
 
     db.commit()
 
     return {
-        "message": f"Admin đã tạo tài khoản {data.ho_ten} ({user_role}) thành công!",
+        "message": f"Đã tạo tài khoản {data.ho_ten} ({user_role}); email mật khẩu tạm đang được gửi.",
         "ma_nguoi_dung": new_user_id,
         "email": email,
         "ho_ten": data.ho_ten,
@@ -413,9 +423,11 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
             detail="Quyền truy cập bị từ chối: Chỉ Quản lý thực tập sinh hoặc Admin mới có quyền phê duyệt!"
         )
 
+    require_password_change_schema(db)
     cursor = db.cursor()
     cursor.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.vai_tro, u.trang_thai,
+               u.must_change_password,
                h.ma_ho_so, h.trang_thai_xet_duyet AS trang_thai_ho_so
         FROM NGUOI_DUNG u LEFT JOIN HO_SO_THUC_TAP h ON h.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE u.ma_nguoi_dung = ?
@@ -430,17 +442,42 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
     if cursor.rowcount == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
     sync_intern_approval(cursor, id, "DaDuyet")
+    temporary_password = None
+    if user["must_change_password"] and (
+        user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong"
+    ):
+        temporary_password = create_temporary_password()
+        cursor.execute(
+            "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
+            (hash_password(temporary_password), id),
+        )
     if user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong":
+        email_deduplication_key = f"us08:intern_profile:{user['ma_ho_so']}:DaDuyet"
+        if temporary_password:
+            email_deduplication_key += f":credentials:{uuid4().hex}"
         create_notification(
             db, id, "Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt.",
             notification_type="internship_review_result", reference_type="intern_profile",
             reference_id=user["ma_ho_so"], email_recipient=user["email"],
-            email_deduplication_key=f"us08:intern_profile:{user['ma_ho_so']}:DaDuyet",
+            email_deduplication_key=email_deduplication_key,
+            email_template_type="temporary_credentials" if temporary_password else "approval_result",
+            email_body=(
+                temporary_password_email_body(
+                    user["ho_ten"],
+                    user["email"],
+                    temporary_password,
+                    "Hồ sơ thực tập của bạn đã được duyệt và tài khoản đã được kích hoạt.",
+                )
+                if temporary_password else None
+            ),
         )
     db.commit()
 
     return {
-        "message": f"Đã phê duyệt tài khoản {user['ho_ten']} thành công!",
+        "message": (
+            f"Đã phê duyệt tài khoản {user['ho_ten']} thành công! "
+            + ("Email mật khẩu tạm đang được gửi." if temporary_password else "")
+        ),
         "ma_nguoi_dung": id,
         "trang_thai": "HoatDong"
     }
@@ -529,8 +566,8 @@ def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: B
             approval_status = "ChoDuyet" if user["trang_thai"] == "ChoDuyet" else "DaDuyet"
             cursor.execute("""
                 INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-                VALUES (?, 'Chưa cập nhật', ?, 'DangThucTap')
-            """, (id, approval_status))
+                VALUES (?, 'Chưa cập nhật', ?, ?)
+            """, (id, approval_status, "DangThucTap" if approval_status == "DaDuyet" else None))
     elif data.vai_tro == 'Mentor':
         cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (id,))
 
@@ -584,6 +621,7 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
                 INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet)
                 VALUES (?, 'Chưa cập nhật', ?)
             """, (id, approval_status))
+        sync_intern_approval(cursor, id, approval_status)
     cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = ? WHERE ma_nguoi_dung = ?", (data.trang_thai, id))
     if user["trang_thai"] != data.trang_thai or profile_status_changed:
         title, message = {
@@ -660,7 +698,7 @@ def update_profile(user_id: int, data: UserProfileUpdate, request: Request, back
     return {"message": "Đã cập nhật thông tin tài khoản.", "ho_ten": data.ho_ten.strip(), "so_dien_thoai": data.so_dien_thoai}
 
 @router.put("/users/{user_id}/password")
-def change_password(user_id: int, data: PasswordChange, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
+def change_password(user_id: int, data: PasswordChange, request: Request, db: sqlite3.Connection = Depends(get_db)):
     user = require_role(request)
     if user["ma_nguoi_dung"] != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể đổi mật khẩu tài khoản của mình.")
@@ -673,13 +711,16 @@ def change_password(user_id: int, data: PasswordChange, request: Request, backgr
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
     if not verify_password(data.mat_khau_hien_tai, user["mat_khau"]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không chính xác.")
-    cursor.execute("UPDATE NGUOI_DUNG SET mat_khau = ? WHERE ma_nguoi_dung = ?", (hash_password(data.mat_khau_moi), user_id))
-    cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (user_id,))
+    new_password_hash = hash_password(data.mat_khau_moi)
+    if has_password_change_column(db):
+        cursor.execute(
+            "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 0 WHERE ma_nguoi_dung = ?",
+            (new_password_hash, user_id),
+        )
+    else:
+        cursor.execute("UPDATE NGUOI_DUNG SET mat_khau = ? WHERE ma_nguoi_dung = ?", (new_password_hash, user_id))
     db.commit()
-    background_tasks.add_task(session_connections.publish, user_id, {
-        "type": "FORCE_LOGOUT", "message": "Mật khẩu đã được thay đổi. Vui lòng đăng nhập lại.",
-    })
-    return {"message": "Đổi mật khẩu thành công."}
+    return {"message": "Đổi mật khẩu thành công.", "must_change_password": False}
 
 @router.get("/users")
 def get_all_users(
@@ -702,9 +743,10 @@ def get_all_users(
         )
 
     cursor = db.cursor()
-    query = """
+    password_flag = "u.must_change_password" if has_password_change_column(db) else "0 AS must_change_password"
+    query = f"""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai, u.vai_tro, 
-               u.trang_thai, u.ma_phong_ban, p.ten_phong_ban, u.created_at
+               u.trang_thai, {password_flag}, u.ma_phong_ban, p.ten_phong_ban, u.created_at
         FROM NGUOI_DUNG u
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         WHERE 1=1
@@ -744,6 +786,44 @@ def get_all_users(
         "totalItems": total_items,
         "totalPages": total_pages,
     }
+
+
+@router.post("/users/{id}/resend-temporary-password")
+def resend_temporary_password(id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    admin = require_role(request)
+    if admin["vai_tro"] != "Admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chỉ Admin mới được gửi lại mật khẩu tạm.")
+
+    require_password_change_schema(db)
+    cursor = db.cursor()
+    cursor.execute(
+        """SELECT ma_nguoi_dung, ho_ten, email, trang_thai, must_change_password
+           FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?""",
+        (id,),
+    )
+    user = cursor.fetchone()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
+    if user["trang_thai"] != "HoatDong":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Chỉ có thể gửi mật khẩu cho tài khoản đang hoạt động.")
+    if not user["must_change_password"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tài khoản đã đổi mật khẩu tạm thời.")
+
+    temporary_password = create_temporary_password()
+    cursor.execute(
+        "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
+        (hash_password(temporary_password), id),
+    )
+    queue_temporary_password_email(
+        db,
+        id,
+        user["ho_ten"],
+        user["email"],
+        temporary_password,
+        email_deduplication_key=f"account:{id}:temporary-credentials:resend:{uuid4().hex}",
+    )
+    db.commit()
+    return {"message": f"Mật khẩu tạm mới đang được gửi tới {user['email']}."}
 
 @router.get("/security-audit-logs")
 def get_security_audit_logs(request: Request, db: sqlite3.Connection = Depends(get_db)):

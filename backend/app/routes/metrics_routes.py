@@ -34,15 +34,15 @@ def get_dashboard_metrics(
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' THEN 1 ELSE 0 END) AS approved,
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'ChoDuyet' THEN 1 ELSE 0 END) AS pending,
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'TuChoi' THEN 1 ELSE 0 END) AS rejected,
-               SUM(CASE WHEN h.trang_thai_thuc_tap = 'DangThucTap' THEN 1 ELSE 0 END) AS in_progress,
-               SUM(CASE WHEN h.trang_thai_thuc_tap = 'HoanThanh' THEN 1 ELSE 0 END) AS completed,
-               SUM(CASE WHEN h.trang_thai_thuc_tap = 'ThoiHoc' THEN 1 ELSE 0 END) AS withdrawn,
+               SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'DangThucTap' THEN 1 ELSE 0 END) AS in_progress,
+               SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'HoanThanh' THEN 1 ELSE 0 END) AS completed,
+               SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'ThoiHoc' THEN 1 ELSE 0 END) AS withdrawn,
                SUM(CASE WHEN EXISTS (
                    SELECT 1
                    FROM PHAN_CONG_MENTOR_TTS a
                    JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
                    WHERE a.ma_ho_so = h.ma_ho_so AND m.vai_tro = 'Mentor'
-               ) THEN 1 ELSE 0 END) AS assigned,
+               ) AND h.trang_thai_xet_duyet = 'DaDuyet' THEN 1 ELSE 0 END) AS assigned,
                COUNT(DISTINCT h.ma_truong) AS universities
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -154,6 +154,7 @@ def get_dashboard_metrics(
         return int(row[key] or 0)
 
     intern_total = count_value(intern_stats, "total")
+    approved_interns = count_value(intern_stats, "approved")
     assigned = count_value(intern_stats, "assigned")
     total_mentors = count_value(mentor_stats, "total")
     assigned_mentors = count_value(mentor_stats, "assigned_mentors")
@@ -169,7 +170,7 @@ def get_dashboard_metrics(
             "completed": count_value(intern_stats, "completed"),
             "withdrawn": count_value(intern_stats, "withdrawn"),
             "assigned": assigned,
-            "unassigned": max(intern_total - assigned, 0),
+            "unassigned": max(approved_interns - assigned, 0),
             "universities": count_value(intern_stats, "universities"),
         },
         "programs": {

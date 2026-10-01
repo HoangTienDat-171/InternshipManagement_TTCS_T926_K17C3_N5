@@ -8,7 +8,6 @@ class UserLogin(BaseModel):
 class UserRegister(BaseModel):
     ho_ten: str
     email: str
-    mat_khau: str
     so_dien_thoai: Optional[str] = None
     vai_tro: Optional[str] = "ThucTapSinh"  # Mặc định là Thực tập sinh
     ma_phong_ban: Optional[int] = None
@@ -44,11 +43,9 @@ class InternCreate(BaseModel):
     ho_ten: str
     email: str
     so_dien_thoai: Optional[str] = None
-    mat_khau: Optional[str] = "123456"
     ma_phong_ban: Optional[int] = None
     ma_truong: Optional[int] = None
     chuyen_nganh: Optional[str] = None
-    trang_thai_xet_duyet: Optional[Literal["ChoDuyet", "DaDuyet", "TuChoi"]] = "ChoDuyet"
     trang_thai_thuc_tap: Optional[Literal["DangThucTap", "HoanThanh", "ThoiHoc"]] = "DangThucTap"
 
 class InternUpdate(BaseModel):
@@ -74,7 +71,7 @@ class InternDetail(BaseModel):
     ten_truong: Optional[str] = None
     chuyen_nganh: Optional[str] = None
     trang_thai_xet_duyet: str
-    trang_thai_thuc_tap: str
+    trang_thai_thuc_tap: Optional[str] = None
     ngay_tao: Optional[str] = None
     mentor_ma_nguoi_dung: Optional[int] = None
     mentor_ho_ten: Optional[str] = None
@@ -99,7 +96,6 @@ class University(BaseModel):
 class MentorCreate(BaseModel):
     ho_ten: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=3, max_length=254)
-    mat_khau: str = Field(min_length=6, max_length=128)
     so_dien_thoai: Optional[str] = None
     ma_phong_ban: Optional[int] = None
     chuyen_mon: Optional[str] = None
@@ -187,6 +183,9 @@ class ProgramApplicationDetail(BaseModel):
 class DocumentReview(BaseModel):
     trang_thai_duyet: Literal["DaDuyet", "TuChoi"]
 
+class ContractRejectRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
 class DocumentDetail(BaseModel):
     ma_tai_lieu: int
     ma_ho_so: int
@@ -196,41 +195,3 @@ class DocumentDetail(BaseModel):
     ngay_tai_len: Optional[str] = None
     trang_thai_duyet: str
     thuc_tap_sinh: str
-
-
-MailboxCategory = Literal[
-    "XIN_HO_TRO", "XIN_XET_DUYET", "THAC_MAC_LICH_LAM_VIEC",
-    "BO_SUNG_HO_SO", "THONG_BAO_CHUNG", "KET_QUA_XET_DUYET",
-]
-
-
-class MailboxMessageCreate(BaseModel):
-    receiverIds: List[int] = Field(default_factory=list, max_length=100)
-    groupKeys: List[str] = Field(default_factory=list, max_length=20)
-    category: MailboxCategory
-    subject: str = Field(min_length=1, max_length=255)
-    contentHtml: str = Field(min_length=1, max_length=50_000)
-    sendEmail: bool = False
-    templateId: Optional[int] = None
-
-
-class MailboxReplyCreate(BaseModel):
-    contentHtml: str = Field(min_length=1, max_length=50_000)
-    sendEmail: bool = False
-
-
-class MailboxTemplateCreate(BaseModel):
-    templateCode: str = Field(pattern=r"^[A-Z0-9_]+$", min_length=3, max_length=100)
-    title: str = Field(min_length=1, max_length=255)
-    subject: str = Field(min_length=1, max_length=255)
-    bodyHtml: str = Field(min_length=1, max_length=50_000)
-    category: MailboxCategory
-    isActive: bool = True
-
-
-class MailboxTemplateUpdate(BaseModel):
-    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    subject: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    bodyHtml: Optional[str] = Field(default=None, min_length=1, max_length=50_000)
-    category: Optional[MailboxCategory] = None
-    isActive: Optional[bool] = None

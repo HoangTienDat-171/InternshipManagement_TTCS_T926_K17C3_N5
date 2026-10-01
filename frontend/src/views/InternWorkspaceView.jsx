@@ -1,19 +1,31 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, Eye, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
+import ContractDetailView from './ContractDetailView';
 import { apiFetch, downloadProtectedFile, readJsonResponse } from '../utils/api';
 
 const documentStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Cần bổ sung' };
 const applicationStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Từ chối' };
+const contractStatus = {
+  PENDING_CONFIRMATION: { label: 'Chờ xác nhận', tone: 'warning' },
+  CONFIRMED: { label: 'Đã xác nhận', tone: 'success' },
+  REJECTED: { label: 'Đã từ chối', tone: 'danger' },
+};
 
 function StatusPill({ status, map = documentStatus }) {
   const tone = status === 'DaDuyet' ? 'success' : status === 'ChoDuyet' ? 'warning' : 'danger';
   return <span className={`workspace-status is-${tone}`}><i />{map[status] || status || 'Chưa cập nhật'}</span>;
 }
 
-export default function InternWorkspaceView({ currentUser, onNavigatePrograms }) {
+export default function InternWorkspaceView({ currentUser, onNavigatePrograms, requestedContractId, onShowToast }) {
   const [workspace, setWorkspace] = useState(null);
+  const [contracts, setContracts] = useState([]);
+  const [selectedContractId, setSelectedContractId] = useState(requestedContractId || null);
   const [loading, setLoading] = useState(true);
+  const [contractLoading, setContractLoading] = useState(true);
   const [error, setError] = useState('');
+  const [contractError, setContractError] = useState('');
+  const [contractPreviewUrl, setContractPreviewUrl] = useState('');
+  const [previewingContractId, setPreviewingContractId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const [documentType, setDocumentType] = useState('CV');
@@ -21,25 +33,80 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
 
   const refresh = useCallback(async () => {
     try {
-      const response = await apiFetch('/api/interns/me/workspace');
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể tải hồ sơ thực tập.');
+      const [workspaceResponse, contractResponse] = await Promise.all([
+        apiFetch('/api/interns/me/workspace'),
+        apiFetch('/api/contracts/mine/all'),
+      ]);
+      const [data, contractData] = await Promise.all([
+        readJsonResponse(workspaceResponse),
+        readJsonResponse(contractResponse),
+      ]);
+      if (!workspaceResponse.ok) throw new Error(data.detail || 'Không thể tải hồ sơ thực tập.');
+      if (!contractResponse.ok) throw new Error(contractData.detail || 'Không thể tải hợp đồng của bạn.');
       setWorkspace(data);
+      setContracts(Array.isArray(contractData) ? contractData : contractData ? [contractData] : []);
+      setContractError('');
       setError('');
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setContractLoading(false); }
   }, []);
 
+  const previewContract = useCallback(async (contractId) => {
+    if (!contractId) return;
+    if (Number(previewingContractId) === Number(contractId)) {
+      setPreviewingContractId(null);
+      setContractPreviewUrl('');
+      return;
+    }
+    try {
+      const response = await apiFetch(`/api/contracts/${contractId}/preview`);
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể xem trước hợp đồng.');
+      }
+      const nextUrl = URL.createObjectURL(await response.blob());
+      setContractError('');
+      setPreviewingContractId(contractId);
+      setContractPreviewUrl(nextUrl);
+    } catch (previewError) {
+      setContractError(previewError.message);
+    }
+  }, [previewingContractId]);
+
+  useEffect(() => () => {
+    if (contractPreviewUrl) URL.revokeObjectURL(contractPreviewUrl);
+  }, [contractPreviewUrl]);
+
   useEffect(() => {
-    void Promise.resolve().then(refresh);
-    const updateWorkspace = () => refresh();
+    if (!selectedContractId) void Promise.resolve().then(refresh);
+    const updateWorkspace = () => { if (!selectedContractId) void refresh(); };
     window.addEventListener('ims-workspace-updated', updateWorkspace);
     return () => window.removeEventListener('ims-workspace-updated', updateWorkspace);
-  }, [refresh]);
+  }, [refresh, selectedContractId]);
 
   const download = async (document) => {
     try { await downloadProtectedFile(document.ma_tai_lieu, document.ten_file); }
     catch (err) { setError(err.message); }
+  };
+
+  const downloadContract = async (contractItem) => {
+    try {
+      const response = await apiFetch(`/api/contracts/${contractItem.ma_hop_dong}/download`);
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể tải hợp đồng.');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = contractItem.original_file_name || 'hop-dong.pdf';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (downloadError) {
+      setContractError(downloadError.message);
+    }
   };
 
   const uploadDocument = async (event) => {
@@ -70,6 +137,19 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
     }
   };
 
+  if (selectedContractId) return <ContractDetailView
+    contractId={selectedContractId}
+    currentUser={currentUser}
+    onBack={() => {
+      setSelectedContractId(null);
+      setLoading(true);
+      setContractLoading(true);
+      setContractPreviewUrl('');
+      setPreviewingContractId(null);
+    }}
+    onShowToast={onShowToast}
+  />;
+
   if (loading && !workspace) return <div className="workspace-page"><div className="workspace-loading">Đang tải hồ sơ của bạn…</div></div>;
   if (error && !workspace) return <div className="workspace-page"><div className="workspace-error">{error}<button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); refresh(); }}>Thử lại</button></div></div>;
   if (!workspace) return null;
@@ -99,5 +179,43 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
         {applications.length ? <div className="workspace-application-list">{applications.map((application) => <div className="workspace-application-row" key={application.ma_chuong_trinh}><div><strong>{application.ten_ct}</strong><small>{application.ma_ct} · Nộp {application.ngay_ung_tuyen || '—'}</small></div><StatusPill status={application.trang_thai_ung_tuyen} map={applicationStatus} /></div>)}</div> : <div className="workspace-empty"><CalendarDays size={22} /><span>Bạn chưa ứng tuyển chương trình nào.</span></div>}
       </article>
     </div>
+    <article className="workspace-card workspace-contract-card">
+      <div className="workspace-section-heading">
+        <div><span className="workspace-eyebrow">TÀI LIỆU CỦA BẠN</span><h3>Hợp đồng thực tập <small>{contracts.length}</small></h3></div>
+      </div>
+      {contractLoading ? <div className="workspace-empty"><span>Đang tải hợp đồng…</span></div>
+        : contracts.length ? <div className="workspace-contract-list">
+          {contracts.map((contract) => {
+            const presentation = contractStatus[contract.trang_thai] || { label: 'Chưa cập nhật', tone: 'warning' };
+            const isPreviewing = Number(previewingContractId) === Number(contract.ma_hop_dong);
+            return <div className="workspace-contract-item" id={`internship-contract-${contract.ma_hop_dong}`} key={contract.ma_hop_dong}>
+              <div className="workspace-contract-item-main">
+              <div className="workspace-contract-details">
+                  <span className="workspace-file-icon"><FileText size={17} /></span>
+                  <div><strong>{contract.original_file_name}</strong><small>{contract.ten_chuong_trinh || contract.ten_phong_ban || 'Chưa có chương trình'} · Tải lên {contract.uploaded_at || '—'}</small></div>
+                  <span className={`workspace-status is-${presentation.tone}`} aria-live="polite"><i />{presentation.label}</span>
+                </div>
+                <div className="workspace-contract-actions">
+                  <button type="button" className="btn btn-secondary btn-sm" aria-expanded={isPreviewing} onClick={() => previewContract(contract.ma_hop_dong)}>
+                    <Eye size={14} />{isPreviewing ? 'Ẩn xem trước' : 'Xem trước'}
+                  </button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadContract(contract)}>
+                    <Download size={14} />Tải xuống
+                  </button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => {
+                    setContractPreviewUrl('');
+                    setPreviewingContractId(null);
+                    setSelectedContractId(contract.ma_hop_dong);
+                  }}>
+                    Chi tiết hợp đồng <ArrowRight size={14} />
+                  </button>
+                </div>
+              </div>
+              {isPreviewing && contractPreviewUrl && <iframe className="workspace-contract-preview" src={contractPreviewUrl} title={`Xem trước ${contract.original_file_name}`} />}
+            </div>;
+          })}
+        </div> : <div className="workspace-empty"><FileText size={22} /><span>HR chưa tải hợp đồng lên. Hợp đồng sẽ xuất hiện tại đây sau khi được cập nhật.</span></div>}
+      {contractError && <p className="contract-error" role="alert">{contractError}</p>}
+    </article>
   </div>;
 }

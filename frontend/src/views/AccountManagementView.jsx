@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, X } from 'lucide-react';
+import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, Mail, X } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -24,7 +24,6 @@ export default function AccountManagementView({ departments, onShowToast, curren
   const [formData, setFormData] = useState({
     ho_ten: '',
     email: '',
-    mat_khau: '',
     so_dien_thoai: '',
     vai_tro: 'ThucTapSinh',
     ma_phong_ban: ''
@@ -34,6 +33,8 @@ export default function AccountManagementView({ departments, onShowToast, curren
   const [formError, setFormError] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingCredentialResend, setPendingCredentialResend] = useState(null);
+  const [resendingCredentialId, setResendingCredentialId] = useState(null);
 
   const requestUsers = useCallback(async (requestedPage, requestedPageSize, signal) => {
     if (!isAdmin) return [];
@@ -114,7 +115,6 @@ export default function AccountManagementView({ departments, onShowToast, curren
       const payload = {
         ho_ten: formData.ho_ten.trim(),
         email: formData.email.trim(),
-        mat_khau: formData.mat_khau,
         so_dien_thoai: formData.so_dien_thoai.trim(),
         vai_tro: formData.vai_tro,
         ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null
@@ -137,7 +137,6 @@ export default function AccountManagementView({ departments, onShowToast, curren
       setFormData({
         ho_ten: '',
         email: '',
-        mat_khau: '',
         so_dien_thoai: '',
         vai_tro: 'ThucTapSinh',
         ma_phong_ban: ''
@@ -211,6 +210,24 @@ export default function AccountManagementView({ departments, onShowToast, curren
       await refreshUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
+    }
+  };
+
+  const handleResendTemporaryPassword = async () => {
+    const user = pendingCredentialResend;
+    if (!user) return;
+    setPendingCredentialResend(null);
+    setResendingCredentialId(user.id);
+    try {
+      const res = await apiFetch(`/api/auth/users/${user.id}/resend-temporary-password`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Không thể gửi lại mật khẩu tạm');
+      onShowToast(data.message);
+      await refreshUsers();
+    } catch (err) {
+      onShowToast(err.message, 'error');
+    } finally {
+      setResendingCredentialId(null);
     }
   };
 
@@ -420,7 +437,24 @@ export default function AccountManagementView({ departments, onShowToast, curren
                       <td>{getStatusBadge(u.trang_thai)}</td>
 
                       <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '6px' }}>
+                        <div className="account-row-actions">
+                          {isAdmin && u.trang_thai === 'HoatDong' && Boolean(u.must_change_password) && (
+                            <button
+                              type="button"
+                              className="btn btn-icon"
+                              aria-label={`Gửi lại mật khẩu tạm cho ${u.ho_ten}`}
+                              title="Gửi mật khẩu tạm mới"
+                              disabled={resendingCredentialId === u.ma_nguoi_dung}
+                              onClick={() => setPendingCredentialResend({
+                                id: u.ma_nguoi_dung,
+                                name: u.ho_ten,
+                                email: u.email,
+                              })}
+                            >
+                              <Mail size={14} />
+                            </button>
+                          )}
+
                           {u.trang_thai === 'ChoDuyet' && (
                             <button
                               className="btn btn-sm"
@@ -510,10 +544,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
                   <label className="form-label" htmlFor="new-user-email">Email <span className="required">*</span></label>
                   <input id="new-user-email" type="email" name="email" className="form-control" placeholder="user@internship.vn" required value={formData.email} onChange={handleChange} />
                 </div>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="new-user-password">Mật khẩu khởi tạo <span className="required">*</span></label>
-                  <input id="new-user-password" type="password" name="mat_khau" className="form-control" placeholder="Tối thiểu 6 ký tự" minLength={6} required value={formData.mat_khau} onChange={handleChange} />
-                </div>
+                <p className="create-account-subtitle">Hệ thống sẽ gửi email đăng nhập kèm mật khẩu tạm; người dùng phải đổi mật khẩu sau lần đăng nhập đầu tiên.</p>
                 <PhoneField value={formData.so_dien_thoai} onChange={(value) => setFormData((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0988776655" />
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-role">Vai trò ban đầu</label>
@@ -550,6 +581,16 @@ export default function AccountManagementView({ departments, onShowToast, curren
         danger
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => pendingDelete && handleDeleteUser(pendingDelete.id)}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingCredentialResend)}
+        title="Gửi mật khẩu tạm mới?"
+        message={pendingCredentialResend
+          ? `Mật khẩu tạm hiện tại của ${pendingCredentialResend.name} sẽ bị thay thế. Hệ thống sẽ gửi mật khẩu mới tới ${pendingCredentialResend.email}; người dùng cần đổi mật khẩu sau khi đăng nhập.`
+          : ''}
+        confirmLabel="Gửi mật khẩu"
+        onCancel={() => setPendingCredentialResend(null)}
+        onConfirm={handleResendTemporaryPassword}
       />
     </div>
   );

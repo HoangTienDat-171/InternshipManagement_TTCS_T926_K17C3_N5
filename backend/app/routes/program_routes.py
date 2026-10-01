@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 
 from ..database import get_db
 from .. import database as database_module
@@ -225,6 +225,7 @@ def close_program(program_id: int, request: Request, db: sqlite3.Connection = De
 @router.post("/{program_id}/apply", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def apply_to_program(
     program_id: int, request: Request, cv: UploadFile | None = File(default=None),
+    use_approved_profile: bool = Form(default=False),
     db: sqlite3.Connection = Depends(get_db),
 ):
     user = require_role(request, "ThucTapSinh")
@@ -233,7 +234,7 @@ async def apply_to_program(
         raise HTTPException(status_code=400, detail="Chương trình đã ngừng nhận hồ sơ.")
 
     profile = db.execute("""
-        SELECT h.ma_ho_so
+        SELECT h.ma_ho_so, h.trang_thai_xet_duyet
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         WHERE h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh'
@@ -241,17 +242,35 @@ async def apply_to_program(
     if not profile:
         raise HTTPException(status_code=400, detail="Tài khoản chưa có hồ sơ thực tập sinh hợp lệ.")
 
-    if not cv or not cv.filename:
-        raise HTTPException(status_code=400, detail="Vui lòng đính kèm CV trước khi ứng tuyển.")
-    filename = PurePosixPath(cv.filename.replace("\\", "/")).name
-    extension = Path(filename).suffix.lower()
-    if len(filename) > 255 or extension not in {".pdf", ".docx", ".png"}:
-        raise HTTPException(status_code=400, detail="CV phải là tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
-    content = await cv.read(MAX_FILE_SIZE + 1)
-    if not content or len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="CV phải có dung lượng từ 1 byte đến 15 MB.")
-    if not valid_file_content(extension, content):
-        raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng CV đã chọn.")
+    filename = None
+    extension = None
+    content = None
+    if use_approved_profile:
+        if cv and cv.filename:
+            raise HTTPException(status_code=400, detail="Chỉ chọn dùng hồ sơ đã duyệt hoặc tải CV mới.")
+        if profile["trang_thai_xet_duyet"] != "DaDuyet":
+            raise HTTPException(status_code=400, detail="Hồ sơ của bạn chưa được duyệt để dùng ứng tuyển.")
+        approved_cv = db.execute("""
+            SELECT ma_tai_lieu
+            FROM TAI_LIEU_HO_SO
+            WHERE ma_ho_so = ? AND loai_tai_lieu = 'CV' AND trang_thai_duyet = 'DaDuyet'
+            ORDER BY ngay_tai_len DESC, ma_tai_lieu DESC
+            LIMIT 1
+        """, (profile["ma_ho_so"],)).fetchone()
+        if not approved_cv:
+            raise HTTPException(status_code=400, detail="Hồ sơ chưa có CV được duyệt để dùng ứng tuyển.")
+    else:
+        if not cv or not cv.filename:
+            raise HTTPException(status_code=400, detail="Vui lòng chọn hồ sơ đã duyệt hoặc đính kèm CV mới.")
+        filename = PurePosixPath(cv.filename.replace("\\", "/")).name
+        extension = Path(filename).suffix.lower()
+        if len(filename) > 255 or extension not in {".pdf", ".docx", ".png"}:
+            raise HTTPException(status_code=400, detail="CV phải là tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
+        content = await cv.read(MAX_FILE_SIZE + 1)
+        if not content or len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="CV phải có dung lượng từ 1 byte đến 15 MB.")
+        if not valid_file_content(extension, content):
+            raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng CV đã chọn.")
 
     absolute_path = None
     try:
@@ -262,16 +281,17 @@ async def apply_to_program(
         ).fetchone():
             raise HTTPException(status_code=400, detail="Bạn đã ứng tuyển chương trình này.")
 
-        storage_name = f"{uuid4().hex}{extension}"
-        absolute_path = UPLOAD_ROOT / storage_name
-        UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-        with absolute_path.open("xb") as stored_file:
-            stored_file.write(content)
-        db.execute("""
-            INSERT INTO TAI_LIEU_HO_SO
-                (ma_ho_so, loai_tai_lieu, duong_dan_file, ten_file, kich_thuoc)
-            VALUES (?, 'CV', ?, ?, ?)
-        """, (profile["ma_ho_so"], PurePosixPath("documents", storage_name).as_posix(), filename, len(content)))
+        if not use_approved_profile:
+            storage_name = f"{uuid4().hex}{extension}"
+            absolute_path = UPLOAD_ROOT / storage_name
+            UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+            with absolute_path.open("xb") as stored_file:
+                stored_file.write(content)
+            db.execute("""
+                INSERT INTO TAI_LIEU_HO_SO
+                    (ma_ho_so, loai_tai_lieu, duong_dan_file, ten_file, kich_thuoc)
+                VALUES (?, 'CV', ?, ?, ?)
+            """, (profile["ma_ho_so"], PurePosixPath("documents", storage_name).as_posix(), filename, len(content)))
         cursor = db.execute("""
             INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai)
             VALUES (?, ?, 'ChoDuyet')
@@ -302,11 +322,17 @@ async def apply_to_program(
             absolute_path.unlink(missing_ok=True)
         raise
     finally:
-        await cv.close()
+        if cv is not None:
+            await cv.close()
     return {
-        "message": "Đã ghi nhận hồ sơ. Đơn ứng tuyển đang chờ duyệt.",
+        "message": (
+            "Đã gửi hồ sơ đã được duyệt. Đơn ứng tuyển đang chờ duyệt."
+            if use_approved_profile
+            else "Đã ghi nhận hồ sơ. Đơn ứng tuyển đang chờ duyệt."
+        ),
         "ma_ung_tuyen": cursor.lastrowid,
         "trang_thai": "ChoDuyet",
+        "su_dung_ho_so_da_duyet": use_approved_profile,
     }
 
 

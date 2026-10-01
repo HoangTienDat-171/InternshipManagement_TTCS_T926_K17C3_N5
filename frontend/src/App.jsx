@@ -10,7 +10,7 @@ import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
-import MailboxView from './views/MailboxView';
+import PersonalScheduleView from './views/PersonalScheduleView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -24,7 +24,11 @@ function clearSavedSession() {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(() => window.location.pathname === '/mailbox' ? 'mailbox' : 'interns');
+  const initialContractPath = window.location.pathname.match(/^\/contracts\/(\d+)$/)?.[0];
+  const pendingContractPath = new URLSearchParams(window.location.search).get('next')?.match(/^\/contracts\/\d+$/)?.[0];
+  const requestedContractPath = initialContractPath || pendingContractPath;
+  const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
+  const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : 'interns');
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -40,17 +44,22 @@ export default function App() {
     }
   });
   const currentUserId = currentUser?.ma_nguoi_dung;
+  const passwordChangeRequired = Boolean(currentUser?.must_change_password);
   const canManageRecords = ['Admin', 'HR'].includes(currentUser?.vai_tro);
   const personalWorkspace = currentUser?.vai_tro === 'Mentor'
     ? 'mentor-workspace'
     : currentUser?.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : 'profile';
-  const visibleActiveTab = currentUser && (
-    (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
-    || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
-    || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
-  )
-    ? personalWorkspace
-    : activeTab;
+  const visibleActiveTab = passwordChangeRequired
+    ? 'profile'
+    : currentUser && activeTab === 'contract-link'
+      ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
+      : currentUser && (
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
+        || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
+      )
+        ? personalWorkspace
+        : activeTab;
 
   // Master data
   const [departments, setDepartments] = useState([]);
@@ -157,7 +166,7 @@ export default function App() {
 
   // Load master data when authenticated
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser && !currentUser.must_change_password) {
       apiFetch('/api/master/departments')
         .then(async (res) => {
           const data = await res.json();
@@ -187,7 +196,7 @@ export default function App() {
   // Keep the current session connected for immediate revocation notices.
   useEffect(() => {
     const token = localStorage.getItem('ims_token');
-    if (!currentUserId || !token) return undefined;
+    if (!currentUserId || !token || currentUser?.must_change_password) return undefined;
     let socket;
     let reconnectTimer;
     let heartbeatTimer;
@@ -237,12 +246,18 @@ export default function App() {
       window.clearInterval(heartbeatTimer);
       socket?.close();
     };
-  }, [currentUserId]);
+  }, [currentUserId, currentUser?.must_change_password]);
 
   const handleLoginSuccess = (user) => {
-    if (window.location.pathname === '/login') window.history.replaceState(null, '', '/');
+    if (window.location.pathname === '/login') {
+      const nextPath = new URLSearchParams(window.location.search).get('next');
+      const safeContractPath = nextPath?.match(/^\/contracts\/\d+$/)?.[0];
+      window.history.replaceState(null, '', safeContractPath || '/');
+      if (safeContractPath) setActiveTab('contract-link');
+    }
     setSessionNotice('');
     setSidebarOpen(false);
+    setAccountSection(user.must_change_password ? 'password' : 'profile');
     setCurrentUser(user);
     showToast(`Đăng nhập thành công! Chào mừng ${user.ho_ten}.`);
   };
@@ -273,18 +288,33 @@ export default function App() {
   };
 
   const navigateToTab = (tab) => {
-    const nextPath = tab === 'mailbox' ? '/mailbox' : '/';
+    if (passwordChangeRequired) return;
+    const nextPath = '/';
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
     setActiveTab(tab);
   };
 
   useEffect(() => {
     const syncTabWithPath = () => {
-      if (window.location.pathname === '/mailbox') setActiveTab('mailbox');
+      if (window.location.pathname === '/mailbox') {
+        window.history.replaceState(null, '', '/');
+        setActiveTab('interns');
+      } else if (/^\/contracts\/\d+$/.test(window.location.pathname)) {
+        setActiveTab('contract-link');
+      } else {
+        setActiveTab((current) => current === 'contract-link' ? 'interns' : current);
+      }
     };
+    syncTabWithPath();
     window.addEventListener('popstate', syncTabWithPath);
     return () => window.removeEventListener('popstate', syncTabWithPath);
   }, []);
+
+  const handleUserUpdated = (user) => {
+    localStorage.setItem('ims_user', JSON.stringify(user));
+    setCurrentUser(user);
+    if (!user.must_change_password) setAccountSection('profile');
+  };
 
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
   if (!currentUser) {
@@ -294,6 +324,28 @@ export default function App() {
         departments={departments}
         sessionNotice={sessionNotice}
       />
+    );
+  }
+
+  if (passwordChangeRequired) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--app-bg, #f8fafc)' }}>
+        {toast && <div role="status" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: toast.type === 'success' ? '#0f766e' : '#b91c1c', color: 'white', padding: '12px 18px', borderRadius: 10, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>{toast.message}</div>}
+        <header style={{ minHeight: 68, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'var(--surface, #fff)', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
+          <strong>IMS PORTAL · Đổi mật khẩu lần đầu</strong>
+          <button type="button" className="btn btn-secondary" onClick={handleLogout}>Đăng xuất</button>
+        </header>
+        <main style={{ maxWidth: 1120, margin: '0 auto', padding: '28px 20px' }}>
+          <AccountProfileView
+            key="forced-password-change"
+            initialSection="password"
+            forcePasswordChange
+            currentUser={currentUser}
+            onUserUpdated={handleUserUpdated}
+            onShowToast={showToast}
+          />
+        </main>
+      </div>
     );
   }
 
@@ -362,7 +414,6 @@ export default function App() {
               departments={departments}
               universities={universities}
               onShowToast={showToast}
-              currentUser={currentUser}
             />
           )}
 
@@ -398,7 +449,16 @@ export default function App() {
           )}
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-dashboard' && (
-            <InternWorkspaceView currentUser={currentUser} onNavigatePrograms={() => navigateToTab('programs')} />
+            <InternWorkspaceView
+              currentUser={currentUser}
+              requestedContractId={requestedContractId}
+              onNavigatePrograms={() => navigateToTab('programs')}
+              onShowToast={showToast}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-schedule' && (
+            <PersonalScheduleView />
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
@@ -410,14 +470,11 @@ export default function App() {
               key={accountSection}
               initialSection={accountSection}
               currentUser={currentUser}
-              onUserUpdated={setCurrentUser}
+              onUserUpdated={handleUserUpdated}
               onShowToast={showToast}
             />
           )}
 
-          {visibleActiveTab === 'mailbox' && (
-            <MailboxView currentUser={currentUser} onShowToast={showToast} />
-          )}
         </main>
       </div>
     </div>

@@ -2,12 +2,12 @@ import React from 'react';
 import { 
   UserCheck, 
   Calendar, 
+  CalendarDays,
   FolderUp, 
   ShieldCheck, 
   Building2,
   GraduationCap,
   LayoutDashboard,
-  Mail,
   UsersRound,
   LogOut,
   X
@@ -22,6 +22,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
 
   const navItems = [
     ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch cá nhân', icon: <CalendarDays size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...(canManage ? [
     {
@@ -44,11 +45,6 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
     }] : []),
-    {
-      id: 'mailbox',
-      label: 'Hộp thư',
-      icon: <Mail size={18} />
-    },
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
       id: 'accounts',

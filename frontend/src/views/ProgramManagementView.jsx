@@ -74,6 +74,10 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [applicantProgram, setApplicantProgram] = useState(null);
   const [applicationProgram, setApplicationProgram] = useState(null);
   const [applicationCv, setApplicationCv] = useState(null);
+  const [applicationProfile, setApplicationProfile] = useState(null);
+  const [applicationProfileLoading, setApplicationProfileLoading] = useState(false);
+  const [applicationProfileError, setApplicationProfileError] = useState('');
+  const [useApprovedProfile, setUseApprovedProfile] = useState(false);
   const [applicants, setApplicants] = useState([]);
   const [applicantPage, setApplicantPage] = useState(1);
   const [applicantPageSize, setApplicantPageSize] = useState(10);
@@ -85,6 +89,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [rejectReason, setRejectReason] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const tableScrollRef = useRef(null);
+  const applicationLookupRef = useRef(0);
 
   const requestPrograms = useCallback(async (requestedPage, requestedPageSize, signal) => {
     const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
@@ -202,22 +207,61 @@ export default function ProgramManagementView({ departments, onShowToast, curren
     }
   };
 
+  const closeApplication = () => {
+    applicationLookupRef.current += 1;
+    setApplicationProgram(null);
+    setApplicationCv(null);
+    setApplicationProfile(null);
+    setApplicationProfileError('');
+    setApplicationProfileLoading(false);
+    setUseApprovedProfile(false);
+  };
+
+  const openApplication = async (program) => {
+    const lookup = applicationLookupRef.current + 1;
+    applicationLookupRef.current = lookup;
+    setApplicationProgram(program);
+    setApplicationCv(null);
+    setApplicationProfile(null);
+    setApplicationProfileError('');
+    setUseApprovedProfile(false);
+    setApplicationProfileLoading(true);
+    try {
+      const response = await apiFetch('/api/interns/me/workspace');
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể kiểm tra hồ sơ đã duyệt.');
+      if (lookup !== applicationLookupRef.current) return;
+      const approvedCv = (data.documents || []).find((document) => (
+        document.loai_tai_lieu === 'CV' && document.trang_thai_duyet === 'DaDuyet'
+      ));
+      const canReuse = data.profile?.trang_thai_xet_duyet === 'DaDuyet' && Boolean(approvedCv);
+      setApplicationProfile({ profile: data.profile, approvedCv, canReuse });
+      setUseApprovedProfile(canReuse);
+    } catch (error) {
+      if (lookup === applicationLookupRef.current) {
+        setApplicationProfileError(error.message || 'Không thể kiểm tra hồ sơ đã duyệt. Bạn có thể tải CV lên riêng.');
+      }
+    } finally {
+      if (lookup === applicationLookupRef.current) setApplicationProfileLoading(false);
+    }
+  };
+
   const handleApply = async (event) => {
     event.preventDefault();
-    if (!applicationProgram || !applicationCv) {
-      onShowToast('Vui lòng đính kèm CV để gửi hồ sơ.', 'error');
+    if (!applicationProgram || (!useApprovedProfile && !applicationCv)) {
+      onShowToast('Vui lòng chọn hồ sơ đã duyệt hoặc đính kèm CV.', 'error');
       return;
     }
     setSubmitting(true);
     try {
       const payload = new FormData();
-      payload.append('cv', applicationCv);
+      payload.append('use_approved_profile', String(useApprovedProfile));
+      if (!useApprovedProfile) payload.append('cv', applicationCv);
       const response = await apiFetch(`/api/programs/${applicationProgram.ma_chuong_trinh}/apply`, { method: 'POST', body: payload });
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể ứng tuyển chương trình.');
       onShowToast(data.message);
-      setApplicationProgram(null);
-      setApplicationCv(null);
+      closeApplication();
       await refreshPrograms();
     } catch (error) {
       onShowToast(error.message, 'error');
@@ -397,9 +441,9 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                           {isManager && <button type="button" className="btn btn-secondary btn-sm" title="Danh sách ứng viên" onClick={() => loadApplicants(program)}><Users size={13} /><span>Ứng viên</span></button>}
                           {isAdmin && <button type="button" className="btn btn-outline-primary btn-sm" title="Chỉnh sửa" onClick={() => openEditForm(program)}><Pencil size={13} /><span>Sửa</span></button>}
                           {isAdmin && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
-                          {isIntern && (program.trang_thai_ung_tuyen
-                            ? <button type="button" className="btn btn-secondary btn-sm" disabled title="Bạn đã gửi hồ sơ cho chương trình này"><Check size={13} /><span>Đã ứng tuyển</span></button>
-                            : <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={() => { setApplicationCv(null); setApplicationProgram(program); }}><Send size={13} /><span>Ứng tuyển & nộp CV</span></button>)}
+                          {isIntern && (!program.trang_thai_ung_tuyen
+                            ? <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={() => openApplication(program)}><Send size={13} /><span>Ứng tuyển</span></button>
+                            : program.trang_thai_ung_tuyen === 'DaDuyet' ? null : <button type="button" className="btn btn-secondary btn-sm" disabled><Check size={13} /><span>{program.trang_thai_ung_tuyen === 'ChoDuyet' ? 'Chờ duyệt' : 'Đã từ chối'}</span></button>)}
                         </div></td>
                       </tr>
                     ))}
@@ -521,23 +565,39 @@ export default function ProgramManagementView({ departments, onShowToast, curren
       )}
 
       {applicationProgram && (
-        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && setApplicationProgram(null)}>
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && closeApplication()}>
           <section className="modal-container program-apply-dialog" role="dialog" aria-modal="true" aria-labelledby="program-apply-title">
             <div className="modal-header">
               <div><h3 id="program-apply-title">Ứng tuyển chương trình</h3><p>{applicationProgram.ten_ct} · {applicationProgram.ma_ct}</p></div>
-              <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={() => setApplicationProgram(null)}><X size={18} /></button>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={closeApplication}><X size={18} /></button>
             </div>
             <form onSubmit={handleApply}>
               <div className="modal-body program-apply-body">
-                  <div className="apply-confirm-card"><Users size={19} /><span>Chọn CV riêng cho chương trình <strong>{applicationProgram.ten_ct}</strong>. Hồ sơ sẽ được gửi và hiển thị trạng thái <strong>Chờ duyệt</strong>.</span></div>
-                <label className="apply-cv-dropzone">
-                  <input type="file" accept=".pdf,.docx,.png" required onChange={(event) => setApplicationCv(event.target.files?.[0] || null)} />
-                  <span className="apply-cv-icon"><FileText size={21} /></span>
-                  <strong>{applicationCv?.name || 'Đính kèm CV ứng tuyển'}</strong>
-                  <small>PDF, DOCX hoặc PNG · tối đa 15 MB</small>
-                </label>
+                <div className="apply-confirm-card"><Users size={19} /><span>Ứng tuyển vào <strong>{applicationProgram.ten_ct}</strong>. Bạn có thể dùng lại hồ sơ và CV đã được duyệt, hoặc tải CV riêng. Đơn ứng tuyển vẫn chờ chương trình xét duyệt.</span></div>
+                {applicationProfileLoading && <p className="apply-profile-hint">Đang kiểm tra hồ sơ và CV đã duyệt…</p>}
+                {applicationProfileError && <p className="apply-profile-error">{applicationProfileError} Vui lòng tải CV riêng để tiếp tục.</p>}
+                {applicationProfile?.canReuse && (
+                  <div className="apply-profile-options" role="radiogroup" aria-label="Chọn hồ sơ ứng tuyển">
+                    <label className={`apply-profile-option${useApprovedProfile ? ' selected' : ''}`}>
+                      <input type="radio" name="application-source" checked={useApprovedProfile} onChange={() => setUseApprovedProfile(true)} />
+                      <span><strong>Dùng hồ sơ đã duyệt #{applicationProfile.profile.ma_ho_so}</strong><small>CV đã duyệt: {applicationProfile.approvedCv.ten_file || 'CV của hồ sơ'} · không cần tải lại</small></span>
+                    </label>
+                    <label className={`apply-profile-option${!useApprovedProfile ? ' selected' : ''}`}>
+                      <input type="radio" name="application-source" checked={!useApprovedProfile} onChange={() => setUseApprovedProfile(false)} />
+                      <span><strong>Tải CV khác cho chương trình này</strong><small>CV riêng sẽ được thêm vào hồ sơ của bạn.</small></span>
+                    </label>
+                  </div>
+                )}
+                {!applicationProfileLoading && (!applicationProfile?.canReuse || !useApprovedProfile) && (
+                  <label className="apply-cv-dropzone">
+                    <input type="file" accept=".pdf,.docx,.png" required onChange={(event) => setApplicationCv(event.target.files?.[0] || null)} />
+                    <span className="apply-cv-icon"><FileText size={21} /></span>
+                    <strong>{applicationCv?.name || 'Đính kèm CV ứng tuyển'}</strong>
+                    <small>PDF, DOCX hoặc PNG · tối đa 15 MB</small>
+                  </label>
+                )}
               </div>
-              <div className="modal-footer"><button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => setApplicationProgram(null)}>Hủy</button><button type="submit" className="btn btn-primary" disabled={submitting || !applicationCv}><Send size={15} />{submitting ? 'Đang gửi hồ sơ…' : 'Gửi hồ sơ'}</button></div>
+              <div className="modal-footer"><button type="button" className="btn btn-secondary" disabled={submitting} onClick={closeApplication}>Hủy</button><button type="submit" className="btn btn-primary" disabled={submitting || applicationProfileLoading || (!useApprovedProfile && !applicationCv)}><Send size={15} />{submitting ? 'Đang gửi hồ sơ…' : 'Gửi hồ sơ'}</button></div>
             </form>
           </section>
         </div>

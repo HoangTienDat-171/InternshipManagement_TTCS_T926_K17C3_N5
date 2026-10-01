@@ -5,12 +5,27 @@ import math
 from datetime import date
 from typing import List, Optional, Dict, Any
 from ..database import get_db, hash_password
+from ..account_credentials import create_temporary_password, queue_temporary_password_email, require_password_change_schema
 from ..schemas import InternCreate, InternUpdate, InternDetail
 from ..security import require_role, publish_force_logout
 from ..intern_workflow import APPROVAL_TO_ACCOUNT_STATUS, sync_intern_approval
 from ..notifications import create_notification
+from ..personal_schedule import PersonalScheduleService
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
+
+
+@router.get("/me/schedule")
+def intern_personal_schedule(
+    request: Request,
+    week_start: date | None = Query(None),
+    program_id: int | None = Query(None, ge=1),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user = require_role(request, "ThucTapSinh")
+    return PersonalScheduleService(db).get_for_intern(
+        user["ma_nguoi_dung"], week_start=week_start, program_id=program_id,
+    )
 
 
 @router.get("/me/workspace")
@@ -18,7 +33,8 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
     user = require_role(request, "ThucTapSinh")
     profile = db.execute("""
         SELECT h.ma_ho_so, h.ma_nguoi_dung, h.ma_truong, t.ten_truong,
-               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               h.chuyen_nganh, h.trang_thai_xet_duyet,
+               CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' THEN h.trang_thai_thuc_tap ELSE NULL END AS trang_thai_thuc_tap,
                u.ho_ten, u.email, u.so_dien_thoai, p.ten_phong_ban AS phong_ban
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
@@ -39,7 +55,7 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
     documents = db.execute("""
         SELECT ma_tai_lieu, ma_ho_so, ten_file, loai_tai_lieu, kich_thuoc,
                ngay_tai_len, trang_thai_duyet
-        FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC
+        FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC, ma_tai_lieu DESC
     """, (profile["ma_ho_so"],)).fetchall()
     applications = db.execute("""
         SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
@@ -75,6 +91,7 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
     Tạo tài khoản NGUOI_DUNG với vai_tro='ThucTapSinh' và tạo bản ghi HO_SO_THUC_TAP.
     """
     require_role(request, "Admin", "HR")
+    require_password_change_schema(db)
     validate_phone_number(data.so_dien_thoai)
     email = data.email.strip().lower()
     cursor = db.cursor()
@@ -88,13 +105,13 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
         )
 
     # 1. Tạo tài khoản trong NGUOI_DUNG
-    approval_status = data.trang_thai_xet_duyet or "ChoDuyet"
-    account_status = APPROVAL_TO_ACCOUNT_STATUS[approval_status]
-    hashed_pw = hash_password(data.mat_khau or "123456")
+    temporary_password = create_temporary_password()
+    hashed_pw = hash_password(temporary_password)
     cursor.execute("""
-        INSERT INTO NGUOI_DUNG (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, ?, 'ThucTapSinh', ?)
-    """, (data.ma_phong_ban, data.ho_ten, email, hashed_pw, data.so_dien_thoai, account_status))
+        INSERT INTO NGUOI_DUNG
+            (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+        VALUES (?, ?, ?, ?, 1, ?, 'ThucTapSinh', 'HoatDong')
+    """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai))
     
     ma_nguoi_dung = cursor.lastrowid
 
@@ -106,15 +123,16 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
         ma_nguoi_dung,
         data.ma_truong,
         data.chuyen_nganh,
-        approval_status,
+        'DaDuyet',
         data.trang_thai_thuc_tap or 'DangThucTap'
     ))
 
     ma_ho_so = cursor.lastrowid
+    queue_temporary_password_email(db, ma_nguoi_dung, data.ho_ten.strip(), email, temporary_password)
     db.commit()
 
     return {
-        "message": "Thêm mới hồ sơ thực tập sinh thành công!",
+        "message": "Đã tạo tài khoản thực tập sinh; email mật khẩu tạm đang được gửi.",
         "ma_ho_so": ma_ho_so,
         "ma_nguoi_dung": ma_nguoi_dung,
         "ho_ten": data.ho_ten,
@@ -133,7 +151,8 @@ def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends
         SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
                h.ma_truong, t.ten_truong, h.chuyen_nganh, h.trang_thai_xet_duyet,
-               h.trang_thai_thuc_tap, h.ngay_tao,
+               CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' THEN h.trang_thai_thuc_tap ELSE NULL END AS trang_thai_thuc_tap,
+               h.ngay_tao,
                mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
                mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
                mentor.so_dien_thoai AS mentor_so_dien_thoai,
@@ -310,7 +329,7 @@ def list_interns(
         params.append(trang_thai_xet_duyet)
 
     if trang_thai_thuc_tap:
-        filters.append("h.trang_thai_thuc_tap = ?")
+        filters.append("h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = ?")
         params.append(trang_thai_thuc_tap)
 
     if ma_phong_ban:
@@ -335,14 +354,16 @@ def list_interns(
         SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
                h.ma_truong, t.ten_truong,
-               h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
+               h.chuyen_nganh, h.trang_thai_xet_duyet,
+               CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' THEN h.trang_thai_thuc_tap ELSE NULL END AS trang_thai_thuc_tap,
                h.ngay_tao,
                (SELECT e.status
                 FROM EMAIL_OUTBOX e
-                JOIN THONG_BAO n ON e.reference_type = 'notification'
-                    AND e.reference_id = CAST(n.ma_thong_bao AS CHAR)
-                WHERE n.reference_type = 'intern_profile'
-                    AND n.reference_id = CAST(h.ma_ho_so AS CHAR)
+                WHERE (e.reference_type = 'intern_profile'
+                       AND e.reference_id = CAST(h.ma_ho_so AS CHAR))
+                   OR (e.reference_type = 'account'
+                       AND e.reference_id = CAST(h.ma_nguoi_dung AS CHAR)
+                       AND e.template_type = 'temporary_credentials')
                 ORDER BY e.id DESC LIMIT 1) AS email_status,
                mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
                mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,

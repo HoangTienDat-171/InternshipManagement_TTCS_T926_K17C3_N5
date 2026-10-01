@@ -3,6 +3,7 @@ import { FolderUp, FileText, UploadCloud, Eye, Check, XCircle, RefreshCw } from 
 import { apiFetch, readJsonResponse } from '../utils/api';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
+import ContractManagementPanel from '../components/ContractManagementPanel';
 
 const typeLabels = {
   CV: 'CV',
@@ -199,6 +200,8 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
       </div>
 
       {errorMsg && <div className="alert-banner error" role="alert" style={{ marginBottom: '16px' }}>{errorMsg}</div>}
+
+      <ContractManagementPanel interns={interns} onShowToast={onShowToast} />
 
       <form className="card document-upload-card" style={{ marginBottom: '24px' }} onSubmit={uploadDocument}>
         <div className="card-header"><div className="card-title-box"><h2>Tải lên tài liệu mới</h2></div></div>

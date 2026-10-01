@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 
 from ..database import get_db, hash_password
+from ..account_credentials import create_temporary_password, queue_temporary_password_email, require_password_change_schema
 from ..schemas import (
     InternAssignmentCandidate,
     MentorAssignmentDetail,
@@ -330,6 +331,7 @@ def unassign_intern(
 @router.post("", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
 def create_mentor(data: MentorCreate, request: Request, db: sqlite3.Connection = Depends(get_db)):
     require_role(request, "Admin", "HR")
+    require_password_change_schema(db)
     if data.so_dien_thoai and not re.fullmatch(r"(03|05|07|08|09)\d{8}", data.so_dien_thoai):
         raise HTTPException(status_code=400, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
     email = data.email.strip().lower()
@@ -339,20 +341,22 @@ def create_mentor(data: MentorCreate, request: Request, db: sqlite3.Connection =
         raise HTTPException(status_code=400, detail="Email đã được đăng ký trong hệ thống.")
 
     cursor = db.cursor()
+    temporary_password = create_temporary_password()
     try:
         cursor.execute("""
             INSERT INTO NGUOI_DUNG
-                (ma_phong_ban, ho_ten, email, mat_khau, so_dien_thoai, vai_tro, trang_thai)
-            VALUES (?, ?, ?, ?, ?, 'Mentor', 'HoatDong')
-        """, (data.ma_phong_ban, data.ho_ten.strip(), email, hash_password(data.mat_khau), data.so_dien_thoai or None))
+                (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (?, ?, ?, ?, 1, ?, 'Mentor', 'HoatDong')
+        """, (data.ma_phong_ban, data.ho_ten.strip(), email, hash_password(temporary_password), data.so_dien_thoai or None))
         user_id = cursor.lastrowid
         cursor.execute("""
             INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem, so_tts_toi_da)
             VALUES (?, ?, ?, ?)
         """, (user_id, data.chuyen_mon.strip() if data.chuyen_mon else None, data.kinh_nghiem, data.so_tts_toi_da))
+        queue_temporary_password_email(db, user_id, data.ho_ten.strip(), email, temporary_password)
         db.commit()
     except sqlite3.IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail="Phòng ban không hợp lệ hoặc email đã được sử dụng.") from exc
 
-    return {"message": f"Đã thêm Mentor {data.ho_ten.strip()}.", "ma_nguoi_dung": user_id}
+    return {"message": f"Đã thêm Mentor {data.ho_ten.strip()}; email mật khẩu tạm đang được gửi.", "ma_nguoi_dung": user_id}

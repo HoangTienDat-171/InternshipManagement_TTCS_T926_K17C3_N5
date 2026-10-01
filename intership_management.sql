@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS NGUOI_DUNG (
     ho_ten VARCHAR(100) NOT NULL,
     email VARCHAR(100) NOT NULL,
     mat_khau VARCHAR(255) NOT NULL, -- Dùng hash bcrypt/argon2
+    must_change_password TINYINT(1) NOT NULL DEFAULT 0,
     so_dien_thoai VARCHAR(20),
     avatar_url VARCHAR(500) NULL,
     vai_tro ENUM('Admin', 'HR', 'Mentor', 'ThucTapSinh') NOT NULL,

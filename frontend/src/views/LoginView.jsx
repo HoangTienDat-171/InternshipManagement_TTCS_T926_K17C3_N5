@@ -50,7 +50,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
   const [regForm, setRegForm] = useState({
     ho_ten: '',
     email: '',
-    mat_khau: '',
     so_dien_thoai: ''
   });
   const [regLoading, setRegLoading] = useState(false);
@@ -94,11 +93,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
     setErrorMsg('');
     setRegSuccessMsg('');
 
-    if (regForm.mat_khau.length < 6) {
-      setErrorMsg('Mật khẩu phải có tối thiểu 6 ký tự');
-      setRegLoading(false);
-      return;
-    }
     if (regForm.so_dien_thoai && !isValidVietnamPhone(regForm.so_dien_thoai)) {
       setErrorMsg('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.');
       setRegLoading(false);
@@ -114,7 +108,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
       const payload = new FormData();
       payload.append('ho_ten', regForm.ho_ten.trim());
       payload.append('email', regForm.email.trim());
-      payload.append('mat_khau', regForm.mat_khau);
       payload.append('so_dien_thoai', regForm.so_dien_thoai.trim());
       if (regCv) payload.append('cv', regCv);
 
@@ -125,7 +118,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
       const data = await readApiResponse(res);
 
-      setRegSuccessMsg(data.message || 'Đăng ký thành công. Tài khoản đang chờ Admin/HR xét duyệt.');
+      setRegSuccessMsg(data.message || 'Đăng ký thành công. Mật khẩu tạm được gửi qua email; tài khoản sẽ đăng nhập sau khi được duyệt.');
       setEmail(regForm.email);
       setPassword('');
       setRegCv(null);
@@ -153,6 +146,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
     <main className="auth-page">
       <div className={`auth-card ${isRegisterMode ? 'register-mode' : ''}`}>
         <section className="auth-form-panel">
+        <div className="auth-form-content">
         {/* Brand Header */}
         <div className="auth-brand-header">
           <div style={{
@@ -293,18 +287,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>Mật khẩu (Tối thiểu 6 ký tự)</label>
-              <input
-                type="password"
-                className="form-control"
-                placeholder="Nhập mật khẩu an toàn"
-                required
-                value={regForm.mat_khau}
-                onChange={(e) => setRegForm({ ...regForm, mat_khau: e.target.value })}
-              />
-            </div>
-
             <PhoneField id="register-phone" value={regForm.so_dien_thoai} onChange={(value) => setRegForm((prev) => ({ ...prev, so_dien_thoai: value }))} />
 
             <div className="form-group">
@@ -324,10 +306,10 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
               border: '1px solid #e2e8f0',
               fontSize: '12px',
               color: '#475569'
-            }}>
+            }} className="auth-account-note">
               <div><strong>Vai trò:</strong> Thực tập sinh (Mặc định)</div>
               <div style={{ marginTop: '2px', color: '#64748b' }}>
-                Sau khi đăng ký, tài khoản sẽ chuyển tới <strong>Quản lý thực tập sinh</strong> xét duyệt kích hoạt.
+                Mật khẩu tạm được gửi tới email. Sau khi được duyệt và đăng nhập, bạn sẽ đổi mật khẩu trước khi tiếp tục.
               </div>
             </div>
 
@@ -384,6 +366,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             </div>
           </div>
         )}
+        </div>
         </section>
 
         <aside className={`auth-welcome-panel ${isRegisterMode ? 'is-register-mode' : ''}`}>

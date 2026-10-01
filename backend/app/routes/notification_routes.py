@@ -14,7 +14,8 @@ def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db
     rows = db.execute("""
         SELECT n.ma_thong_bao, n.tieu_de, n.noi_dung, n.da_doc, n.thoi_gian_gui,
                n.thoi_gian_doc, n.loai
-        FROM THONG_BAO n WHERE n.ma_nguoi_dung = ?
+        FROM THONG_BAO n
+        WHERE n.ma_nguoi_dung = ? AND (n.loai IS NULL OR n.loai <> 'mailbox_message')
         ORDER BY n.ma_thong_bao DESC LIMIT 50
     """, (user["ma_nguoi_dung"],)).fetchall()
     return [dict(row) for row in rows]
@@ -28,7 +29,9 @@ def list_email_outbox(request: Request, db: sqlite3.Connection = Depends(get_db)
         SELECT id, recipient_email, subject, template_type, reference_type, reference_id,
                status, retry_count, max_retry, last_error, next_retry_at,
                created_at, sent_at, updated_at
-        FROM EMAIL_OUTBOX ORDER BY id DESC LIMIT 100
+        FROM EMAIL_OUTBOX
+        WHERE reference_type IS NULL OR reference_type <> 'internal_message'
+        ORDER BY id DESC LIMIT 100
     """).fetchall()
     items = []
     for row in rows:

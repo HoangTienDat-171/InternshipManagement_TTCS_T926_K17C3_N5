@@ -12,7 +12,7 @@ const createEmptyForm = (departments, universities) => ({
   ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
   ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
   chuyen_nganh: '',
-  trang_thai_xet_duyet: 'ChoDuyet',
+  trang_thai_xet_duyet: 'DaDuyet',
   trang_thai_thuc_tap: 'DangThucTap'
 });
 
@@ -83,8 +83,8 @@ export default function InternModal({
         ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null,
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
-        trang_thai_xet_duyet: formData.trang_thai_xet_duyet,
-        trang_thai_thuc_tap: formData.trang_thai_thuc_tap
+        ...(isEdit ? { trang_thai_xet_duyet: formData.trang_thai_xet_duyet } : {}),
+        ...(isEdit ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 
       if (payload.so_dien_thoai && !isValidVietnamPhone(payload.so_dien_thoai)) {
@@ -223,7 +223,7 @@ export default function InternModal({
                 </CustomSelect>
               </div>
 
-              <div className="form-group">
+              {isEdit && <div className="form-group">
                 <label className="form-label">Xét duyệt</label>
                 <CustomSelect
                   name="trang_thai_xet_duyet"
@@ -235,9 +235,9 @@ export default function InternModal({
                   <option value="DaDuyet">Đã duyệt</option>
                   <option value="TuChoi">Từ chối</option>
                 </CustomSelect>
-              </div>
+              </div>}
 
-              <div className="form-group">
+              {isEdit && (formData.trang_thai_xet_duyet === 'DaDuyet' ? <div className="form-group">
                 <label className="form-label">Trạng thái</label>
                 <CustomSelect
                   name="trang_thai_thuc_tap"
@@ -249,7 +249,10 @@ export default function InternModal({
                   <option value="HoanThanh">Hoàn thành</option>
                   <option value="ThoiHoc">Thôi học</option>
                 </CustomSelect>
-              </div>
+              </div> : <div className="form-group">
+                <label className="form-label">Trạng thái</label>
+                <span className="form-control is-readonly" aria-live="polite">Chưa bắt đầu — hồ sơ chờ xét duyệt</span>
+              </div>)}
             </form>
           )}
         </div>
