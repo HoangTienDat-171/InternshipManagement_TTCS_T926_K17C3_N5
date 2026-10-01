@@ -36,8 +36,7 @@ export default function MentorManagementView({ departments, onShowToast, current
     ma_phong_ban: '',
     chuyen_mon: '',
     kinh_nghiem: '',
-    so_tts_toi_da: 3,
-    mat_khau: ''
+    so_tts_toi_da: 3
   });
 
   const requestMentors = useCallback(async (requestedPage, requestedPageSize, signal) => {
@@ -115,7 +114,7 @@ export default function MentorManagementView({ departments, onShowToast, current
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể thêm Mentor.');
       onShowToast(data.message);
-      setForm({ ho_ten: '', email: '', so_dien_thoai: '', ma_phong_ban: '', chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: 3, mat_khau: '' });
+      setForm({ ho_ten: '', email: '', so_dien_thoai: '', ma_phong_ban: '', chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: 3 });
       setShowAddForm(false);
       setPage(1);
       setLoading(true);
@@ -286,11 +285,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                 />
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Mật khẩu khởi tạo <span className="required">*</span></label>
-                <input type="password" name="mat_khau" className="form-control" minLength={6} required
-                  value={form.mat_khau} onChange={handleChange} autoComplete="new-password" />
-              </div>
+              <p className="form-hint">Hệ thống sẽ gửi email đăng nhập kèm mật khẩu tạm và yêu cầu đổi mật khẩu lần đầu.</p>
 
               <PhoneField value={form.so_dien_thoai} onChange={(value) => setForm((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0905555666" />
 

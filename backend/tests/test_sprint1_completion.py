@@ -719,5 +719,181 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertNotIn("None", blank_reason_mail[2])
 
 
+    def create_contract_intern(self, suffix, approval="DaDuyet"):
+        email = f"us09.{suffix}@test.invalid"
+        db = sqlite3.connect(self.db_path)
+        try:
+            password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='tuan.lm@internship.vn'",
+            ).fetchone()[0]
+            user = db.execute("""
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                VALUES (1, ?, ?, ?, 'ThucTapSinh', 'HoatDong')
+            """, (f"US09 Intern {suffix}", email, password_hash))
+            profile = db.execute("""
+                INSERT INTO HO_SO_THUC_TAP
+                    (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                VALUES (?, 1, 'Backend QA', ?, 'DangThucTap')
+            """, (user.lastrowid, approval))
+            db.commit()
+            return {"user_id": user.lastrowid, "profile_id": profile.lastrowid, "email": email}
+        finally:
+            db.close()
+
+    def upload_contract(self, token, profile_id, filename="contract.pdf", content=PDF, mime_type="application/pdf"):
+        boundary = "----US09ContractBoundary6f4d"
+        parts = [
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"ma_ho_so\"\r\n\r\n{profile_id}\r\n".encode(),
+            (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+             f"Content-Type: {mime_type}\r\n\r\n").encode() + content + b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+        status_code, body, headers = self.request(
+            "/api/contracts", "POST", token, b"".join(parts),
+            f"multipart/form-data; boundary={boundary}",
+        )
+        return status_code, json.loads(body) if body else None, headers
+
+    def test_us09_contract_upload_creates_private_file_notification_and_outbox(self):
+        suffix = str(time.time_ns())
+        intern_a = self.create_contract_intern(f"a.{suffix}")
+        intern_b = self.create_contract_intern(f"b.{suffix}")
+        admin_token, admin = self.login("admin@internship.vn")
+        hr_token, hr = self.login("hr@internship.vn")
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            program = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US09 Backend Internship', 1, '2026-10-10', '2026-12-10', 2, 'DangMo')
+            """, (f"US09-{suffix}",))
+            db.execute("""
+                INSERT INTO UNG_TUYEN_CHUONG_TRINH
+                    (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet, nguoi_xet_duyet)
+                VALUES (?, ?, 'DaDuyet', CURRENT_TIMESTAMP, ?)
+            """, (program.lastrowid, intern_a["profile_id"], admin["ma_nguoi_dung"]))
+            db.commit()
+        finally:
+            db.close()
+
+        status_code, contract_a, _ = self.upload_contract(admin_token, intern_a["profile_id"])
+        self.assertEqual(status_code, 201, contract_a)
+        contract_id = contract_a["ma_hop_dong"]
+        self.assertEqual(contract_a["trang_thai"], "PENDING_CONFIRMATION")
+        self.assertEqual(contract_a["ten_chuong_trinh"], "US09 Backend Internship")
+        self.assertNotIn("storage_key", contract_a)
+
+        status_code, contract_b, _ = self.upload_contract(hr_token, intern_b["profile_id"])
+        self.assertEqual(status_code, 201, contract_b)
+
+        tts_a_token, _ = self.login(intern_a["email"])
+        tts_b_token, _ = self.login(intern_b["email"])
+        status_code, owned, _ = self.json_request("/api/contracts/mine", token=tts_a_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(owned["ma_hop_dong"], contract_id)
+        self.assertNotIn("storage_key", owned)
+
+        status_code, body, headers = self.request(
+            f"/api/contracts/{contract_id}/preview", token=tts_a_token,
+        )
+        self.assertEqual((status_code, body, headers.get_content_type()), (200, PDF, "application/pdf"))
+        self.assertIn("no-store", headers.get("Cache-Control", ""))
+        status_code, body, headers = self.request(
+            f"/api/contracts/{contract_id}/download", token=tts_a_token,
+        )
+        self.assertEqual((status_code, body), (200, PDF))
+        self.assertIn("attachment", headers.get("Content-Disposition", ""))
+        status_code, _, _ = self.request(
+            f"/api/contracts/{contract_b['ma_hop_dong']}/preview", token=tts_a_token,
+        )
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.request(
+            f"/api/contracts/{contract_b['ma_hop_dong']}/download", token=tts_a_token,
+        )
+        self.assertEqual(status_code, 404)
+
+        status_code, _, _ = self.upload_contract(admin_token, intern_a["profile_id"])
+        self.assertEqual(status_code, 409)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            record = db.execute("""
+                SELECT storage_key, uploaded_by, original_file_name, file_size, mime_type, trang_thai
+                FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong=?
+            """, (contract_id,)).fetchone()
+            notice = db.execute("""
+                SELECT loai, reference_type, reference_id FROM THONG_BAO
+                WHERE ma_nguoi_dung=? AND reference_type='internship_contract'
+            """, (intern_a["user_id"],)).fetchone()
+            email = db.execute("""
+                SELECT recipient_email, template_type, reference_type, reference_id,
+                       deduplication_key, status, body
+                FROM EMAIL_OUTBOX WHERE deduplication_key=?
+            """, (f"us09:contract:{contract_id}:uploaded",)).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(record[1:], (admin["ma_nguoi_dung"], "contract.pdf", len(PDF), "application/pdf", "PENDING_CONFIRMATION"))
+        self.assertTrue(record[0].endswith(".pdf"))
+        self.assertEqual(notice, ("contract_uploaded", "internship_contract", str(contract_id)))
+        self.assertEqual(email[:6], (intern_a["email"], "contract_uploaded", "internship_contract", str(contract_id), f"us09:contract:{contract_id}:uploaded", "PENDING"))
+        self.assertIn("US09 Backend Internship", email[6])
+        self.assertIn("Phòng ban: Trung tâm Công nghệ Thông tin", email[6])
+        self.assertIn("Thời gian dự kiến: 2026-10-10 – 2026-12-10", email[6])
+        self.assertIn("Trạng thái hợp đồng: Chờ xác nhận", email[6])
+        self.assertIn(f"https://ims.example.test/login?next=%2Fcontracts%2F{contract_id}", email[6])
+        self.assertIn("không đính kèm hợp đồng", email[6])
+        status_code, _, _ = self.json_request("/api/contracts?page=1&pageSize=10", token=tts_a_token)
+        self.assertEqual(status_code, 403)
+        contract_path = self.temp_path / "uploads" / "contracts" / record[0]
+        self.assertTrue(contract_path.is_file())
+
+    def test_us09_contract_upload_enforces_role_approval_and_pdf_validation(self):
+        suffix = str(time.time_ns())
+        approved = self.create_contract_intern(f"approved.{suffix}")
+        pending = self.create_contract_intern(f"pending.{suffix}", approval="ChoDuyet")
+        admin_token, _ = self.login("admin@internship.vn")
+        tts_token, _ = self.login(approved["email"])
+        mentor_token, _ = self.login("mentor@internship.vn")
+
+        status_code, _, _ = self.upload_contract(None, approved["profile_id"])
+        self.assertEqual(status_code, 401)
+        status_code, _, _ = self.upload_contract(tts_token, approved["profile_id"])
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.upload_contract(mentor_token, approved["profile_id"])
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.upload_contract(admin_token, 99999999)
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.upload_contract(admin_token, pending["profile_id"])
+        self.assertEqual(status_code, 409)
+        status_code, _, _ = self.upload_contract(admin_token, approved["profile_id"], filename="..\\..\\contract.pdf")
+        self.assertEqual(status_code, 400)
+        status_code, _, _ = self.upload_contract(admin_token, approved["profile_id"], content=b"not really a PDF")
+        self.assertEqual(status_code, 400)
+        status_code, _, _ = self.upload_contract(admin_token, approved["profile_id"], mime_type="text/plain")
+        self.assertEqual(status_code, 400)
+        status_code, _, _ = self.upload_contract(
+            admin_token, approved["profile_id"], content=b"%PDF-" + b"x" * (15 * 1024 * 1024),
+        )
+        self.assertEqual(status_code, 400)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            existing_keys = {row[0] for row in db.execute("SELECT storage_key FROM HOP_DONG_THUC_TAP")}
+            db.execute("""
+                CREATE TRIGGER fail_us09_contract_insert
+                BEFORE INSERT ON HOP_DONG_THUC_TAP
+                BEGIN SELECT RAISE(ABORT, 'forced isolated-test database failure'); END
+            """)
+            db.commit()
+        finally:
+            db.close()
+        status_code, _, _ = self.upload_contract(admin_token, approved["profile_id"])
+        self.assertEqual(status_code, 409)
+        storage_dir = self.temp_path / "uploads" / "contracts"
+        stored_keys = {path.name for path in storage_dir.glob("*.pdf")}
+        self.assertEqual(stored_keys, existing_keys)
+
 if __name__ == "__main__":
     unittest.main()

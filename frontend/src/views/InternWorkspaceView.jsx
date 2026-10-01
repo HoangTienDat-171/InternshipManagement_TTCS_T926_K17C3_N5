@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, Eye, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
 import { apiFetch, downloadProtectedFile, readJsonResponse } from '../utils/api';
 
 const documentStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Cần bổ sung' };
@@ -10,25 +10,66 @@ function StatusPill({ status, map = documentStatus }) {
   return <span className={`workspace-status is-${tone}`}><i />{map[status] || status || 'Chưa cập nhật'}</span>;
 }
 
-export default function InternWorkspaceView({ currentUser, onNavigatePrograms }) {
+export default function InternWorkspaceView({ currentUser, onNavigatePrograms, requestedContractId }) {
   const [workspace, setWorkspace] = useState(null);
+  const [contract, setContract] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [contractLoading, setContractLoading] = useState(true);
   const [error, setError] = useState('');
+  const [contractError, setContractError] = useState('');
+  const [contractPreviewUrl, setContractPreviewUrl] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const [documentType, setDocumentType] = useState('CV');
   const fileInput = useRef(null);
+  const contractCardRef = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
-      const response = await apiFetch('/api/interns/me/workspace');
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể tải hồ sơ thực tập.');
+      const [workspaceResponse, contractResponse] = await Promise.all([
+        apiFetch('/api/interns/me/workspace'),
+        apiFetch('/api/contracts/mine'),
+      ]);
+      const [data, contractData] = await Promise.all([
+        readJsonResponse(workspaceResponse),
+        readJsonResponse(contractResponse),
+      ]);
+      if (!workspaceResponse.ok) throw new Error(data.detail || 'Không thể tải hồ sơ thực tập.');
+      if (!contractResponse.ok) throw new Error(contractData.detail || 'Không thể tải hợp đồng của bạn.');
       setWorkspace(data);
+      setContract(contractData);
+      setContractError('');
       setError('');
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setContractLoading(false); }
   }, []);
+
+  const previewContract = useCallback(async (contractId = contract?.ma_hop_dong) => {
+    if (!contractId) return;
+    try {
+      const response = await apiFetch(`/api/contracts/${contractId}/preview`);
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể xem trước hợp đồng.');
+      }
+      const nextUrl = URL.createObjectURL(await response.blob());
+      setContractError('');
+      setContractPreviewUrl(nextUrl);
+    } catch (previewError) {
+      setContractError(previewError.message);
+    }
+  }, [contract?.ma_hop_dong]);
+
+  useEffect(() => {
+    const requestedId = Number(requestedContractId);
+    if (contract && requestedId && Number(contract.ma_hop_dong) === requestedId) {
+      contractCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [contract, requestedContractId]);
+
+  useEffect(() => () => {
+    if (contractPreviewUrl) URL.revokeObjectURL(contractPreviewUrl);
+  }, [contractPreviewUrl]);
 
   useEffect(() => {
     void Promise.resolve().then(refresh);
@@ -40,6 +81,27 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
   const download = async (document) => {
     try { await downloadProtectedFile(document.ma_tai_lieu, document.ten_file); }
     catch (err) { setError(err.message); }
+  };
+
+  const downloadContract = async () => {
+    if (!contract) return;
+    try {
+      const response = await apiFetch(`/api/contracts/${contract.ma_hop_dong}/download`);
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể tải hợp đồng.');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = contract.original_file_name || 'hop-dong.pdf';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (downloadError) {
+      setContractError(downloadError.message);
+    }
   };
 
   const uploadDocument = async (event) => {
@@ -99,5 +161,24 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms })
         {applications.length ? <div className="workspace-application-list">{applications.map((application) => <div className="workspace-application-row" key={application.ma_chuong_trinh}><div><strong>{application.ten_ct}</strong><small>{application.ma_ct} · Nộp {application.ngay_ung_tuyen || '—'}</small></div><StatusPill status={application.trang_thai_ung_tuyen} map={applicationStatus} /></div>)}</div> : <div className="workspace-empty"><CalendarDays size={22} /><span>Bạn chưa ứng tuyển chương trình nào.</span></div>}
       </article>
     </div>
+    <article ref={contractCardRef} className="workspace-card workspace-contract-card">
+      <div className="workspace-section-heading">
+        <div><span className="workspace-eyebrow">TÀI LIỆU CỦA BẠN</span><h3>Hợp đồng thực tập</h3></div>
+        {contract && <span className="workspace-status is-warning"><i />Chờ xác nhận</span>}
+      </div>
+      {contractLoading ? <div className="workspace-empty"><span>Đang tải hợp đồng…</span></div>
+        : contract ? <>
+          <div className="workspace-contract-details">
+            <FileText size={19} />
+            <div><strong>{contract.original_file_name}</strong><small>{contract.ten_chuong_trinh || contract.ten_phong_ban || 'Chưa có chương trình'} · Tải lên {contract.uploaded_at || '—'}</small></div>
+            <div className="workspace-contract-actions">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => previewContract()}><Eye size={14} />Xem trước</button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={downloadContract}><Download size={14} />Tải xuống</button>
+            </div>
+          </div>
+          {contractError && <p className="contract-error" role="alert">{contractError}</p>}
+          {contractPreviewUrl && <iframe className="workspace-contract-preview" src={contractPreviewUrl} title="Xem trước hợp đồng thực tập" />}
+        </> : <div className="workspace-empty"><FileText size={22} /><span>HR chưa tải hợp đồng lên. Hợp đồng sẽ xuất hiện tại đây sau khi được cập nhật.</span></div>}
+    </article>
   </div>;
 }

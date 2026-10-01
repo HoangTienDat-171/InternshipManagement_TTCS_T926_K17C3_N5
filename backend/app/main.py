@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import auth_routes, document_routes, intern_routes, mailbox_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
+from .routes import auth_routes, contract_routes, document_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -50,6 +50,14 @@ async def validate_api_session(request: Request, call_next):
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác."})
         request.state.current_user = user
+        password_change_path = path == "/api/auth/me" or path == "/api/auth/logout" or (
+            path.startswith("/api/auth/users/") and path.endswith("/password")
+        )
+        if user.get("must_change_password") and not password_change_path:
+            return JSONResponse(status_code=403, content={
+                "detail": "Bạn cần đổi mật khẩu tạm thời trước khi tiếp tục.",
+                "code": "PASSWORD_CHANGE_REQUIRED",
+            })
     return await call_next(request)
 
 # CORS Middleware kết nối React Frontend
@@ -84,11 +92,11 @@ app.include_router(auth_routes.router)
 app.include_router(intern_routes.router)
 app.include_router(master_routes.router)
 app.include_router(document_routes.router)
+app.include_router(contract_routes.router)
 app.include_router(mentor_routes.router)
 app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(metrics_routes.router)
-app.include_router(mailbox_routes.router)
 
 
 @app.websocket("/api/auth/events")

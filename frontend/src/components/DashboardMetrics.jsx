@@ -26,10 +26,10 @@ function readSectionMetrics(data, section) {
 
 function describeMetrics(section, metrics) {
   if (section === 'interns') {
-    const assignedRate = metrics.total ? Math.round((metrics.assigned / metrics.total) * 100) : 0;
+    const assignedRate = metrics.approved ? Math.round((metrics.assigned / metrics.approved) * 100) : 0;
     return {
       cards: [
-        { label: 'TỔNG SỐ TTS', value: metrics.total, detail: `Đã duyệt ${number(metrics.approved)} · Chờ ${number(metrics.pending)} · Từ chối ${number(metrics.rejected)}`, icon: GraduationCap, tone: 'violet' },
+        { label: 'TỔNG SỐ TTS', value: metrics.total, detail: 'Hồ sơ thực tập sinh đang được quản lý', icon: GraduationCap, tone: 'violet' },
         { label: 'ĐÃ GHÉP MENTOR', value: metrics.assigned, detail: `${assignedRate}% hồ sơ đã được phân công`, icon: UserRoundCheck, tone: 'green', progress: assignedRate },
         { label: 'CHỜ GHÉP MENTOR', value: metrics.unassigned, detail: 'Thực tập sinh chưa có người hướng dẫn', icon: Clock3, tone: 'amber' },
         { label: 'TRƯỜNG ĐẠI HỌC', value: metrics.universities, detail: 'Số trường có hồ sơ trong kết quả lọc', icon: Building2, tone: 'blue' },
