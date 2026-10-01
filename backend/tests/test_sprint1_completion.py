@@ -788,12 +788,24 @@ class Sprint1RuntimeTests(unittest.TestCase):
         status_code, contract_b, _ = self.upload_contract(hr_token, intern_b["profile_id"])
         self.assertEqual(status_code, 201, contract_b)
 
-        tts_a_token, _ = self.login(intern_a["email"])
-        tts_b_token, _ = self.login(intern_b["email"])
+        tts_a_token, tts_a_user = self.login(intern_a["email"])
+        tts_b_token, tts_b_user = self.login(intern_b["email"])
         status_code, owned, _ = self.json_request("/api/contracts/mine", token=tts_a_token)
         self.assertEqual(status_code, 200)
         self.assertEqual(owned["ma_hop_dong"], contract_id)
         self.assertNotIn("storage_key", owned)
+        status_code, detail, _ = self.json_request(f"/api/contracts/{contract_id}", token=tts_a_token)
+        self.assertEqual(status_code, 200, detail)
+        self.assertNotIn("storage_key", detail)
+        self.assertNotIn("uploaded_by", detail)
+        self.assertEqual(
+            [(item["action"], item["old_status"], item["new_status"]) for item in detail["history"]],
+            [("UPLOADED", None, "PENDING_CONFIRMATION")],
+        )
+        status_code, _, _ = self.json_request(f"/api/contracts/{contract_b['ma_hop_dong']}", token=tts_a_token)
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.json_request(f"/api/contracts/{contract_id}/confirm", "POST", token=admin_token)
+        self.assertEqual(status_code, 403)
 
         status_code, body, headers = self.request(
             f"/api/contracts/{contract_id}/preview", token=tts_a_token,
@@ -827,27 +839,49 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
 
         status_code, _, _ = self.json_request(
-            f"/api/contracts/{contract_id}/decision", "POST", token=tts_b_token,
-            data={"decision": "CONFIRMED"},
+            f"/api/contracts/{contract_id}/confirm", "POST", token=tts_b_token,
         )
         self.assertEqual(status_code, 404)
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contract_id}/reject", "POST", token=tts_b_token,
+            data={"reason": "Sai thông tin hợp đồng."},
+        )
+        self.assertEqual(status_code, 404)
+        for invalid_reason in ("", "   ", "ngắn", "x" * 501):
+            status_code, _, _ = self.json_request(
+                f"/api/contracts/{second_contract_a['ma_hop_dong']}/reject", "POST", token=tts_a_token,
+                data={"reason": invalid_reason},
+            )
+            self.assertEqual(status_code, 422, invalid_reason)
         status_code, confirmed_contract, _ = self.json_request(
-            f"/api/contracts/{contract_id}/decision", "POST", token=tts_a_token,
-            data={"decision": "CONFIRMED"},
+            f"/api/contracts/{contract_id}/confirm", "POST", token=tts_a_token,
+            data={"confirmed_by": tts_b_user["ma_nguoi_dung"], "confirmed_at": "2000-01-01 00:00:00", "trang_thai": "REJECTED"},
         )
         self.assertEqual(status_code, 200, confirmed_contract)
         self.assertEqual(confirmed_contract["trang_thai"], "CONFIRMED")
         status_code, _, _ = self.json_request(
-            f"/api/contracts/{contract_id}/decision", "POST", token=tts_a_token,
-            data={"decision": "REJECTED"},
+            f"/api/contracts/{contract_id}/confirm", "POST", token=tts_a_token,
         )
         self.assertEqual(status_code, 409)
+        rejection_reason = "Sai thông tin thời gian thực tập."
         status_code, rejected_contract, _ = self.json_request(
-            f"/api/contracts/{second_contract_a['ma_hop_dong']}/decision", "POST", token=tts_a_token,
-            data={"decision": "REJECTED"},
+            f"/api/contracts/{second_contract_a['ma_hop_dong']}/reject", "POST", token=tts_a_token,
+            data={
+                "reason": rejection_reason,
+                "rejected_by": tts_b_user["ma_nguoi_dung"],
+                "rejected_at": "2000-01-01 00:00:00",
+                "trang_thai": "CONFIRMED",
+            },
         )
         self.assertEqual(status_code, 200, rejected_contract)
         self.assertEqual(rejected_contract["trang_thai"], "REJECTED")
+        self.assertEqual(rejected_contract["rejection_reason"], rejection_reason)
+        self.assertEqual(rejected_contract["history"][-1]["reason"], rejection_reason)
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{second_contract_a['ma_hop_dong']}/reject", "POST", token=tts_a_token,
+            data={"reason": "Changed reason after final state."},
+        )
+        self.assertEqual(status_code, 409)
         status_code, all_owned_contracts, _ = self.json_request(
             "/api/contracts/mine/all", token=tts_a_token,
         )
@@ -860,9 +894,18 @@ class Sprint1RuntimeTests(unittest.TestCase):
         db = sqlite3.connect(self.db_path)
         try:
             record = db.execute("""
-                SELECT storage_key, uploaded_by, original_file_name, file_size, mime_type, trang_thai
+                SELECT storage_key, uploaded_by, original_file_name, file_size, mime_type, trang_thai,
+                       confirmed_by, confirmed_at
                 FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong=?
             """, (contract_id,)).fetchone()
+            rejected_record = db.execute("""
+                SELECT rejected_by, rejected_at, rejection_reason
+                FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong=?
+            """, (second_contract_a["ma_hop_dong"],)).fetchone()
+            history = db.execute("""
+                SELECT action, old_status, new_status, actor_id, actor_name, actor_role, reason
+                FROM HOP_DONG_THUC_TAP_LICH_SU WHERE ma_hop_dong=? ORDER BY history_id
+            """, (contract_id,)).fetchall()
             notice = db.execute("""
                 SELECT loai, reference_type, reference_id FROM THONG_BAO
                 WHERE ma_nguoi_dung=? AND reference_type='internship_contract'
@@ -872,9 +915,26 @@ class Sprint1RuntimeTests(unittest.TestCase):
                        deduplication_key, status, body
                 FROM EMAIL_OUTBOX WHERE deduplication_key=?
             """, (f"us09:contract:{contract_id}:uploaded",)).fetchone()
+            decision_email = db.execute("""
+                SELECT recipient_email, template_type, reference_type, reference_id,
+                       deduplication_key, body
+                FROM EMAIL_OUTBOX WHERE deduplication_key=?
+            """, (f"us10:contract:{second_contract_a['ma_hop_dong']}:rejected",)).fetchone()
         finally:
             db.close()
-        self.assertEqual(record[1:], (admin["ma_nguoi_dung"], "contract.pdf", len(PDF), "application/pdf", "CONFIRMED"))
+        self.assertEqual(record[1:6], (admin["ma_nguoi_dung"], "contract.pdf", len(PDF), "application/pdf", "CONFIRMED"))
+        self.assertEqual(record[6], tts_a_user["ma_nguoi_dung"])
+        self.assertIsNotNone(record[7])
+        self.assertEqual(rejected_record[0], tts_a_user["ma_nguoi_dung"])
+        self.assertNotEqual(rejected_record[1], "2000-01-01 00:00:00")
+        self.assertEqual(rejected_record[2], rejection_reason)
+        self.assertEqual(
+            [item[:3] for item in history],
+            [("UPLOADED", None, "PENDING_CONFIRMATION"), ("CONFIRMED", "PENDING_CONFIRMATION", "CONFIRMED")],
+        )
+        self.assertEqual(history[1][3:6], (tts_a_user["ma_nguoi_dung"], tts_a_user["ho_ten"], "ThucTapSinh"))
+        self.assertEqual(decision_email[:5], ("admin@internship.vn", "contract_decision", "internship_contract", str(second_contract_a["ma_hop_dong"]), f"us10:contract:{second_contract_a['ma_hop_dong']}:rejected"))
+        self.assertIn(rejection_reason, decision_email[5])
         self.assertTrue(record[0].endswith(".pdf"))
         self.assertEqual(notice, ("contract_uploaded", "internship_contract", str(contract_id)))
         self.assertEqual(email[:6], (intern_a["email"], "contract_uploaded", "internship_contract", str(contract_id), f"us09:contract:{contract_id}:uploaded", "PENDING"))
@@ -888,6 +948,150 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 403)
         contract_path = self.temp_path / "uploads" / "contracts" / record[0]
         self.assertTrue(contract_path.is_file())
+
+    def test_us10_concurrent_confirm_and_reject_only_create_one_transition(self):
+        suffix = str(time.time_ns())
+        intern = self.create_contract_intern(f"us10-race.{suffix}")
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, contract, _ = self.upload_contract(admin_token, intern["profile_id"])
+        self.assertEqual(status_code, 201, contract)
+        intern_token, _ = self.login(intern["email"])
+        contract_id = contract["ma_hop_dong"]
+
+        def submit(decision):
+            if decision == "confirm":
+                return self.json_request(f"/api/contracts/{contract_id}/confirm", "POST", token=intern_token)
+            return self.json_request(
+                f"/api/contracts/{contract_id}/reject", "POST", token=intern_token,
+                data={"reason": "Thông tin thời gian chưa đúng."},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(submit, ("confirm", "reject")))
+        self.assertEqual(sorted(outcome[0] for outcome in outcomes), [200, 409])
+        winning_response = next(outcome[1] for outcome in outcomes if outcome[0] == 200)
+        self.assertIn(winning_response["trang_thai"], {"CONFIRMED", "REJECTED"})
+
+        status_code, detail, _ = self.json_request(f"/api/contracts/{contract_id}", token=intern_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual([event["action"] for event in detail["history"]], ["UPLOADED", winning_response["trang_thai"]])
+        db = sqlite3.connect(self.db_path)
+        try:
+            decisions = db.execute("""
+                SELECT action, COUNT(*) FROM HOP_DONG_THUC_TAP_LICH_SU
+                WHERE ma_hop_dong=? AND action IN ('CONFIRMED', 'REJECTED') GROUP BY action
+            """, (contract_id,)).fetchall()
+        finally:
+            db.close()
+        self.assertEqual(sum(count for _, count in decisions), 1)
+
+    def test_us10_outbox_failure_rolls_back_decision_and_history(self):
+        suffix = str(time.time_ns())
+        intern = self.create_contract_intern(f"us10-rollback.{suffix}")
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, contract, _ = self.upload_contract(admin_token, intern["profile_id"])
+        self.assertEqual(status_code, 201, contract)
+        intern_token, _ = self.login(intern["email"])
+        contract_id = contract["ma_hop_dong"]
+
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(f"""
+                CREATE TRIGGER fail_us10_outbox_insert
+                BEFORE INSERT ON EMAIL_OUTBOX
+                WHEN NEW.deduplication_key = 'us10:contract:{contract_id}:confirmed'
+                BEGIN SELECT RAISE(ABORT, 'forced isolated-test outbox failure'); END
+            """)
+
+        try:
+            status_code, _, _ = self.json_request(
+                f"/api/contracts/{contract_id}/confirm", "POST", token=intern_token,
+            )
+            self.assertEqual(status_code, 500)
+            with sqlite3.connect(self.db_path) as db:
+                record = db.execute(
+                    "SELECT trang_thai FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong=?",
+                    (contract_id,),
+                ).fetchone()
+                history = db.execute(
+                    "SELECT action FROM HOP_DONG_THUC_TAP_LICH_SU WHERE ma_hop_dong=? ORDER BY history_id",
+                    (contract_id,),
+                ).fetchall()
+                decision_notifications = db.execute("""
+                    SELECT COUNT(*) FROM THONG_BAO
+                    WHERE reference_type='internship_contract' AND reference_id=? AND loai='contract_decision'
+                """, (str(contract_id),)).fetchone()[0]
+                decision_emails = db.execute(
+                    "SELECT COUNT(*) FROM EMAIL_OUTBOX WHERE deduplication_key LIKE ?",
+                    (f"us10:contract:{contract_id}:%",),
+                ).fetchone()[0]
+            self.assertEqual(record[0], "PENDING_CONFIRMATION")
+            self.assertEqual([row[0] for row in history], ["UPLOADED"])
+            self.assertEqual(decision_notifications, 0)
+            self.assertEqual(decision_emails, 0)
+        finally:
+            with sqlite3.connect(self.db_path) as db:
+                db.execute("DROP TRIGGER IF EXISTS fail_us10_outbox_insert")
+
+    def test_us10_decision_requires_approved_profile_and_valid_pdf(self):
+        suffix = str(time.time_ns())
+        missing_file_intern = self.create_contract_intern(f"us10-missing.{suffix}")
+        corrupt_file_intern = self.create_contract_intern(f"us10-corrupt.{suffix}")
+        invalid_profile_intern = self.create_contract_intern(f"us10-profile.{suffix}")
+        admin_token, _ = self.login("admin@internship.vn")
+        intern_tokens = [self.login(item["email"])[0] for item in (
+            missing_file_intern, corrupt_file_intern, invalid_profile_intern,
+        )]
+        contracts = []
+        for intern in (missing_file_intern, corrupt_file_intern, invalid_profile_intern):
+            status_code, contract, _ = self.upload_contract(admin_token, intern["profile_id"])
+            self.assertEqual(status_code, 201, contract)
+            contracts.append(contract)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            storage_keys = [db.execute(
+                "SELECT storage_key FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong=?",
+                (contract["ma_hop_dong"],),
+            ).fetchone()[0] for contract in contracts]
+            db.execute(
+                "UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet='TuChoi' WHERE ma_ho_so=?",
+                (invalid_profile_intern["profile_id"],),
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        upload_dir = self.temp_path / "uploads" / "contracts"
+        (upload_dir / storage_keys[0]).unlink()
+        (upload_dir / storage_keys[1]).write_bytes(b"corrupt")
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contracts[0]['ma_hop_dong']}/confirm", "POST", token=intern_tokens[0],
+        )
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contracts[1]['ma_hop_dong']}/confirm", "POST", token=intern_tokens[1],
+        )
+        self.assertEqual(status_code, 409)
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contracts[2]['ma_hop_dong']}/reject", "POST", token=intern_tokens[2],
+            data={"reason": "Hồ sơ không còn được duyệt."},
+        )
+        self.assertEqual(status_code, 409)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            states = [row[0] for row in db.execute(
+                "SELECT trang_thai FROM HOP_DONG_THUC_TAP WHERE ma_hop_dong IN (?, ?, ?) ORDER BY ma_hop_dong",
+                tuple(contract["ma_hop_dong"] for contract in contracts),
+            )]
+            decisions = db.execute(
+                "SELECT COUNT(*) FROM HOP_DONG_THUC_TAP_LICH_SU WHERE action IN ('CONFIRMED', 'REJECTED') AND ma_hop_dong IN (?, ?, ?)",
+                tuple(contract["ma_hop_dong"] for contract in contracts),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(states, ["PENDING_CONFIRMATION"] * 3)
+        self.assertEqual(decisions, 0)
 
     def test_us09_contract_upload_enforces_role_approval_and_pdf_validation(self):
         suffix = str(time.time_ns())
@@ -934,6 +1138,12 @@ class Sprint1RuntimeTests(unittest.TestCase):
         storage_dir = self.temp_path / "uploads" / "contracts"
         stored_keys = {path.name for path in storage_dir.glob("*.pdf")}
         self.assertEqual(stored_keys, existing_keys)
+        db = sqlite3.connect(self.db_path)
+        try:
+            db.execute("DROP TRIGGER fail_us09_contract_insert")
+            db.commit()
+        finally:
+            db.close()
 
 if __name__ == "__main__":
     unittest.main()

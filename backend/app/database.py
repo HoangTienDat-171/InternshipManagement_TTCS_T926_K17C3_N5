@@ -268,6 +268,11 @@ def init_mysql_db():
                 file_size BIGINT UNSIGNED NOT NULL,
                 trang_thai VARCHAR(40) NOT NULL DEFAULT 'PENDING_CONFIRMATION',
                 uploaded_by INT NULL,
+                confirmed_by INT NULL,
+                confirmed_at DATETIME NULL,
+                rejected_by INT NULL,
+                rejected_at DATETIME NULL,
+                rejection_reason VARCHAR(500) NULL,
                 uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -275,7 +280,26 @@ def init_mysql_db():
                 KEY idx_hop_dong_profile (ma_ho_so),
                 KEY idx_hop_dong_uploaded_at (uploaded_at),
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-                FOREIGN KEY (uploaded_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+                FOREIGN KEY (uploaded_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+                FOREIGN KEY (confirmed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+                FOREIGN KEY (rejected_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP_LICH_SU (
+                history_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_hop_dong BIGINT NOT NULL,
+                action VARCHAR(20) NOT NULL,
+                old_status VARCHAR(40) NULL,
+                new_status VARCHAR(40) NOT NULL,
+                actor_id INT NULL,
+                actor_name VARCHAR(120) NOT NULL,
+                actor_role VARCHAR(40) NOT NULL,
+                reason VARCHAR(500) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT chk_contract_history_action CHECK (action IN ('UPLOADED','CONFIRMED','REJECTED')),
+                UNIQUE KEY uq_contract_history_action (ma_hop_dong, action),
+                KEY idx_contract_history_timeline (ma_hop_dong, created_at, history_id),
+                FOREIGN KEY (ma_hop_dong) REFERENCES HOP_DONG_THUC_TAP(ma_hop_dong) ON DELETE RESTRICT,
+                FOREIGN KEY (actor_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -522,12 +546,58 @@ def init_db():
         trang_thai TEXT NOT NULL DEFAULT 'PENDING_CONFIRMATION'
             CHECK(trang_thai IN ('PENDING_CONFIRMATION', 'CONFIRMED', 'REJECTED')),
         uploaded_by INTEGER,
+        confirmed_by INTEGER,
+        confirmed_at DATETIME,
+        rejected_by INTEGER,
+        rejected_at DATETIME,
+        rejection_reason TEXT,
         uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-        FOREIGN KEY (uploaded_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        FOREIGN KEY (uploaded_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+        FOREIGN KEY (confirmed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+        FOREIGN KEY (rejected_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
+    """)
+    contract_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(HOP_DONG_THUC_TAP)")}
+    for name, definition in (
+        ("confirmed_by", "INTEGER"),
+        ("confirmed_at", "DATETIME"),
+        ("rejected_by", "INTEGER"),
+        ("rejected_at", "DATETIME"),
+        ("rejection_reason", "TEXT"),
+    ):
+        if name not in contract_columns:
+            cursor.execute(f"ALTER TABLE HOP_DONG_THUC_TAP ADD COLUMN {name} {definition}")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP_LICH_SU (
+            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ma_hop_dong INTEGER NOT NULL,
+            action TEXT NOT NULL CHECK(action IN ('UPLOADED', 'CONFIRMED', 'REJECTED')),
+            old_status TEXT,
+            new_status TEXT NOT NULL,
+            actor_id INTEGER,
+            actor_name TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            reason TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ma_hop_dong, action),
+            FOREIGN KEY (ma_hop_dong) REFERENCES HOP_DONG_THUC_TAP(ma_hop_dong) ON DELETE RESTRICT,
+            FOREIGN KEY (actor_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contract_history_timeline
+        ON HOP_DONG_THUC_TAP_LICH_SU(ma_hop_dong, created_at, history_id)
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO HOP_DONG_THUC_TAP_LICH_SU
+            (ma_hop_dong, action, old_status, new_status, actor_id, actor_name, actor_role, created_at)
+        SELECT c.ma_hop_dong, 'UPLOADED', NULL, 'PENDING_CONFIRMATION', c.uploaded_by,
+               COALESCE(u.ho_ten, 'Nhân sự'), COALESCE(u.vai_tro, 'HR'), c.uploaded_at
+        FROM HOP_DONG_THUC_TAP c
+        LEFT JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = c.uploaded_by
     """)
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_hop_dong_uploaded_at

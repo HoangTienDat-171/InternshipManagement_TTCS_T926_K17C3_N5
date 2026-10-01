@@ -2,14 +2,14 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from ..database import DB_FILE, get_db
 from ..notifications import create_notification
+from ..schemas import ContractRejectRequest
 from .document_routes import MAX_FILE_SIZE, valid_file_content
 from ..security import require_role
 
@@ -111,40 +111,26 @@ def list_my_contracts(request: Request, db: sqlite3.Connection = Depends(get_db)
     return [_public_contract(row) for row in rows]
 
 
-@router.post("/{contract_id}/decision")
-def decide_contract(
+@router.post("/{contract_id}/confirm")
+def confirm_contract(
     contract_id: int,
     request: Request,
-    decision: Literal["CONFIRMED", "REJECTED"] = Body(..., embed=True),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    user = require_role(request, "ThucTapSinh")
-    row = db.execute(
-        _contract_select() + " WHERE c.ma_hop_dong = ? AND h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh'",
-        (contract_id, user["ma_nguoi_dung"]),
-    ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hợp đồng.")
-    if row["trang_thai"] != CONTRACT_STATUS:
-        raise HTTPException(status_code=409, detail="Hợp đồng đã được xác nhận hoặc từ chối.")
+    return _process_contract_decision(contract_id, request, "CONFIRMED", None, db)
 
-    updated = db.execute(
-        """
-        UPDATE HOP_DONG_THUC_TAP
-        SET trang_thai = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE ma_hop_dong = ? AND trang_thai = ?
-        """,
-        (decision, contract_id, CONTRACT_STATUS),
-    )
-    if updated.rowcount != 1:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Hợp đồng đã được xác nhận hoặc từ chối.")
 
-    db.commit()
-    result = db.execute(
-        _contract_select() + " WHERE c.ma_hop_dong = ?", (contract_id,),
-    ).fetchone()
-    return _public_contract(result)
+@router.post("/{contract_id}/reject")
+def reject_contract(
+    contract_id: int,
+    request: Request,
+    data: ContractRejectRequest,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    reason = data.reason.strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=422, detail="Lý do từ chối cần có ít nhất 10 ký tự.")
+    return _process_contract_decision(contract_id, request, "REJECTED", reason, db)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -207,6 +193,14 @@ async def upload_contract(
             CONTRACT_STATUS, user["ma_nguoi_dung"],
         ))
         contract_id = cursor.lastrowid
+        db.execute("""
+            INSERT INTO HOP_DONG_THUC_TAP_LICH_SU
+                (ma_hop_dong, action, old_status, new_status, actor_id, actor_name, actor_role)
+            VALUES (?, 'UPLOADED', NULL, ?, ?, ?, ?)
+        """, (
+            contract_id, CONTRACT_STATUS, user["ma_nguoi_dung"],
+            user["ho_ten"], user["vai_tro"],
+        ))
         program = db.execute("""
             SELECT p.ten_ct, p.ngay_bat_dau, p.ngay_ket_thuc, d.ten_phong_ban
             FROM UNG_TUYEN_CHUONG_TRINH a
@@ -290,6 +284,156 @@ def _get_authorized_contract(contract_id: int, request: Request, db):
     ):
         raise HTTPException(status_code=404, detail="Không tìm thấy hợp đồng.")
     return row
+
+
+def _contract_detail_payload(contract_id: int, request: Request, db):
+    row = _get_authorized_contract(contract_id, request, db)
+    decision = db.execute("""
+        SELECT c.confirmed_at, confirmer.ho_ten AS confirmed_by_name,
+               c.rejected_at, rejecter.ho_ten AS rejected_by_name, c.rejection_reason
+        FROM HOP_DONG_THUC_TAP c
+        LEFT JOIN NGUOI_DUNG confirmer ON confirmer.ma_nguoi_dung = c.confirmed_by
+        LEFT JOIN NGUOI_DUNG rejecter ON rejecter.ma_nguoi_dung = c.rejected_by
+        WHERE c.ma_hop_dong = ?
+    """, (contract_id,)).fetchone()
+    history = db.execute("""
+        SELECT action, old_status, new_status, actor_name, actor_role, reason, created_at
+        FROM HOP_DONG_THUC_TAP_LICH_SU
+        WHERE ma_hop_dong = ?
+        ORDER BY created_at ASC, history_id ASC
+    """, (contract_id,)).fetchall()
+    return {
+        "ma_hop_dong": row["ma_hop_dong"],
+        "original_file_name": row["original_file_name"],
+        "mime_type": row["mime_type"],
+        "file_size": row["file_size"],
+        "trang_thai": row["trang_thai"],
+        "uploaded_at": row["uploaded_at"],
+        "ho_ten": row["ho_ten"],
+        "ten_chuong_trinh": row["ten_chuong_trinh"],
+        "ngay_bat_dau": row["ngay_bat_dau"],
+        "ngay_ket_thuc": row["ngay_ket_thuc"],
+        "ten_phong_ban": row["ten_phong_ban"],
+        "confirmed_at": decision["confirmed_at"],
+        "confirmed_by_name": decision["confirmed_by_name"],
+        "rejected_at": decision["rejected_at"],
+        "rejected_by_name": decision["rejected_by_name"],
+        "rejection_reason": decision["rejection_reason"],
+        "history": [dict(entry) for entry in history],
+    }
+
+
+@router.get("/{contract_id}")
+def get_contract_detail(contract_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    return _contract_detail_payload(contract_id, request, db)
+
+
+def _notify_contract_uploader(db, contract, actor, decision, reason):
+    if not contract["uploaded_by"]:
+        return
+    recipient = db.execute(
+        "SELECT ma_nguoi_dung, ho_ten, email FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?",
+        (contract["uploaded_by"],),
+    ).fetchone()
+    if not recipient:
+        return
+
+    rejected = decision == "REJECTED"
+    verb = "từ chối" if rejected else "xác nhận"
+    title = f"Thực tập sinh đã {verb} hợp đồng"
+    message = f"{actor['ho_ten']} đã {verb} {contract['original_file_name']}."
+    email_body = message
+    if rejected:
+        message += f" Lý do: {reason}"
+        email_body += f"\nLý do: {reason}"
+    create_notification(
+        db,
+        recipient["ma_nguoi_dung"],
+        title,
+        message,
+        notification_type="contract_decision",
+        reference_type="internship_contract",
+        reference_id=contract["ma_hop_dong"],
+        email_recipient=recipient["email"],
+        email_deduplication_key=f"us10:contract:{contract['ma_hop_dong']}:{decision.lower()}",
+        email_subject=title,
+        email_template_type="contract_decision",
+        email_reference_type="internship_contract",
+        email_reference_id=contract["ma_hop_dong"],
+        email_body=email_body,
+    )
+
+
+def _process_contract_decision(contract_id: int, request: Request, decision: str, reason: str | None, db):
+    user = require_role(request, "ThucTapSinh")
+    db.execute("BEGIN IMMEDIATE")
+    contract = db.execute(
+        _contract_select() + " WHERE c.ma_hop_dong = ? AND h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh'",
+        (contract_id, user["ma_nguoi_dung"]),
+    ).fetchone()
+    if not contract:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hợp đồng.")
+    if contract["trang_thai"] != CONTRACT_STATUS:
+        raise HTTPException(status_code=409, detail="Trạng thái hợp đồng đã thay đổi.")
+
+    profile = db.execute(
+        "SELECT trang_thai_xet_duyet FROM HO_SO_THUC_TAP WHERE ma_ho_so = ?",
+        (contract["ma_ho_so"],),
+    ).fetchone()
+    if not profile or profile["trang_thai_xet_duyet"] != "DaDuyet":
+        raise HTTPException(status_code=409, detail="Hồ sơ thực tập không còn ở trạng thái hợp lệ.")
+
+    try:
+        file_path = _contract_file_path(contract["storage_key"])
+        if file_path.stat().st_size != contract["file_size"]:
+            raise HTTPException(status_code=409, detail="Tệp hợp đồng không còn hợp lệ.")
+        with file_path.open("rb") as stored_file:
+            if not valid_file_content(".pdf", stored_file.read(5)):
+                raise HTTPException(status_code=409, detail="Tệp hợp đồng không còn hợp lệ.")
+    except HTTPException:
+        db.rollback()
+        raise
+    except OSError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp hợp đồng.") from exc
+
+    try:
+        if decision == "CONFIRMED":
+            updated = db.execute("""
+                UPDATE HOP_DONG_THUC_TAP
+                SET trang_thai = 'CONFIRMED', confirmed_by = ?, confirmed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE ma_hop_dong = ? AND trang_thai = ?
+            """, (user["ma_nguoi_dung"], contract_id, CONTRACT_STATUS))
+        else:
+            updated = db.execute("""
+                UPDATE HOP_DONG_THUC_TAP
+                SET trang_thai = 'REJECTED', rejected_by = ?, rejected_at = CURRENT_TIMESTAMP,
+                    rejection_reason = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE ma_hop_dong = ? AND trang_thai = ?
+            """, (user["ma_nguoi_dung"], reason, contract_id, CONTRACT_STATUS))
+        if updated.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Trạng thái hợp đồng đã thay đổi.")
+
+        db.execute("""
+            INSERT INTO HOP_DONG_THUC_TAP_LICH_SU
+                (ma_hop_dong, action, old_status, new_status, actor_id, actor_name, actor_role, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            contract_id, decision, CONTRACT_STATUS, decision,
+            user["ma_nguoi_dung"], user["ho_ten"], user["vai_tro"], reason,
+        ))
+        _notify_contract_uploader(db, contract, user, decision, reason)
+        result = _contract_detail_payload(contract_id, request, db)
+        db.commit()
+        return result
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Không thể cập nhật quyết định hợp đồng.") from exc
 
 
 @router.get("/{contract_id}/preview")
