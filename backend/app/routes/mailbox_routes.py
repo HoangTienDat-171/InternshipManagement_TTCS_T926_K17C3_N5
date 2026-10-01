@@ -1,8 +1,12 @@
+import os
+import re
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse
 
 from ..database import get_db
+from ..email_attachment_security import ATTACHMENT_ROOT, validate_attachment
 from ..mailbox_content import sanitize_html
 from ..mailbox_repository import mark_read, unread_count
 from ..mailbox_service import (
@@ -97,9 +101,25 @@ def thread_detail(thread_id: int, request: Request, db: sqlite3.Connection = Dep
 
 
 @router.get("/unread-count")
+@router.get("/folder-counts")
 def mailbox_unread_count(request: Request, db: sqlite3.Connection = Depends(get_db)):
     user = require_role(request)
-    return {"unreadCount": unread_count(db, user["ma_nguoi_dung"])}
+    u_id = user["ma_nguoi_dung"]
+    inbox_unread = unread_count(db, u_id)
+    sent_total = db.execute("""
+        SELECT COUNT(*) AS total FROM INTERNAL_MESSAGES m
+        WHERE m.sender_id=? AND m.deleted_at IS NULL
+    """, (u_id,)).fetchone()["total"]
+    inbox_total = db.execute("""
+        SELECT COUNT(*) AS total FROM INTERNAL_MESSAGE_RECIPIENTS r
+        JOIN INTERNAL_MESSAGES m ON m.id=r.message_id
+        WHERE r.receiver_id=? AND m.deleted_at IS NULL
+    """, (u_id,)).fetchone()["total"]
+    return {
+        "unreadCount": inbox_unread,
+        "inboxTotal": inbox_total,
+        "sentTotal": sent_total,
+    }
 
 
 @router.get("/recipients")
@@ -216,3 +236,60 @@ def retry_email(outbox_id: int, request: Request, db: sqlite3.Connection = Depen
         raise HTTPException(status_code=409, detail="Email không ở trạng thái có thể thử lại.")
     db.commit()
     return {"id": outbox_id, "status": "RETRY"}
+
+
+@router.post("/upload-attachment")
+async def upload_mailbox_attachment(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    require_role(request, "Admin", "HR", "Mentor", "ThucTapSinh")
+    content = await file.read()
+    att_info = validate_attachment(file.filename or "attachment", content, file.content_type)
+    return {
+        "file_id": att_info["id"],
+        "filename": att_info["filename"],
+        "url": f"/api/mailbox/attachments/{att_info['id']}?filename={att_info['filename']}",
+        "mime_type": att_info["mime_type"],
+        "size": att_info["file_size"],
+        "is_image": att_info["mime_type"].startswith("image/"),
+        "file_path": att_info["file_path"],
+    }
+
+
+@router.get("/attachments/{file_id}")
+def get_mailbox_attachment(
+    file_id: str,
+    filename: str | None = Query(default=None),
+):
+    # Validate UUID / safe string format to prevent any directory traversal
+    clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', file_id)
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="Mã tệp không hợp lệ.")
+    matches = list(ATTACHMENT_ROOT.glob(f"{clean_id}_*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp đính kèm.")
+    target_path = matches[0]
+    out_filename = filename or target_path.name.partition("_")[2]
+    ext = os.path.splitext(out_filename)[1].lower()
+    is_img = ext in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    mime = "application/octet-stream"
+    if ext == ".png":
+        mime = "image/png"
+    elif ext in {".jpg", ".jpeg"}:
+        mime = "image/jpeg"
+    elif ext == ".webp":
+        mime = "image/webp"
+    elif ext == ".gif":
+        mime = "image/gif"
+    elif ext == ".pdf":
+        mime = "application/pdf"
+    elif ext == ".docx":
+        mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return FileResponse(
+        str(target_path),
+        filename=out_filename,
+        media_type=mime,
+        content_disposition_type="inline" if is_img else "attachment"
+    )
+

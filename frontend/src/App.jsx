@@ -11,6 +11,8 @@ import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import MailboxView from './views/MailboxView';
+import GuestJobPortalView from './views/GuestJobPortalView';
+import GuestTrackingView from './views/GuestTrackingView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -32,6 +34,20 @@ export default function App() {
     ? 'contract-link'
     : window.location.pathname === '/mailbox' ? 'mailbox' : 'interns');
   
+  const [unauthView, setUnauthView] = useState(() => {
+    const path = window.location.pathname;
+    const search = window.location.search;
+    if (path === '/tracking' || search.includes('code=')) return 'guest-tracking';
+    if (path === '/jobs' || path === '/guest' || search.includes('guest')) return 'guest-portal';
+    return 'login';
+  });
+  const [trackingInitialCode, setTrackingInitialCode] = useState(() => {
+    return new URLSearchParams(window.location.search).get('code') || '';
+  });
+  const [trackingInitialEmail, setTrackingInitialEmail] = useState(() => {
+    return new URLSearchParams(window.location.search).get('email') || '';
+  });
+
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
     if (window.location.pathname === '/login') {
@@ -318,11 +334,36 @@ export default function App() {
 
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
   if (!currentUser) {
+    if (unauthView === 'guest-portal') {
+      return (
+        <GuestJobPortalView
+          onOpenTracking={(code, email) => {
+            if (code) setTrackingInitialCode(code);
+            if (email) setTrackingInitialEmail(email);
+            setUnauthView('guest-tracking');
+          }}
+          onGoToLogin={() => setUnauthView('login')}
+        />
+      );
+    }
+
+    if (unauthView === 'guest-tracking') {
+      return (
+        <GuestTrackingView
+          initialCode={trackingInitialCode}
+          initialEmail={trackingInitialEmail}
+          onBack={() => setUnauthView('guest-portal')}
+        />
+      );
+    }
+
     return (
       <LoginView
         onLoginSuccess={handleLoginSuccess}
         departments={departments}
         sessionNotice={sessionNotice}
+        onOpenGuestPortal={() => setUnauthView('guest-portal')}
+        onOpenTracking={() => setUnauthView('guest-tracking')}
       />
     );
   }

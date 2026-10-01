@@ -211,6 +211,32 @@ def send_message(db, sender, payload):
         """, (payload.templateId,)).fetchone()
         if not template:
             raise HTTPException(status_code=404, detail="Không tìm thấy mẫu thư.")
+    # Deduplication Guard against rapid double-clicks / identical messages to same recipients
+    from datetime import timedelta
+    from .email_deduplication import get_dedup_window_seconds, _get_db_now
+    window = get_dedup_window_seconds()
+    db_now = _get_db_now(db)
+    cutoff = (db_now - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
+
+    subject_check = payload.subject.strip()
+    plain_content = _plain_text(sanitized)
+
+    for recipient in recipients:
+        recent_msg = db.execute(
+            """SELECT m.id, m.content_html FROM INTERNAL_MESSAGES m
+               JOIN INTERNAL_MESSAGE_RECIPIENTS r ON r.message_id = m.id
+               WHERE m.sender_id = ? AND r.receiver_id = ?
+                 AND LOWER(TRIM(m.subject)) = LOWER(TRIM(?))
+                 AND m.created_at >= ?
+               ORDER BY m.id DESC LIMIT 1""",
+            (sender["ma_nguoi_dung"], recipient["ma_nguoi_dung"], subject_check, cutoff),
+        ).fetchone()
+        if recent_msg and _plain_text(recent_msg["content_html"]) == plain_content:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"DUPLICATE_EMAIL_SUPPRESSED: Bạn vừa gửi thư có cùng nội dung tới {recipient['ho_ten']} trong vòng 10 phút. Vui lòng không gửi lặp lại.",
+            )
+
     try:
         message_ids = []
         if template and len(recipients) > 1:
@@ -254,6 +280,25 @@ def reply_to_message(db, sender, message_id: int, payload):
     content = sanitize_html(payload.contentHtml)
     if not _plain_text(content):
         raise HTTPException(status_code=422, detail="Nội dung trả lời không hợp lệ.")
+
+    # Deduplication guard on thread replies
+    from datetime import timedelta
+    from .email_deduplication import get_dedup_window_seconds, _get_db_now
+    window = get_dedup_window_seconds()
+    db_now = _get_db_now(db)
+    cutoff = (db_now - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
+
+    recent_reply = db.execute(
+        """SELECT id, content_html FROM INTERNAL_MESSAGES
+           WHERE thread_id = ? AND sender_id = ? AND created_at >= ?
+           ORDER BY id DESC LIMIT 1""",
+        (original["thread_id"], sender["ma_nguoi_dung"], cutoff),
+    ).fetchone()
+    if recent_reply and _plain_text(recent_reply["content_html"]) == _plain_text(content):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DUPLICATE_EMAIL_SUPPRESSED: Bạn vừa gửi nội dung trả lời tương tự trong cuộc hội thoại này. Vui lòng không gửi lặp lại.",
+        )
     participant_rows = db.execute("""
         SELECT DISTINCT participant_id FROM (
             SELECT sender_id AS participant_id FROM INTERNAL_MESSAGES WHERE thread_id=?

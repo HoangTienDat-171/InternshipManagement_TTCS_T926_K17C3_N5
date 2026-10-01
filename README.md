@@ -92,4 +92,13 @@ Thay cả hai giá trị `your-address@gmail.com` bằng cùng địa chỉ Gmai
 
 Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
 
+## Các tính năng và cập nhật mới
+
+- Thêm chức năng khách vãng lai (Guest) hôm trc Mentor có nhắc đến
+- Sửa lại lỗi đăng kí, Thêm quên mật khẩu, khi hồ sơ được duyệt thì sẽ có email gửi về gmail để xác nhận cho thực tập sinh đã đăng kì thành công và gửi cho mật khẩu để thực tập sinh đăng nhập và đổi mật khẩu mới
+- Thêm Chức năng cho gửi email (gửi ảnh, file tài liệu)
+- Thêm tránh thư trùng lặp cùng một nội dung và không cho gửi
+- Sửa lỗi hiển thị số lượng thư đã gửi (số lượng thư đã gửi hiện ở mục Hộp thư đến)
+
 Xem docs/audit/2026-09-26-repo-audit.md và AGENTS.md trước khi thay đổi cấu trúc hoặc bảo mật.
+

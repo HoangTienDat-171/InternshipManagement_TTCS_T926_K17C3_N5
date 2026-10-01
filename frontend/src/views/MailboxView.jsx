@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, Clock3,
-  FileCheck2, Inbox, LifeBuoy, Loader2, Mail, MailOpen, Plus, RefreshCw,
-  Reply, Search, Send, X,
+  Download, FileCheck2, Inbox, LifeBuoy, Loader2, Mail, MailOpen, Maximize2, Plus, RefreshCw,
+  Reply, RotateCcw, Search, Send, X, Image as ImageIcon, Paperclip, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import EmailAttachmentPicker from '../components/EmailAttachmentPicker';
 import './MailboxView.css';
 
 const CATEGORY_LABELS = {
@@ -49,16 +50,126 @@ function MessageSkeleton() {
   </div>;
 }
 
-function RichTextEditor({ editorRef, value, onChange, label }) {
+function RichTextEditor({ editorRef, value, onChange, label, onAttachFile }) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
+
   const runCommand = (command, argument) => {
     editorRef.current?.focus();
     document.execCommand(command, false, argument);
     onChange(editorRef.current?.innerHTML || '');
   };
+
   const addLink = () => {
     const url = window.prompt('Nhập liên kết bắt đầu bằng https://');
     if (url) runCommand('createLink', url);
   };
+
+  const insertHtmlAtCursor = (html) => {
+    editorRef.current?.focus();
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      const frag = document.createDocumentFragment();
+      let node;
+      let lastNode;
+      while ((node = tempDiv.firstChild)) {
+        lastNode = frag.appendChild(node);
+      }
+      range.insertNode(frag);
+      if (lastNode) {
+        range.setStartAfter(lastNode);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    } else {
+      document.execCommand('insertHTML', false, html);
+    }
+    onChange(editorRef.current?.innerHTML || '');
+  };
+
+  const uploadFile = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const resp = await apiFetch('/api/mailbox/upload-attachment', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!resp.ok) {
+      const err = await readJsonResponse(resp);
+      throw new Error(err.detail || 'Không thể tải tệp lên.');
+    }
+    return await readJsonResponse(resp);
+  };
+
+  const handleImageFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const data = await uploadFile(file);
+      const imgHtml = `<p><img src="${data.url}" alt="${data.filename}" style="max-width:100%; border-radius:6px; margin:8px 0; display:block;" /></p><p><br></p>`;
+      insertHtmlAtCursor(imgHtml);
+      onAttachFile?.(file);
+    } catch (err) {
+      setUploadError(err.message || 'Lỗi tải ảnh lên.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDocFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    setUploadError('');
+    try {
+      const data = await uploadFile(file);
+      const sizeStr = (data.size / 1024).toFixed(0);
+      const fileHtml = `<p><a href="${data.url}" download="${data.filename}" class="mailbox-file-chip" target="_blank" rel="noopener noreferrer">📎 <span>${data.filename}</span> <small>(${sizeStr} KB)</small></a></p><p><br></p>`;
+      insertHtmlAtCursor(fileHtml);
+      onAttachFile?.(file);
+    } catch (err) {
+      setUploadError(err.message || 'Lỗi tải tệp lên.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            handleImageFile(file);
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length) {
+      for (const file of e.dataTransfer.files) {
+        if (file.type.startsWith('image/')) {
+          handleImageFile(file);
+        } else {
+          handleDocFile(file);
+        }
+      }
+    }
+  };
+
   return <div className="mailbox-editor-wrap">
     <div className="mailbox-editor-toolbar" aria-label="Định dạng nội dung">
       <button type="button" onClick={() => runCommand('bold')} aria-label="In đậm"><strong>B</strong></button>
@@ -67,6 +178,47 @@ function RichTextEditor({ editorRef, value, onChange, label }) {
       <button type="button" onClick={() => runCommand('insertUnorderedList')} aria-label="Danh sách chấm">• List</button>
       <button type="button" onClick={() => runCommand('insertOrderedList')} aria-label="Danh sách số">1. List</button>
       <button type="button" onClick={addLink} aria-label="Thêm liên kết">Link</button>
+      <span className="mailbox-toolbar-divider" />
+      <button
+        type="button"
+        className="media-btn"
+        onClick={() => imageInputRef.current?.click()}
+        title="Chèn ảnh từ máy (hoặc dán Ctrl+V / kéo thả)"
+        aria-label="Chèn ảnh"
+      >
+        <ImageIcon size={14} /> Ảnh
+      </button>
+      <button
+        type="button"
+        className="media-btn"
+        onClick={() => docInputRef.current?.click()}
+        title="Đính kèm tệp tài liệu (PDF, Word, Ảnh...)"
+        aria-label="Đính kèm tệp"
+      >
+        <Paperclip size={14} /> Đính kèm tệp
+      </button>
+      {uploading && <span className="mailbox-uploading-tag"><Loader2 className="spin" size={13} /> Đang tải…</span>}
+      {uploadError && <span className="mailbox-uploading-err"><AlertCircle size={13} /> {uploadError}</span>}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files?.[0]) handleImageFile(e.target.files[0]);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={docInputRef}
+        type="file"
+        accept=".pdf,.docx,.doc,.xlsx,.xls,.png,.jpg,.jpeg,.zip"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files?.[0]) handleDocFile(e.target.files[0]);
+          e.target.value = '';
+        }}
+      />
     </div>
     <div
       ref={editorRef}
@@ -77,7 +229,10 @@ function RichTextEditor({ editorRef, value, onChange, label }) {
       aria-label={label}
       aria-multiline="true"
       onInput={(event) => onChange(event.currentTarget.innerHTML)}
-      data-placeholder="Nhập nội dung thư…"
+      onPaste={handlePaste}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={handleDrop}
+      data-placeholder="Nhập nội dung thư… (Có thể dán ảnh Ctrl+V hoặc kéo thả tệp vào đây)"
     />
     <input type="hidden" value={value} readOnly />
   </div>;
@@ -96,6 +251,7 @@ function ComposeModal({ currentUser, onClose, onSent }) {
   const [subject, setSubject] = useState('');
   const [contentHtml, setContentHtml] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
+  const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const canUseTemplates = ['Admin', 'HR'].includes(currentUser.vai_tro);
@@ -131,6 +287,7 @@ function ComposeModal({ currentUser, onClose, onSent }) {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (submitting) return;
     setError('');
     if (!selectedRecipients.length && !groupKey) {
       setError('Vui lòng chọn người nhận hoặc một nhóm người nhận.');
@@ -142,13 +299,33 @@ function ComposeModal({ currentUser, onClose, onSent }) {
     }
     setSubmitting(true);
     try {
+      if (sendEmail && attachments.length > 0 && selectedRecipients.length > 0 && ['Admin', 'HR'].includes(currentUser.vai_tro)) {
+        for (const r of selectedRecipients) {
+          if (r.email) {
+            const formData = new FormData();
+            formData.append('recipient_email', r.email);
+            formData.append('subject', subject.trim());
+            formData.append('body_text', contentHtml.replace(/<[^>]*>/g, '').trim());
+            formData.append('body_html', contentHtml);
+            for (const att of attachments) {
+              formData.append('files', att);
+            }
+            await apiFetch('/api/notifications/send-with-attachments', {
+              method: 'POST',
+              body: formData,
+            });
+          }
+        }
+      }
+
       const result = await fetchJson('/api/mailbox/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           receiverIds: selectedRecipients.map((item) => item.ma_nguoi_dung),
           groupKeys: groupKey ? [groupKey] : [], category,
-          subject: subject.trim(), contentHtml, sendEmail,
+          subject: subject.trim(), contentHtml,
+          sendEmail: attachments.length > 0 ? false : sendEmail,
           templateId: templateId ? Number(templateId) : null,
         }),
       });
@@ -181,8 +358,11 @@ function ComposeModal({ currentUser, onClose, onSent }) {
             <label className="mailbox-field"><span>Loại thư *</span><select value={category} onChange={(event) => setCategory(event.target.value)}>{COMPOSE_CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
           <label className="mailbox-field"><span>Tiêu đề *</span><input maxLength={255} value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Nhập tiêu đề thư" /></label>
-          <label className="mailbox-field"><span>Nội dung *</span><RichTextEditor editorRef={editorRef} value={contentHtml} onChange={setContentHtml} label="Nội dung thư" /></label>
+          <label className="mailbox-field"><span>Nội dung *</span><RichTextEditor editorRef={editorRef} value={contentHtml} onChange={setContentHtml} label="Nội dung thư" onAttachFile={(file) => setAttachments((prev) => [...prev, file])} /></label>
           <label className="mailbox-email-check"><input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} /><span><strong>Gửi thêm email</strong><small>Thư nội bộ vẫn xuất hiện ngay; email được xử lý ở hàng đợi.</small></span></label>
+          {sendEmail && ['Admin', 'HR'].includes(currentUser.vai_tro) && (
+            <EmailAttachmentPicker attachments={attachments} setAttachments={setAttachments} />
+          )}
         </div>
         <footer><button type="button" className="mailbox-button secondary" onClick={onClose}>Hủy</button><button className="mailbox-button primary" disabled={submitting}>{submitting ? <Loader2 className="spin" size={16} /> : <Send size={16} />}{submitting ? 'Đang gửi…' : 'Gửi thư'}</button></footer>
       </form>
@@ -198,6 +378,7 @@ export default function MailboxView({ currentUser, onShowToast }) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [mailbox, setMailbox] = useState({ items: [], page: 1, totalPages: 0, totalItems: 0 });
+  const [folderCounts, setFolderCounts] = useState({ unreadCount: 0, inboxTotal: 0, sentTotal: 0 });
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -207,7 +388,45 @@ export default function MailboxView({ currentUser, onShowToast }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyHtml, setReplyHtml] = useState('');
   const [replying, setReplying] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
   const replyEditorRef = useRef(null);
+
+  const loadFolderCounts = useCallback(async () => {
+    try {
+      const data = await fetchJson('/api/mailbox/folder-counts');
+      setFolderCounts({
+        unreadCount: Number(data.unreadCount) || 0,
+        inboxTotal: Number(data.inboxTotal) || 0,
+        sentTotal: Number(data.sentTotal) || 0,
+      });
+    } catch {
+      // Ignore background badge errors
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(loadFolderCounts, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadFolderCounts]);
+
+  useEffect(() => {
+    const handleRead = () => {
+      loadFolderCounts();
+    };
+    window.addEventListener('ims-mailbox-read', handleRead);
+    return () => window.removeEventListener('ims-mailbox-read', handleRead);
+  }, [loadFolderCounts]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setZoomedImage(null);
+    };
+    if (zoomedImage) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [zoomedImage]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { setQuery(searchInput.trim()); setPage(1); }, 350);
@@ -221,7 +440,13 @@ export default function MailboxView({ currentUser, onShowToast }) {
     if (category) params.set('category', category);
     if (query) params.set('q', query);
     try {
-      setMailbox(await fetchJson(`/api/mailbox/messages?${params}`));
+      const data = await fetchJson(`/api/mailbox/messages?${params}`);
+      setMailbox(data);
+      if (folder === 'inbox' && statusFilter === 'all' && !category && !query) {
+        setFolderCounts((prev) => ({ ...prev, inboxTotal: data.totalItems }));
+      } else if (folder === 'sent' && !query) {
+        setFolderCounts((prev) => ({ ...prev, sentTotal: data.totalItems }));
+      }
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -243,6 +468,7 @@ export default function MailboxView({ currentUser, onShowToast }) {
       setDetail(data);
       setMailbox((current) => ({ ...current, items: current.items.map((item) => item.id === messageId ? { ...item, is_read: true } : item) }));
       window.dispatchEvent(new CustomEvent('ims-mailbox-read'));
+      loadFolderCounts();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -256,6 +482,7 @@ export default function MailboxView({ currentUser, onShowToast }) {
   };
 
   const submitReply = async () => {
+    if (replying) return;
     if (!replyHtml.replace(/<[^>]*>/g, '').trim()) return;
     setReplying(true);
     try {
@@ -268,6 +495,7 @@ export default function MailboxView({ currentUser, onShowToast }) {
       setReplyOpen(false);
       await selectMessage(result.messageId);
       onShowToast('Đã gửi trả lời.');
+      loadFolderCounts();
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -276,10 +504,34 @@ export default function MailboxView({ currentUser, onShowToast }) {
   };
 
   const folderItems = [
-    { label: 'Hộp thư đến', icon: Inbox, action: () => chooseFolder('inbox'), active: folder === 'inbox' && statusFilter === 'all' && !category, count: mailbox.totalItems },
-    { label: 'Đã gửi', icon: Send, action: () => chooseFolder('sent'), active: folder === 'sent' },
-    { label: 'Chưa đọc', icon: MailOpen, action: () => chooseFolder('inbox', 'unread'), active: folder === 'inbox' && statusFilter === 'unread' },
-    { label: 'Cần xử lý', icon: Clock3, action: () => chooseFolder('inbox', 'all', 'XIN_XET_DUYET'), active: category === 'XIN_XET_DUYET' },
+    {
+      label: 'Hộp thư đến',
+      icon: Inbox,
+      action: () => chooseFolder('inbox'),
+      active: folder === 'inbox' && statusFilter === 'all' && !category,
+      badge: folderCounts.inboxTotal > 0 ? folderCounts.inboxTotal : null,
+    },
+    {
+      label: 'Đã gửi',
+      icon: Send,
+      action: () => chooseFolder('sent'),
+      active: folder === 'sent',
+      badge: folderCounts.sentTotal > 0 ? folderCounts.sentTotal : null,
+    },
+    {
+      label: 'Chưa đọc',
+      icon: MailOpen,
+      action: () => chooseFolder('inbox', 'unread'),
+      active: folder === 'inbox' && statusFilter === 'unread',
+      badge: folderCounts.unreadCount > 0 ? folderCounts.unreadCount : null,
+    },
+    {
+      label: 'Cần xử lý',
+      icon: Clock3,
+      action: () => chooseFolder('inbox', 'all', 'XIN_XET_DUYET'),
+      active: category === 'XIN_XET_DUYET',
+      badge: null,
+    },
   ];
 
   return <div className="mailbox-page">
@@ -288,7 +540,7 @@ export default function MailboxView({ currentUser, onShowToast }) {
     <div className={`mailbox-shell${selectedId ? ' has-selection' : ''}`}>
       <aside className="mailbox-folders">
         <button type="button" className="mailbox-button primary compose-button" onClick={() => setComposeOpen(true)}><Plus size={17} /> Soạn thư mới</button>
-        <nav>{folderItems.map(({ label, icon: Icon, action, active, count }) => <button type="button" key={label} className={active ? 'active' : ''} onClick={action}><Icon size={18} /><span>{label}</span>{label === 'Hộp thư đến' && count > 0 && <b>{count}</b>}</button>)}</nav>
+        <nav>{folderItems.map(({ label, icon: Icon, action, active, badge }) => <button type="button" key={label} className={active ? 'active' : ''} onClick={action}><Icon size={18} /><span>{label}</span>{badge !== null && badge !== undefined && <b>{badge}</b>}</button>)}</nav>
         <div className="mailbox-folder-separator" />
         <button type="button" className={category === 'XIN_HO_TRO' ? 'mailbox-folder-link active' : 'mailbox-folder-link'} onClick={() => chooseFolder('inbox', 'all', 'XIN_HO_TRO')}><LifeBuoy size={18} /><span>Yêu cầu hỗ trợ</span></button>
         <button type="button" className={category === 'XIN_XET_DUYET' ? 'mailbox-folder-link active' : 'mailbox-folder-link'} onClick={() => chooseFolder('inbox', 'all', 'XIN_XET_DUYET')}><FileCheck2 size={18} /><span>Xin xét duyệt</span></button>
@@ -306,13 +558,130 @@ export default function MailboxView({ currentUser, onShowToast }) {
       <section className="mailbox-detail-panel">
         {!selectedId ? <div className="mailbox-detail-empty"><span><Mail size={46} /></span><h2>Chọn một thư để xem nội dung</h2><p>Nội dung hội thoại và trạng thái email sẽ hiển thị tại đây.</p></div> : detailLoading ? <div className="mailbox-detail-loading"><Loader2 className="spin" size={28} /> Đang tải hội thoại…</div> : detail && <>
           <header className="mailbox-detail-header"><button type="button" className="mailbox-back" onClick={() => { setSelectedId(null); setDetail(null); }}><ArrowLeft size={18} /> Quay lại</button><div className="mailbox-detail-person"><span className="mailbox-avatar large">{initials(detail.sender_name)}</span><div><strong>{detail.sender_name || 'Tài khoản đã xóa'}</strong><span>{detail.sender_role} · {detail.sender_email}</span></div><time>{formatDate(detail.created_at)}</time></div><h2>{detail.subject}</h2><CategoryBadge category={detail.category} /></header>
-          <div className="mailbox-thread">
+          <div
+            className="mailbox-thread"
+            onClick={(e) => {
+              if (e.target.tagName?.toLowerCase() === 'img') {
+                e.preventDefault();
+                setZoomScale(1.4);
+                setZoomedImage({
+                  src: e.target.src,
+                  alt: e.target.alt || 'Hình ảnh',
+                });
+              }
+            }}
+          >
             {detail.thread?.map((message) => <article key={message.id} className={message.sender_id === currentUser.ma_nguoi_dung ? 'from-me' : ''}><header><span className="mailbox-avatar small">{initials(message.sender_name)}</span><div><strong>{message.sender_id === currentUser.ma_nguoi_dung ? 'Bạn' : message.sender_name || 'Tài khoản đã xóa'}</strong><time>{formatDate(message.created_at)}</time></div></header><div className="mailbox-rich-content" dangerouslySetInnerHTML={{ __html: message.content_html }} />{message.recipients?.some((recipient) => recipient.email_status) && <div className="mailbox-email-status">Email: {message.recipients.map((recipient) => recipient.email_status).filter(Boolean).join(', ')}</div>}</article>)}
           </div>
           <footer className="mailbox-detail-actions">{replyOpen ? <div className="mailbox-reply-box"><RichTextEditor editorRef={replyEditorRef} value={replyHtml} onChange={setReplyHtml} label="Nội dung trả lời" /><div><button type="button" className="mailbox-button secondary" onClick={() => setReplyOpen(false)}>Hủy</button><button type="button" className="mailbox-button primary" disabled={replying} onClick={submitReply}>{replying ? <Loader2 className="spin" size={16} /> : <Send size={16} />} Gửi trả lời</button></div></div> : <button type="button" className="mailbox-button primary" onClick={() => setReplyOpen(true)}><Reply size={16} /> Trả lời</button>}</footer>
         </>}
       </section>
     </div>
-    {composeOpen && <ComposeModal currentUser={currentUser} onClose={() => setComposeOpen(false)} onSent={(count) => { setComposeOpen(false); chooseFolder('sent'); onShowToast(`Đã gửi thư tới ${count} người nhận.`); }} />}
+    {composeOpen && <ComposeModal currentUser={currentUser} onClose={() => setComposeOpen(false)} onSent={(count) => { setComposeOpen(false); chooseFolder('sent'); loadFolderCounts(); onShowToast(`Đã gửi thư tới ${count} người nhận.`); }} />}
+
+    {zoomedImage && (
+      <div
+        className="mailbox-lightbox-backdrop"
+        onClick={() => setZoomedImage(null)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Xem ảnh phóng to"
+      >
+        <div className="mailbox-lightbox-container" onClick={(e) => e.stopPropagation()}>
+          <div className="mailbox-lightbox-header">
+            <span className="mailbox-lightbox-title">{zoomedImage.alt || 'Xem ảnh phóng to'}</span>
+            <div className="mailbox-lightbox-actions">
+              <button
+                type="button"
+                className="mailbox-lightbox-btn"
+                onClick={() => setZoomScale((prev) => Math.max(Number((prev - 0.25).toFixed(2)), 0.5))}
+                disabled={zoomScale <= 0.5}
+                title="Thu nhỏ (-)"
+                aria-label="Thu nhỏ"
+              >
+                <ZoomOut size={17} />
+              </button>
+              <span className="mailbox-lightbox-zoom-badge">
+                {Math.round(zoomScale * 100)}%
+              </span>
+              <button
+                type="button"
+                className="mailbox-lightbox-btn"
+                onClick={() => setZoomScale((prev) => Math.min(Number((prev + 0.25).toFixed(2)), 4))}
+                disabled={zoomScale >= 4}
+                title="Phóng to (+)"
+                aria-label="Phóng to"
+              >
+                <ZoomIn size={17} />
+              </button>
+              <button
+                type="button"
+                className="mailbox-lightbox-btn"
+                onClick={() => setZoomScale(1)}
+                title="Kích thước gốc (100%)"
+                aria-label="Kích thước gốc"
+              >
+                <RotateCcw size={16} />
+              </button>
+              <button
+                type="button"
+                className="mailbox-lightbox-btn"
+                onClick={() => setZoomScale((prev) => (prev >= 2.5 ? 1 : 2.5))}
+                title={zoomScale >= 2.5 ? 'Thu về 100%' : 'Phóng to tối đa (250%)'}
+                aria-label="Phóng to tối đa"
+              >
+                <Maximize2 size={16} />
+              </button>
+              <div className="mailbox-lightbox-divider" />
+              <a
+                href={zoomedImage.src}
+                download={zoomedImage.alt || 'image'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mailbox-lightbox-btn"
+                title="Tải ảnh gốc về máy"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Download size={17} />
+              </a>
+              <button
+                type="button"
+                className="mailbox-lightbox-btn close"
+                onClick={() => setZoomedImage(null)}
+                title="Đóng (ESC)"
+                aria-label="Đóng"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div
+            className="mailbox-lightbox-body"
+            onWheel={(e) => {
+              e.preventDefault();
+              const delta = e.deltaY < 0 ? 0.25 : -0.25;
+              setZoomScale((prev) => Math.min(Math.max(Number((prev + delta).toFixed(2)), 0.5), 4));
+            }}
+          >
+            <div className="mailbox-lightbox-img-stage">
+              <img
+                src={zoomedImage.src}
+                alt={zoomedImage.alt}
+                className="mailbox-lightbox-img"
+                style={{
+                  transform: `scale(${zoomScale})`,
+                  transformOrigin: 'center center',
+                  transition: 'transform 0.12s ease-out',
+                }}
+                onClick={() => {
+                  setZoomScale((prev) => (prev > 1.3 ? 1 : 2));
+                }}
+                title="Click để phóng to / thu nhỏ. Dùng con lăn chuột để zoom tự do."
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
   </div>;
 }

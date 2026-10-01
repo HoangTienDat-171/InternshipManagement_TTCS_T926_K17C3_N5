@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import auth_routes, contract_routes, document_routes, intern_routes, mailbox_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
+from .routes import auth_routes, contract_routes, document_routes, guest_routes, intern_routes, mailbox_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -42,11 +42,25 @@ SESSION_REVALIDATION_INTERVAL_SECONDS = 5
 @app.middleware("http")
 async def validate_api_session(request: Request, call_next):
     path = request.url.path
-    public_paths = {"/api/auth/login", "/api/auth/register", "/api/auth/register-with-cv"}
-    if path.startswith("/api/") and request.method != "OPTIONS" and path not in public_paths:
+    public_paths = {
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/register-with-cv",
+        "/api/auth/forgot-password",
+    }
+    normalized_path = path.rstrip("/")
+    if (
+        path.startswith("/api/")
+        and request.method != "OPTIONS"
+        and normalized_path not in public_paths
+        and not normalized_path.startswith("/api/guest")
+        and not normalized_path.startswith("/api/mailbox/attachments")
+    ):
         authorization = request.headers.get("authorization", "")
         scheme, _, token = authorization.partition(" ")
-        user = get_session_user(token) if scheme.lower() == "bearer" and token else None
+        if not (scheme.lower() == "bearer" and token):
+            token = request.query_params.get("token", "")
+        user = get_session_user(token) if token else None
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác."})
         request.state.current_user = user
@@ -98,6 +112,7 @@ app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(mailbox_routes.router)
+app.include_router(guest_routes.router)
 
 
 @app.websocket("/api/auth/events")

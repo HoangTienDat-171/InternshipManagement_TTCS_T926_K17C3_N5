@@ -187,6 +187,19 @@ class MailboxTests(unittest.TestCase):
         self.assertIn(interns[0]["ho_ten"], bodies[0])
         self.assertIn(interns[1]["ho_ten"], bodies[1])
 
+    def test_duplicate_mailbox_message_within_cooldown_is_rejected(self):
+        intern = self.users["tuan.lm@internship.vn"]
+        hr = self.users["hr@internship.vn"]
+        payload = self.payload([intern["ma_nguoi_dung"]], subject="Yêu cầu hỗ trợ", contentHtml="<p>Cần hỗ trợ thiết bị</p>")
+        send_message(self.db, hr, payload)
+        self.db.commit()
+
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            send_message(self.db, hr, payload)
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertIn("DUPLICATE_EMAIL_SUPPRESSED", ctx.exception.detail)
+
 
 if __name__ == "__main__":
     unittest.main()

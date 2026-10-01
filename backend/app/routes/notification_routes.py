@@ -1,6 +1,6 @@
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 
 from ..database import get_db
 from ..security import require_role
@@ -51,3 +51,60 @@ def mark_notification_read(notification_id: int, request: Request, db: sqlite3.C
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy thông báo.")
     db.commit()
     return {"ma_thong_bao": notification_id, "da_doc": True}
+
+
+@router.post("/send-with-attachments")
+async def send_manual_notification_with_attachments(
+    request: Request,
+    recipient_email: str = Form(...),
+    subject: str = Form(...),
+    body_text: str = Form(...),
+    body_html: str | None = Form(None),
+    force_send: bool = Form(False),
+    files: list[UploadFile] = File(default=[]),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    require_role(request, "Admin", "HR")
+    from ..email_attachment_security import validate_attachment
+    from ..email_service import enqueue_email
+    from ..email_deduplication import DuplicateEmailSuppressedError
+
+    processed_attachments = []
+    total_size = 0
+    for f in files:
+        if not f.filename:
+            continue
+        content = await f.read()
+        total_size += len(content)
+        if total_size > 25 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Tổng dung lượng các tệp đính kèm vượt quá 25MB.")
+        att_info = validate_attachment(f.filename, content, f.content_type)
+        att_info["disposition"] = "attachment"
+        processed_attachments.append(att_info)
+
+    try:
+        email_id = enqueue_email(
+            db=db,
+            recipient_email=recipient_email.strip().lower(),
+            subject=subject.strip(),
+            body_text=body_text.strip(),
+            body_html=body_html,
+            attachments=processed_attachments,
+            template_type="manual_hr_notice",
+            reference_type="manual_dispatch",
+            force_send=force_send,
+        )
+        db.commit()
+    except DuplicateEmailSuppressedError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"DUPLICATE_EMAIL_SUPPRESSED: Yêu cầu đang được xử lý hoặc email tương tự đã được gửi tới {recipient_email}. Vui lòng thử lại sau.",
+        )
+
+    return {
+        "success": True,
+        "email_id": email_id,
+        "attachments_count": len(processed_attachments),
+        "message": f"Đã đưa email vào hàng đợi gửi kèm {len(processed_attachments)} tệp đính kèm."
+    }

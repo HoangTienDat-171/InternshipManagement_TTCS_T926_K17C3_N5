@@ -28,6 +28,9 @@ class PasswordChange(BaseModel):
     mat_khau_hien_tai: str
     mat_khau_moi: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
 class UserResponse(BaseModel):
     ma_nguoi_dung: int
     ho_ten: str
@@ -208,13 +211,13 @@ class MailboxMessageCreate(BaseModel):
     groupKeys: List[str] = Field(default_factory=list, max_length=20)
     category: MailboxCategory
     subject: str = Field(min_length=1, max_length=255)
-    contentHtml: str = Field(min_length=1, max_length=50_000)
+    contentHtml: str = Field(min_length=1, max_length=500_000)
     sendEmail: bool = False
     templateId: Optional[int] = None
 
 
 class MailboxReplyCreate(BaseModel):
-    contentHtml: str = Field(min_length=1, max_length=50_000)
+    contentHtml: str = Field(min_length=1, max_length=500_000)
     sendEmail: bool = False
 
 
@@ -222,7 +225,7 @@ class MailboxTemplateCreate(BaseModel):
     templateCode: str = Field(pattern=r"^[A-Z0-9_]+$", min_length=3, max_length=100)
     title: str = Field(min_length=1, max_length=255)
     subject: str = Field(min_length=1, max_length=255)
-    bodyHtml: str = Field(min_length=1, max_length=50_000)
+    bodyHtml: str = Field(min_length=1, max_length=500_000)
     category: MailboxCategory
     isActive: bool = True
 
@@ -230,6 +233,6 @@ class MailboxTemplateCreate(BaseModel):
 class MailboxTemplateUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=255)
     subject: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    bodyHtml: Optional[str] = Field(default=None, min_length=1, max_length=50_000)
+    bodyHtml: Optional[str] = Field(default=None, min_length=1, max_length=500_000)
     category: Optional[MailboxCategory] = None
     isActive: Optional[bool] = None

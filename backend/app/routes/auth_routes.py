@@ -12,7 +12,7 @@ from ..account_credentials import (
     require_password_change_schema,
     temporary_password_email_body,
 )
-from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange
+from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange, ForgotPasswordRequest
 from ..security import new_session_token, token_digest, require_role, publish_force_logout, session_connections
 from ..intern_workflow import sync_intern_approval
 from ..notifications import create_notification
@@ -139,12 +139,32 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     for manager in managers:
         create_notification(db, manager["ma_nguoi_dung"], "Thực tập sinh mới chờ duyệt", f"{data.ho_ten.strip()} đã đăng ký tài khoản và đang chờ xét duyệt.")
 
-    queue_temporary_password_email(db, new_user_id, data.ho_ten.strip(), email, temporary_password)
+    create_notification(
+        db, new_user_id,
+        "Đăng ký tài khoản thành công",
+        "Hồ sơ đăng ký thực tập sinh của bạn đã được gửi và đang chờ xét duyệt. Khi hồ sơ được duyệt, mật khẩu đăng nhập sẽ được gửi tới email này.",
+        notification_type="registration_pending",
+        reference_type="account",
+        reference_id=new_user_id,
+        email_recipient=email,
+        email_subject="[IMS Portal] Tiếp nhận hồ sơ thực tập sinh thành công - Chờ xét duyệt",
+        email_template_type="registration_received",
+        email_deduplication_key=f"account:{new_user_id}:registration-pending",
+        email_reference_type="account",
+        email_reference_id=new_user_id,
+        email_body=(
+            f"Xin chào {data.ho_ten.strip()},\n\n"
+            "Cảm ơn bạn đã đăng ký tài khoản thực tập sinh trên hệ thống IMS Portal.\n"
+            "Hồ sơ của bạn hiện đang ở trạng thái Chờ xét duyệt bởi Quản lý thực tập sinh.\n\n"
+            "Khi hồ sơ của bạn được phê duyệt, hệ thống sẽ gửi một email xác nhận kèm mật khẩu đăng nhập tạm thời về địa chỉ Gmail này để bạn đăng nhập và đổi mật khẩu mới.\n\n"
+            "Trân trọng,\nBan Quản lý Thực tập sinh"
+        ),
+    )
 
     db.commit()
 
     return {
-        "message": "Đăng ký thành công. Email mật khẩu tạm đang được gửi; tài khoản có thể đăng nhập sau khi được duyệt.",
+        "message": "Đăng ký thành công! Hồ sơ đang chờ Quản lý thực tập sinh xét duyệt. Mật khẩu đăng nhập sẽ được gửi qua email sau khi hồ sơ được duyệt.",
         "ma_nguoi_dung": new_user_id,
         "email": email,
         "ho_ten": data.ho_ten,
@@ -232,10 +252,30 @@ async def register_user_with_cv(
                 "Thực tập sinh mới chờ duyệt",
                 f"{clean_name} đã đăng ký tài khoản" + (" và nộp CV" if cv_content is not None else "") + " đang chờ xét duyệt.",
             )
-        queue_temporary_password_email(db, new_user_id, clean_name, clean_email, temporary_password)
+        create_notification(
+            db, new_user_id,
+            "Đăng ký tài khoản thành công",
+            "Hồ sơ đăng ký thực tập sinh của bạn đã được gửi và đang chờ xét duyệt. Khi hồ sơ được duyệt, mật khẩu đăng nhập sẽ được gửi tới email này.",
+            notification_type="registration_pending",
+            reference_type="account",
+            reference_id=new_user_id,
+            email_recipient=clean_email,
+            email_subject="[IMS Portal] Tiếp nhận hồ sơ thực tập sinh thành công - Chờ xét duyệt",
+            email_template_type="registration_received",
+            email_deduplication_key=f"account:{new_user_id}:registration-pending",
+            email_reference_type="account",
+            email_reference_id=new_user_id,
+            email_body=(
+                f"Xin chào {clean_name},\n\n"
+                "Cảm ơn bạn đã đăng ký tài khoản thực tập sinh trên hệ thống IMS Portal.\n"
+                "Hồ sơ" + (" và CV " if cv_content is not None else " ") + "của bạn hiện đang ở trạng thái Chờ xét duyệt bởi Quản lý thực tập sinh.\n\n"
+                "Khi hồ sơ của bạn được phê duyệt, hệ thống sẽ gửi một email xác nhận kèm mật khẩu đăng nhập tạm thời về địa chỉ Gmail này để bạn đăng nhập và đổi mật khẩu mới.\n\n"
+                "Trân trọng,\nBan Quản lý Thực tập sinh"
+            ),
+        )
         db.commit()
         return {
-            "message": "Đăng ký thành công. Email mật khẩu tạm đang được gửi. " + ("CV đã được gửi và đang chờ duyệt. " if cv_content is not None else "") + "Tài khoản có thể đăng nhập sau khi được Admin/HR duyệt.",
+            "message": "Đăng ký thành công! " + ("CV đã được tải lên. " if cv_content is not None else "") + "Hồ sơ đang chờ xét duyệt. Mật khẩu đăng nhập sẽ được gửi qua email sau khi được Quản lý thực tập sinh duyệt.",
             "ma_nguoi_dung": new_user_id,
             "email": clean_email,
             "ho_ten": clean_name,
@@ -349,6 +389,90 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
         "user": user_dict
     }
 
+@router.post("/forgot-password")
+def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """
+    Cấp lại mật khẩu tạm thời 8 ký tự cho tài khoản khi người dùng quên mật khẩu.
+    Gửi thông tin đăng nhập tạm thời về địa chỉ email đã đăng ký.
+    """
+    email_clean = data.email.strip().lower()
+    if not email_clean or "@" not in email_clean:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Vui lòng cung cấp địa chỉ email hợp lệ.",
+        )
+
+    require_password_change_schema(db)
+    cursor = db.cursor()
+    cursor.execute(
+        """SELECT ma_nguoi_dung, ho_ten, email, trang_thai, vai_tro
+           FROM NGUOI_DUNG WHERE LOWER(email) = ?""",
+        (email_clean,),
+    )
+    user = cursor.fetchone()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tài khoản không tồn tại.",
+        )
+
+    if user["trang_thai"] == "ChoDuyet":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản của bạn đang chờ quản lý xét duyệt, chưa thể đặt lại mật khẩu.",
+        )
+    if user["trang_thai"] != "HoatDong":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị khóa hoặc ngừng hoạt động. Vui lòng liên hệ quản trị viên.",
+        )
+
+    temporary_password = create_temporary_password(8)
+    cursor.execute(
+        "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
+        (hash_password(temporary_password), user["ma_nguoi_dung"]),
+    )
+    cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (user["ma_nguoi_dung"],))
+    cursor.execute("DELETE FROM FAILED_LOGIN_ATTEMPTS WHERE email = ?", (email_clean,))
+
+    email_body = (
+        f"Xin chào {user['ho_ten']},\n\n"
+        "Hệ thống đã nhận được yêu cầu cấp lại mật khẩu cho tài khoản IMS Portal của bạn.\n\n"
+        "Thông tin đăng nhập mới:\n"
+        f"- Tên đăng nhập (Email): {user['email']}\n"
+        f"- Mật khẩu tạm thời: {temporary_password}\n\n"
+        "Lưu ý: Để đảm bảo an toàn cho tài khoản, sau khi đăng nhập bằng mật khẩu tạm này, hệ thống sẽ yêu cầu bạn đổi sang mật khẩu mới trước khi tiếp tục thao tác.\n"
+        "Nếu bạn không thực hiện yêu cầu này, vui lòng liên hệ quản trị viên ngay lập tức.\n\n"
+        "Trân trọng,\nBan Quản lý Hệ thống IMS Portal"
+    )
+
+    create_notification(
+        db,
+        user["ma_nguoi_dung"],
+        "Cấp lại mật khẩu tạm thời",
+        "Mật khẩu tạm thời mới đã được tạo và gửi về email của bạn.",
+        notification_type="security",
+        reference_type="account",
+        reference_id=user["ma_nguoi_dung"],
+        email_recipient=user["email"],
+        email_subject="[IMS Portal] Cấp lại mật khẩu tạm thời cho tài khoản",
+        email_template_type="temporary_credentials",
+        email_reference_type="account",
+        email_reference_id=user["ma_nguoi_dung"],
+        email_body=email_body,
+        email_deduplication_key=f"account:{user['ma_nguoi_dung']}:forgot-password:{uuid4().hex}",
+    )
+    db.commit()
+
+    return {
+        "message": f"Mật khẩu tạm thời mới đã được gửi về email {user['email']}. Vui lòng kiểm tra hộp thư của bạn.",
+        "email": user["email"],
+    }
+
 @router.post("/users", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connection = Depends(get_db)):
     """
@@ -443,9 +567,7 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hồ sơ thực tập sinh")
     sync_intern_approval(cursor, id, "DaDuyet")
     temporary_password = None
-    if user["must_change_password"] and (
-        user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong"
-    ):
+    if user["trang_thai_ho_so"] != "DaDuyet" or user["trang_thai"] != "HoatDong":
         temporary_password = create_temporary_password()
         cursor.execute(
             "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
@@ -455,28 +577,34 @@ def approve_user(id: int, request: Request, db: sqlite3.Connection = Depends(get
         email_deduplication_key = f"us08:intern_profile:{user['ma_ho_so']}:DaDuyet"
         if temporary_password:
             email_deduplication_key += f":credentials:{uuid4().hex}"
+        email_body = (
+            f"Xin chào {user['ho_ten']},\n\n"
+            "Chúc mừng! Hồ sơ thực tập sinh của bạn đã được phê duyệt thành công.\n"
+            "Tài khoản của bạn đã được kích hoạt trên hệ thống IMS Portal.\n\n"
+            "Thông tin đăng nhập:\n"
+            f"- Tên đăng nhập (Email): {user['email']}\n"
+            f"- Mật khẩu tạm thời: {temporary_password}\n\n"
+            "Lưu ý: Để đảm bảo bảo mật tài khoản, sau khi đăng nhập bằng mật khẩu tạm này, hệ thống sẽ yêu cầu bạn đổi sang mật khẩu mới trước khi tiếp tục sử dụng.\n\n"
+            "Trân trọng,\nBan Quản lý Thực tập sinh"
+        ) if temporary_password else None
         create_notification(
-            db, id, "Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt.",
+            db, id, "Hồ sơ thực tập đã được duyệt",
+            "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt. Mật khẩu đăng nhập tạm thời đã được gửi về email của bạn.",
             notification_type="internship_review_result", reference_type="intern_profile",
             reference_id=user["ma_ho_so"], email_recipient=user["email"],
+            email_subject="[IMS Portal] Xác nhận hồ sơ thực tập sinh đã được duyệt & Mật khẩu đăng nhập",
             email_deduplication_key=email_deduplication_key,
             email_template_type="temporary_credentials" if temporary_password else "approval_result",
-            email_body=(
-                temporary_password_email_body(
-                    user["ho_ten"],
-                    user["email"],
-                    temporary_password,
-                    "Hồ sơ thực tập của bạn đã được duyệt và tài khoản đã được kích hoạt.",
-                )
-                if temporary_password else None
-            ),
+            email_reference_type="intern_profile",
+            email_reference_id=user["ma_ho_so"],
+            email_body=email_body,
         )
     db.commit()
 
     return {
         "message": (
             f"Đã phê duyệt tài khoản {user['ho_ten']} thành công! "
-            + ("Email mật khẩu tạm đang được gửi." if temporary_password else "")
+            + ("Email mật khẩu đăng nhập đã được gửi tới thực tập sinh." if temporary_password else "")
         ),
         "ma_nguoi_dung": id,
         "trang_thai": "HoatDong"
@@ -624,12 +752,44 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
         sync_intern_approval(cursor, id, approval_status)
     cursor.execute("UPDATE NGUOI_DUNG SET trang_thai = ? WHERE ma_nguoi_dung = ?", (data.trang_thai, id))
     if user["trang_thai"] != data.trang_thai or profile_status_changed:
+        temporary_password = None
+        if user["vai_tro"] == "ThucTapSinh" and data.trang_thai == "HoatDong" and user["trang_thai"] == "ChoDuyet":
+            temporary_password = create_temporary_password()
+            cursor.execute(
+                "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
+                (hash_password(temporary_password), id),
+            )
         title, message = {
-            "HoatDong": ("Tài khoản đã được kích hoạt", "Tài khoản của bạn đã được kích hoạt."),
+            "HoatDong": ("Tài khoản đã được kích hoạt", "Tài khoản của bạn đã được kích hoạt." + (" Mật khẩu đăng nhập tạm thời đã được gửi về email của bạn." if temporary_password else "")),
             "ChoDuyet": ("Tài khoản đang chờ duyệt", "Tài khoản của bạn đang chờ xét duyệt."),
             "Khoa": ("Tài khoản đã bị khóa", "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên."),
         }[data.trang_thai]
-        create_notification(db, id, title, message)
+        email_body = None
+        email_subject = None
+        if temporary_password:
+            email_subject = "[IMS Portal] Xác nhận hồ sơ thực tập sinh đã được duyệt & Mật khẩu đăng nhập"
+            email_body = (
+                f"Xin chào {user['ho_ten']},\n\n"
+                "Chúc mừng! Hồ sơ thực tập sinh của bạn đã được phê duyệt thành công.\n"
+                "Tài khoản của bạn đã được kích hoạt trên hệ thống IMS Portal.\n\n"
+                "Thông tin đăng nhập:\n"
+                f"- Tên đăng nhập (Email): {user['email']}\n"
+                f"- Mật khẩu tạm thời: {temporary_password}\n\n"
+                "Lưu ý: Để đảm bảo bảo mật tài khoản, sau khi đăng nhập bằng mật khẩu tạm này, hệ thống sẽ yêu cầu bạn đổi sang mật khẩu mới trước khi tiếp tục sử dụng.\n\n"
+                "Trân trọng,\nBan Quản lý Thực tập sinh"
+            )
+        create_notification(
+            db, id, title, message,
+            notification_type="internship_review_result" if user["vai_tro"] == "ThucTapSinh" else "general",
+            reference_type="account", reference_id=id,
+            email_recipient=(user["email"] if data.trang_thai in ("HoatDong", "Khoa") else None),
+            email_subject=email_subject,
+            email_template_type="temporary_credentials" if temporary_password else "approval_result",
+            email_deduplication_key=f"us08:account:{id}:{data.trang_thai}:{uuid4().hex}" if (temporary_password or data.trang_thai in ("HoatDong", "Khoa")) else None,
+            email_reference_type="account",
+            email_reference_id=id,
+            email_body=email_body,
+        )
     if data.trang_thai != "HoatDong":
         cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,))
     db.commit()
