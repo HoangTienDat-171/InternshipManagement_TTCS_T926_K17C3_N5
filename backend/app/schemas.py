@@ -183,6 +183,9 @@ class ProgramApplicationDetail(BaseModel):
 class DocumentReview(BaseModel):
     trang_thai_duyet: Literal["DaDuyet", "TuChoi"]
 
+class ContractRejectRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
 class DocumentDetail(BaseModel):
     ma_tai_lieu: int
     ma_ho_so: int
