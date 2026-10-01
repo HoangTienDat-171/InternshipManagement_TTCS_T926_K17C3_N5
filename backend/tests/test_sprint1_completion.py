@@ -814,8 +814,48 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 404)
 
-        status_code, _, _ = self.upload_contract(admin_token, intern_a["profile_id"])
+        status_code, second_contract_a, _ = self.upload_contract(admin_token, intern_a["profile_id"])
+        self.assertEqual(status_code, 201, second_contract_a)
+        self.assertNotEqual(second_contract_a["ma_hop_dong"], contract_id)
+        status_code, all_owned_contracts, _ = self.json_request(
+            "/api/contracts/mine/all", token=tts_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(
+            {item["ma_hop_dong"] for item in all_owned_contracts},
+            {contract_id, second_contract_a["ma_hop_dong"]},
+        )
+
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contract_id}/decision", "POST", token=tts_b_token,
+            data={"decision": "CONFIRMED"},
+        )
+        self.assertEqual(status_code, 404)
+        status_code, confirmed_contract, _ = self.json_request(
+            f"/api/contracts/{contract_id}/decision", "POST", token=tts_a_token,
+            data={"decision": "CONFIRMED"},
+        )
+        self.assertEqual(status_code, 200, confirmed_contract)
+        self.assertEqual(confirmed_contract["trang_thai"], "CONFIRMED")
+        status_code, _, _ = self.json_request(
+            f"/api/contracts/{contract_id}/decision", "POST", token=tts_a_token,
+            data={"decision": "REJECTED"},
+        )
         self.assertEqual(status_code, 409)
+        status_code, rejected_contract, _ = self.json_request(
+            f"/api/contracts/{second_contract_a['ma_hop_dong']}/decision", "POST", token=tts_a_token,
+            data={"decision": "REJECTED"},
+        )
+        self.assertEqual(status_code, 200, rejected_contract)
+        self.assertEqual(rejected_contract["trang_thai"], "REJECTED")
+        status_code, all_owned_contracts, _ = self.json_request(
+            "/api/contracts/mine/all", token=tts_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(
+            {item["ma_hop_dong"]: item["trang_thai"] for item in all_owned_contracts},
+            {contract_id: "CONFIRMED", second_contract_a["ma_hop_dong"]: "REJECTED"},
+        )
 
         db = sqlite3.connect(self.db_path)
         try:
@@ -834,7 +874,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
             """, (f"us09:contract:{contract_id}:uploaded",)).fetchone()
         finally:
             db.close()
-        self.assertEqual(record[1:], (admin["ma_nguoi_dung"], "contract.pdf", len(PDF), "application/pdf", "PENDING_CONFIRMATION"))
+        self.assertEqual(record[1:], (admin["ma_nguoi_dung"], "contract.pdf", len(PDF), "application/pdf", "CONFIRMED"))
         self.assertTrue(record[0].endswith(".pdf"))
         self.assertEqual(notice, ("contract_uploaded", "internship_contract", str(contract_id)))
         self.assertEqual(email[:6], (intern_a["email"], "contract_uploaded", "internship_contract", str(contract_id), f"us09:contract:{contract_id}:uploaded", "PENDING"))

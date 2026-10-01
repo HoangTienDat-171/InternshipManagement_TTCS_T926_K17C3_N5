@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
-export default function ConfirmDialog({ open, title = 'Xác nhận thao tác', message, confirmLabel = 'Xác nhận', cancelLabel = 'Hủy', danger = false, onConfirm, onCancel }) {
+export default function ConfirmDialog({ open, title = 'Xác nhận thao tác', message, confirmLabel = 'Xác nhận', cancelLabel = 'Hủy', danger = false, className = '', onConfirm, onCancel }) {
   useEffect(() => {
     if (!open) return undefined;
     const handleKeyDown = (event) => {
@@ -14,7 +14,7 @@ export default function ConfirmDialog({ open, title = 'Xác nhận thao tác', m
   if (!open) return null;
   return (
     <div className="modal-overlay confirm-overlay" onMouseDown={(event) => event.target === event.currentTarget && onCancel()}>
-      <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <section className={'confirm-dialog ' + className} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
         <div className={`confirm-icon${danger ? ' danger' : ''}`}><AlertTriangle size={22} /></div>
         <button className="modal-close-btn confirm-close" type="button" aria-label="Đóng" onClick={onCancel}><X size={18} /></button>
         <h3 id="confirm-title">{title}</h3>

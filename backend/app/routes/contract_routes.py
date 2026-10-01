@@ -2,9 +2,10 @@ import os
 import re
 import sqlite3
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from ..database import DB_FILE, get_db
@@ -92,10 +93,58 @@ def list_contracts(
 def get_my_contract(request: Request, db: sqlite3.Connection = Depends(get_db)):
     user = require_role(request, "ThucTapSinh")
     row = db.execute(
-        _contract_select() + " WHERE h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh' LIMIT 1",
+        _contract_select() + " WHERE h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh' "
+        "ORDER BY c.uploaded_at DESC, c.ma_hop_dong DESC LIMIT 1",
         (user["ma_nguoi_dung"],),
     ).fetchone()
     return _public_contract(row) if row else None
+
+
+@router.get("/mine/all")
+def list_my_contracts(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request, "ThucTapSinh")
+    rows = db.execute(
+        _contract_select() + " WHERE h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh' "
+        "ORDER BY c.uploaded_at DESC, c.ma_hop_dong DESC",
+        (user["ma_nguoi_dung"],),
+    ).fetchall()
+    return [_public_contract(row) for row in rows]
+
+
+@router.post("/{contract_id}/decision")
+def decide_contract(
+    contract_id: int,
+    request: Request,
+    decision: Literal["CONFIRMED", "REJECTED"] = Body(..., embed=True),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user = require_role(request, "ThucTapSinh")
+    row = db.execute(
+        _contract_select() + " WHERE c.ma_hop_dong = ? AND h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh'",
+        (contract_id, user["ma_nguoi_dung"]),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hợp đồng.")
+    if row["trang_thai"] != CONTRACT_STATUS:
+        raise HTTPException(status_code=409, detail="Hợp đồng đã được xác nhận hoặc từ chối.")
+
+    updated = db.execute(
+        """
+        UPDATE HOP_DONG_THUC_TAP
+        SET trang_thai = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE ma_hop_dong = ? AND trang_thai = ?
+        """,
+        (decision, contract_id, CONTRACT_STATUS),
+    )
+    if updated.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Hợp đồng đã được xác nhận hoặc từ chối.")
+
+    db.commit()
+    result = db.execute(
+        _contract_select() + " WHERE c.ma_hop_dong = ?", (contract_id,),
+    ).fetchone()
+    return _public_contract(result)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -143,11 +192,6 @@ async def upload_contract(
             raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ thực tập sinh.")
         if target["trang_thai_xet_duyet"] != "DaDuyet":
             raise HTTPException(status_code=409, detail="Chỉ có thể tải hợp đồng cho hồ sơ đã được duyệt.")
-        if db.execute(
-            "SELECT 1 FROM HOP_DONG_THUC_TAP WHERE ma_ho_so = ?", (ma_ho_so,),
-        ).fetchone():
-            raise HTTPException(status_code=409, detail="Hồ sơ này đã có hợp đồng.")
-
         CONTRACT_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
         with file_path.open("xb") as stored_file:
             file_written = True

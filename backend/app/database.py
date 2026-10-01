@@ -261,7 +261,7 @@ def init_mysql_db():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
                 ma_hop_dong BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ma_ho_so INT NOT NULL UNIQUE,
+                ma_ho_so INT NOT NULL,
                 original_file_name VARCHAR(255) NOT NULL,
                 storage_key VARCHAR(80) NOT NULL UNIQUE,
                 mime_type VARCHAR(127) NOT NULL,
@@ -272,6 +272,7 @@ def init_mysql_db():
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 CONSTRAINT chk_hop_dong_status CHECK (trang_thai IN ('PENDING_CONFIRMATION','CONFIRMED','REJECTED')),
+                KEY idx_hop_dong_profile (ma_ho_so),
                 KEY idx_hop_dong_uploaded_at (uploaded_at),
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (uploaded_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
@@ -513,7 +514,7 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
         ma_hop_dong INTEGER PRIMARY KEY AUTOINCREMENT,
-        ma_ho_so INTEGER NOT NULL UNIQUE,
+        ma_ho_so INTEGER NOT NULL,
         original_file_name TEXT NOT NULL,
         storage_key TEXT NOT NULL UNIQUE,
         mime_type TEXT NOT NULL,

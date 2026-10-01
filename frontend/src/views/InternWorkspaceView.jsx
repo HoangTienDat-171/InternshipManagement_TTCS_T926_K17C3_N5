@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, Eye, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, Check, CircleCheck, Clock3, Download, Eye, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound, X } from 'lucide-react';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { apiFetch, downloadProtectedFile, readJsonResponse } from '../utils/api';
 
 const documentStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Cần bổ sung' };
 const applicationStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Từ chối' };
+const contractStatus = {
+  PENDING_CONFIRMATION: { label: 'Chờ xác nhận', tone: 'warning' },
+  CONFIRMED: { label: 'Đã xác nhận', tone: 'success' },
+  REJECTED: { label: 'Đã từ chối', tone: 'danger' },
+};
 
 function StatusPill({ status, map = documentStatus }) {
   const tone = status === 'DaDuyet' ? 'success' : status === 'ChoDuyet' ? 'warning' : 'danger';
@@ -12,23 +18,25 @@ function StatusPill({ status, map = documentStatus }) {
 
 export default function InternWorkspaceView({ currentUser, onNavigatePrograms, requestedContractId }) {
   const [workspace, setWorkspace] = useState(null);
-  const [contract, setContract] = useState(null);
+  const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [contractLoading, setContractLoading] = useState(true);
   const [error, setError] = useState('');
   const [contractError, setContractError] = useState('');
   const [contractPreviewUrl, setContractPreviewUrl] = useState('');
+  const [previewingContractId, setPreviewingContractId] = useState(null);
+  const [pendingContractDecision, setPendingContractDecision] = useState(null);
+  const [contractDecision, setContractDecision] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
   const [documentType, setDocumentType] = useState('CV');
   const fileInput = useRef(null);
-  const contractCardRef = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
       const [workspaceResponse, contractResponse] = await Promise.all([
         apiFetch('/api/interns/me/workspace'),
-        apiFetch('/api/contracts/mine'),
+        apiFetch('/api/contracts/mine/all'),
       ]);
       const [data, contractData] = await Promise.all([
         readJsonResponse(workspaceResponse),
@@ -37,15 +45,20 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
       if (!workspaceResponse.ok) throw new Error(data.detail || 'Không thể tải hồ sơ thực tập.');
       if (!contractResponse.ok) throw new Error(contractData.detail || 'Không thể tải hợp đồng của bạn.');
       setWorkspace(data);
-      setContract(contractData);
+      setContracts(Array.isArray(contractData) ? contractData : contractData ? [contractData] : []);
       setContractError('');
       setError('');
     } catch (err) { setError(err.message); }
     finally { setLoading(false); setContractLoading(false); }
   }, []);
 
-  const previewContract = useCallback(async (contractId = contract?.ma_hop_dong) => {
+  const previewContract = useCallback(async (contractId) => {
     if (!contractId) return;
+    if (Number(previewingContractId) === Number(contractId)) {
+      setPreviewingContractId(null);
+      setContractPreviewUrl('');
+      return;
+    }
     try {
       const response = await apiFetch(`/api/contracts/${contractId}/preview`);
       if (!response.ok) {
@@ -54,18 +67,20 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
       }
       const nextUrl = URL.createObjectURL(await response.blob());
       setContractError('');
+      setPreviewingContractId(contractId);
       setContractPreviewUrl(nextUrl);
     } catch (previewError) {
       setContractError(previewError.message);
     }
-  }, [contract?.ma_hop_dong]);
+  }, [previewingContractId]);
 
   useEffect(() => {
     const requestedId = Number(requestedContractId);
-    if (contract && requestedId && Number(contract.ma_hop_dong) === requestedId) {
-      contractCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (requestedId && contracts.some((contract) => Number(contract.ma_hop_dong) === requestedId)) {
+      document.getElementById(`internship-contract-${requestedId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [contract, requestedContractId]);
+  }, [contracts, requestedContractId]);
 
   useEffect(() => () => {
     if (contractPreviewUrl) URL.revokeObjectURL(contractPreviewUrl);
@@ -83,10 +98,9 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
     catch (err) { setError(err.message); }
   };
 
-  const downloadContract = async () => {
-    if (!contract) return;
+  const downloadContract = async (contractItem) => {
     try {
-      const response = await apiFetch(`/api/contracts/${contract.ma_hop_dong}/download`);
+      const response = await apiFetch(`/api/contracts/${contractItem.ma_hop_dong}/download`);
       if (!response.ok) {
         const data = await readJsonResponse(response);
         throw new Error(data.detail || 'Không thể tải hợp đồng.');
@@ -94,13 +108,37 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
       link.href = url;
-      link.download = contract.original_file_name || 'hop-dong.pdf';
+      link.download = contractItem.original_file_name || 'hop-dong.pdf';
       document.body.append(link);
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (downloadError) {
       setContractError(downloadError.message);
+    }
+  };
+
+  const decideContract = async () => {
+    if (!pendingContractDecision || contractDecision) return;
+    const { contractId, decision } = pendingContractDecision;
+    setPendingContractDecision(null);
+    setContractDecision(contractId);
+    setContractError('');
+    try {
+      const response = await apiFetch(`/api/contracts/${contractId}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể cập nhật trạng thái hợp đồng.');
+      setContracts((currentContracts) => currentContracts.map((item) => (
+        Number(item.ma_hop_dong) === Number(contractId) ? data : item
+      )));
+    } catch (decisionError) {
+      setContractError(decisionError.message);
+    } finally {
+      setContractDecision(null);
     }
   };
 
@@ -138,6 +176,10 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
 
   const { profile, mentor, documents, applications, current_program: currentProgram, progress_percent: progress } = workspace;
   const pendingApplications = applications.filter((application) => application.trang_thai_ung_tuyen === 'ChoDuyet').length;
+  const selectedDecisionContract = pendingContractDecision
+    ? contracts.find((item) => Number(item.ma_hop_dong) === Number(pendingContractDecision.contractId))
+    : null;
+  const isConfirmingContract = pendingContractDecision?.decision === 'CONFIRMED';
   return <div className="workspace-page">
     <header className="workspace-heading"><div><span className="workspace-eyebrow">KHÔNG GIAN THỰC TẬP</span><h2>Xin chào, {profile.ho_ten || currentUser.ho_ten}</h2><p>Theo dõi người hướng dẫn, hồ sơ và chương trình thực tập của bạn.</p></div><div className="intern-workspace-actions"><button type="button" className="btn btn-secondary" onClick={onNavigatePrograms}><CalendarDays size={15} />Chương trình đang mở<ArrowRight size={14} /></button><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => { setLoading(true); refresh(); }}><Clock3 size={15} />Làm mới</button></div></header>
     {error && <div className="workspace-error compact">{error}</div>}
@@ -161,24 +203,58 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
         {applications.length ? <div className="workspace-application-list">{applications.map((application) => <div className="workspace-application-row" key={application.ma_chuong_trinh}><div><strong>{application.ten_ct}</strong><small>{application.ma_ct} · Nộp {application.ngay_ung_tuyen || '—'}</small></div><StatusPill status={application.trang_thai_ung_tuyen} map={applicationStatus} /></div>)}</div> : <div className="workspace-empty"><CalendarDays size={22} /><span>Bạn chưa ứng tuyển chương trình nào.</span></div>}
       </article>
     </div>
-    <article ref={contractCardRef} className="workspace-card workspace-contract-card">
+    <article className="workspace-card workspace-contract-card">
       <div className="workspace-section-heading">
-        <div><span className="workspace-eyebrow">TÀI LIỆU CỦA BẠN</span><h3>Hợp đồng thực tập</h3></div>
-        {contract && <span className="workspace-status is-warning"><i />Chờ xác nhận</span>}
+        <div><span className="workspace-eyebrow">TÀI LIỆU CỦA BẠN</span><h3>Hợp đồng thực tập <small>{contracts.length}</small></h3></div>
       </div>
       {contractLoading ? <div className="workspace-empty"><span>Đang tải hợp đồng…</span></div>
-        : contract ? <>
-          <div className="workspace-contract-details">
-            <FileText size={19} />
-            <div><strong>{contract.original_file_name}</strong><small>{contract.ten_chuong_trinh || contract.ten_phong_ban || 'Chưa có chương trình'} · Tải lên {contract.uploaded_at || '—'}</small></div>
-            <div className="workspace-contract-actions">
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => previewContract()}><Eye size={14} />Xem trước</button>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={downloadContract}><Download size={14} />Tải xuống</button>
-            </div>
-          </div>
-          {contractError && <p className="contract-error" role="alert">{contractError}</p>}
-          {contractPreviewUrl && <iframe className="workspace-contract-preview" src={contractPreviewUrl} title="Xem trước hợp đồng thực tập" />}
-        </> : <div className="workspace-empty"><FileText size={22} /><span>HR chưa tải hợp đồng lên. Hợp đồng sẽ xuất hiện tại đây sau khi được cập nhật.</span></div>}
+        : contracts.length ? <div className="workspace-contract-list">
+          {contracts.map((contract) => {
+            const presentation = contractStatus[contract.trang_thai] || { label: 'Chưa cập nhật', tone: 'warning' };
+            const isPending = contract.trang_thai === 'PENDING_CONFIRMATION';
+            const isPreviewing = Number(previewingContractId) === Number(contract.ma_hop_dong);
+            const isDecisionLoading = Number(contractDecision) === Number(contract.ma_hop_dong);
+            return <div className="workspace-contract-item" id={`internship-contract-${contract.ma_hop_dong}`} key={contract.ma_hop_dong}>
+              <div className="workspace-contract-item-main">
+              <div className="workspace-contract-details">
+                  <span className="workspace-file-icon"><FileText size={17} /></span>
+                  <div><strong>{contract.original_file_name}</strong><small>{contract.ten_chuong_trinh || contract.ten_phong_ban || 'Chưa có chương trình'} · Tải lên {contract.uploaded_at || '—'}</small></div>
+                  <span className={`workspace-status is-${presentation.tone}`} aria-live="polite"><i />{presentation.label}</span>
+                </div>
+                <div className="workspace-contract-actions">
+                  <button type="button" className="btn btn-secondary btn-sm" aria-expanded={isPreviewing} onClick={() => previewContract(contract.ma_hop_dong)}>
+                    <Eye size={14} />{isPreviewing ? 'Ẩn xem trước' : 'Xem trước'}
+                  </button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadContract(contract)}>
+                    <Download size={14} />Tải xuống
+                  </button>
+                  {isPending && <>
+                    <button type="button" className="btn btn-success btn-sm" disabled={Boolean(contractDecision)} onClick={() => setPendingContractDecision({ contractId: contract.ma_hop_dong, decision: 'CONFIRMED' })}>
+                      <Check size={14} />{isDecisionLoading ? 'Đang xử lý…' : 'Xác nhận'}
+                    </button>
+                    <button type="button" className="btn btn-danger btn-sm" disabled={Boolean(contractDecision)} onClick={() => setPendingContractDecision({ contractId: contract.ma_hop_dong, decision: 'REJECTED' })}>
+                      <X size={14} />{isDecisionLoading ? 'Đang xử lý…' : 'Từ chối'}
+                    </button>
+                  </>}
+                </div>
+              </div>
+              {isPreviewing && contractPreviewUrl && <iframe className="workspace-contract-preview" src={contractPreviewUrl} title={`Xem trước ${contract.original_file_name}`} />}
+            </div>;
+          })}
+        </div> : <div className="workspace-empty"><FileText size={22} /><span>HR chưa tải hợp đồng lên. Hợp đồng sẽ xuất hiện tại đây sau khi được cập nhật.</span></div>}
+      {contractError && <p className="contract-error" role="alert">{contractError}</p>}
     </article>
+    <ConfirmDialog
+      open={Boolean(pendingContractDecision)}
+      title={isConfirmingContract ? 'Xác nhận hợp đồng' : 'Từ chối hợp đồng'}
+      message={isConfirmingContract
+        ? `Bạn đồng ý với nội dung “${selectedDecisionContract?.original_file_name || 'hợp đồng này'}”? Quyết định đã gửi sẽ không thể thay đổi.`
+        : `Bạn muốn từ chối “${selectedDecisionContract?.original_file_name || 'hợp đồng này'}”? Quyết định từ chối sẽ không thể thay đổi; bộ phận nhân sự sẽ thấy trạng thái từ chối.`}
+      confirmLabel={isConfirmingContract ? 'Đồng ý xác nhận' : 'Từ chối hợp đồng'}
+      danger={!isConfirmingContract}
+      className="contract-confirm-dialog"
+      onConfirm={() => { void decideContract(); }}
+      onCancel={() => setPendingContractDecision(null)}
+    />
   </div>;
 }

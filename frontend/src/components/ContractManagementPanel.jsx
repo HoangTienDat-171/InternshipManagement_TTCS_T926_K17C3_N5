@@ -3,6 +3,11 @@ import { Download, Eye, FileText, UploadCloud } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
 const MAX_CONTRACT_SIZE = 15 * 1024 * 1024;
+const contractStatus = {
+  PENDING_CONFIRMATION: { label: 'Chờ xác nhận', badge: 'badge-warning' },
+  CONFIRMED: { label: 'Đã xác nhận', badge: 'badge-success' },
+  REJECTED: { label: 'Đã từ chối', badge: 'badge-danger' },
+};
 
 function formatDate(value) {
   if (!value) return '—';
@@ -54,17 +59,17 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
     }
   };
 
-  const uploadedProfiles = useMemo(
-    () => new Set(contracts.map((contract) => String(contract.ma_ho_so))),
+  const contractsPerProfile = useMemo(
+    () => contracts.reduce((counts, contract) => {
+      const profileId = String(contract.ma_ho_so);
+      counts[profileId] = (counts[profileId] || 0) + 1;
+      return counts;
+    }, {}),
     [contracts],
   );
   const approvedInterns = useMemo(
     () => interns.filter((intern) => intern.trang_thai_xet_duyet === 'DaDuyet'),
     [interns],
-  );
-  const eligibleInterns = useMemo(
-    () => approvedInterns.filter((intern) => !uploadedProfiles.has(String(intern.ma_ho_so))),
-    [approvedInterns, uploadedProfiles],
   );
 
   const uploadContract = async (event) => {
@@ -89,7 +94,6 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể tải hợp đồng lên.');
       onShowToast(`Đã tải hợp đồng của ${data.ho_ten} lên. Email thông báo đang được xử lý.`);
-      setSelectedProfile('');
       setSelectedFile(null);
       await refreshContracts();
     } catch (uploadError) {
@@ -146,7 +150,7 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
       <div className="card-header">
         <div className="card-title-box">
           <h2 id="contract-management-title">Hợp đồng thực tập</h2>
-          <p>Tải PDF lên cho hồ sơ đã được duyệt. TTS nhận thông báo trong hệ thống và email.</p>
+          <p>Gửi PDF cho hồ sơ đã duyệt. Có thể gửi nhiều hợp đồng cho cùng một thực tập sinh.</p>
         </div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={refreshContracts} disabled={loading}>
           Làm mới
@@ -155,11 +159,14 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
 
       <form className="contract-upload-form" onSubmit={uploadContract}>
         <label className="form-group">
-          <span className="form-label">Hồ sơ đã duyệt</span>
+          <span className="form-label">Thực tập sinh nhận hợp đồng</span>
           <select className="form-select" value={selectedProfile} onChange={(event) => setSelectedProfile(event.target.value)} disabled={uploading} required>
             <option value="">-- Chọn thực tập sinh --</option>
-            {eligibleInterns.map((intern) => (
-              <option key={intern.ma_ho_so} value={intern.ma_ho_so}>{intern.ho_ten} · #{intern.ma_ho_so}</option>
+            {approvedInterns.map((intern) => (
+              <option key={intern.ma_ho_so} value={intern.ma_ho_so}>
+                {intern.ho_ten} · #{intern.ma_ho_so}
+                {contractsPerProfile[String(intern.ma_ho_so)] ? ` · ${contractsPerProfile[String(intern.ma_ho_so)]} hợp đồng đã gửi` : ''}
+              </option>
             ))}
           </select>
         </label>
@@ -168,11 +175,12 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
           <span>{selectedFile?.name || 'Chọn hợp đồng PDF · tối đa 15 MB'}</span>
           <input type="file" accept=".pdf,application/pdf" disabled={uploading} onChange={(event) => { setSelectedFile(event.target.files?.[0] || null); event.target.value = ''; }} />
         </label>
-        <button type="submit" className="btn btn-primary btn-sm" disabled={uploading || eligibleInterns.length === 0}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={uploading || approvedInterns.length === 0}>
           <UploadCloud size={15} />{uploading ? 'Đang tải lên…' : 'Tải hợp đồng'}
         </button>
       </form>
-      {!eligibleInterns.length && !loading && <p className="contract-hint">Không có hồ sơ đã duyệt đang chờ hợp đồng.</p>}
+      {approvedInterns.length > 0 && <p className="contract-multiple-hint">Có thể gửi nhiều hợp đồng cho cùng một thực tập sinh.</p>}
+      {!approvedInterns.length && !loading && <p className="contract-hint">Không có hồ sơ đã duyệt để gửi hợp đồng.</p>}
       {error && <p className="contract-error" role="alert">{error}</p>}
 
       <div className="table-responsive contract-table-scroll">
@@ -187,7 +195,9 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
                     <td>{contract.original_file_name}</td>
                     <td>{contract.ten_chuong_trinh || contract.ten_phong_ban || '—'}</td>
                     <td>{formatDate(contract.uploaded_at)}</td>
-                    <td><span className="badge badge-warning"><span className="badge-dot" />Chờ xác nhận</span></td>
+                    <td><span className={`badge ${contractStatus[contract.trang_thai]?.badge || 'badge-warning'}`}>
+                      <span className="badge-dot" />{contractStatus[contract.trang_thai]?.label || 'Chờ xác nhận'}
+                    </span></td>
                     <td><div className="contract-row-actions">
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openContract(contract)} title="Xem hợp đồng"><Eye size={14} /><span>Xem</span></button>
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadContract(contract)} title="Tải hợp đồng"><Download size={14} /><span>Tải</span></button>
