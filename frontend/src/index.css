@@ -1324,6 +1324,10 @@ body { background: var(--bg-app); }
 .program-applicants-table { min-width: 940px; }
 .program-applicants-table td { vertical-align: middle; }
 .program-applicants-table small { display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.45; }
+.program-reject-dialog { width: min(520px, calc(100vw - 32px)); }
+.program-reject-body { display: grid; gap: 8px; padding: 20px 24px; }
+.program-reject-reason { min-height: 120px; resize: vertical; }
+.program-reject-counter { color: var(--text-muted); text-align: right; }
 .program-modal-message { padding: 38px; text-align: center; color: var(--text-muted); }
 .program-apply-dialog { width: min(540px, calc(100vw - 32px)); }
 .program-apply-dialog .modal-header > div { min-width: 0; }

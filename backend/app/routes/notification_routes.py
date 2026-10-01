@@ -13,14 +13,31 @@ def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db
     user = require_role(request)
     rows = db.execute("""
         SELECT n.ma_thong_bao, n.tieu_de, n.noi_dung, n.da_doc, n.thoi_gian_gui,
-               n.thoi_gian_doc, n.loai,
-               (SELECT e.status FROM EMAIL_OUTBOX e
-                WHERE e.reference_type='notification' AND e.reference_id=CAST(n.ma_thong_bao AS CHAR)
-                ORDER BY e.id DESC LIMIT 1) AS email_status
+               n.thoi_gian_doc, n.loai
         FROM THONG_BAO n WHERE n.ma_nguoi_dung = ?
         ORDER BY n.ma_thong_bao DESC LIMIT 50
     """, (user["ma_nguoi_dung"],)).fetchall()
     return [dict(row) for row in rows]
+
+
+@router.get("/email-outbox")
+def list_email_outbox(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    """Expose delivery diagnostics only to staff; never return message bodies or credentials."""
+    require_role(request, "Admin", "HR")
+    rows = db.execute("""
+        SELECT id, recipient_email, subject, template_type, reference_type, reference_id,
+               status, retry_count, max_retry, last_error, next_retry_at,
+               created_at, sent_at, updated_at
+        FROM EMAIL_OUTBOX ORDER BY id DESC LIMIT 100
+    """).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["max_retry"] = min(max(1, int(item["max_retry"] or 4)), 4)
+        item["retry_count"] = int(item["retry_count"] or 0)
+        item["attempts_made"] = item["retry_count"] + (1 if item["status"] in {"PROCESSING", "SENT"} else 0)
+        items.append(item)
+    return items
 
 
 @router.put("/{notification_id}/read")
@@ -34,14 +51,3 @@ def mark_notification_read(notification_id: int, request: Request, db: sqlite3.C
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy thông báo.")
     db.commit()
     return {"ma_thong_bao": notification_id, "da_doc": True}
-
-
-@router.get("/email-outbox")
-def list_email_outbox(request: Request, db: sqlite3.Connection = Depends(get_db)):
-    require_role(request, "Admin", "HR")
-    rows = db.execute("""
-        SELECT id, recipient_email, subject, status, retry_count, max_retry,
-               last_error, next_retry_at, created_at, sent_at, updated_at
-        FROM EMAIL_OUTBOX ORDER BY id DESC LIMIT 100
-    """).fetchall()
-    return [dict(row) for row in rows]

@@ -41,7 +41,7 @@ BEGIN
         deduplication_key VARCHAR(190) NOT NULL UNIQUE,
         status ENUM('PENDING','PROCESSING','SENT','FAILED','RETRY') NOT NULL DEFAULT 'PENDING',
         retry_count INT NOT NULL DEFAULT 0,
-        max_retry INT NOT NULL DEFAULT 5,
+        max_retry INT NOT NULL DEFAULT 4,
         last_error TEXT NULL,
         next_retry_at DATETIME NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -49,6 +49,8 @@ BEGIN
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         KEY idx_email_outbox_due (status, next_retry_at, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ALTER TABLE EMAIL_OUTBOX ALTER COLUMN max_retry SET DEFAULT 4;
+    UPDATE EMAIL_OUTBOX SET max_retry = 4 WHERE max_retry > 4;
 END$$
 DELIMITER ;
 

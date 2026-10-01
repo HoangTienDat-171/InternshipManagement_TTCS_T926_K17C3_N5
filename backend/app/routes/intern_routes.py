@@ -207,6 +207,29 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         record["trang_thai_tai_khoan"] != target_account_status
         and record["trang_thai_tai_khoan"] != "Khoa"
     )
+    internship_status = data.trang_thai_thuc_tap if data.trang_thai_xet_duyet == "DaDuyet" else None
+    if approval_changed:
+        cursor.execute("""
+            UPDATE HO_SO_THUC_TAP
+            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
+            WHERE ma_ho_so = ? AND trang_thai_xet_duyet = ?
+        """, (
+            data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet,
+            internship_status, id, record["trang_thai_xet_duyet"],
+        ))
+        if cursor.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Hồ sơ vừa được HR/Admin khác xử lý. Tải lại dữ liệu trước khi thử lại.",
+            )
+    else:
+        cursor.execute("""
+            UPDATE HO_SO_THUC_TAP
+            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
+            WHERE ma_ho_so = ?
+        """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, internship_status, id))
+
     if approval_changed or account_status_drift:
         sync_intern_approval(cursor, ma_nguoi_dung, data.trang_thai_xet_duyet)
 
@@ -216,13 +239,6 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         SET ho_ten = ?, email = ?, so_dien_thoai = ?, ma_phong_ban = ?
         WHERE ma_nguoi_dung = ?
     """, (data.ho_ten.strip(), data.email.strip().lower(), data.so_dien_thoai, data.ma_phong_ban, ma_nguoi_dung))
-
-    # 3. Cập nhật bảng HO_SO_THUC_TAP
-    cursor.execute("""
-        UPDATE HO_SO_THUC_TAP
-        SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
-        WHERE ma_ho_so = ?
-    """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, data.trang_thai_thuc_tap, id))
 
     if approval_changed or account_status_drift:
         title, message = {
@@ -238,6 +254,8 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
             email_recipient=(data.email.strip().lower() if decision in {"DaDuyet", "TuChoi"} else None),
             email_deduplication_key=(f"us08:intern_profile:{id}:{decision}"
                                      if decision in {"DaDuyet", "TuChoi"} else None),
+            email_reference_type="intern_profile",
+            email_reference_id=id,
         )
 
     db.commit()

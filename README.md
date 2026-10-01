@@ -70,22 +70,26 @@ Quá trình kiểm thử cần virtualenv Backend và khởi chạy API trên m�
 
 ## Sprint 2: US08 email kết quả xét duyệt
 
-Khi Admin/HR duyệt hoặc từ chối hồ sơ thực tập, hoặc Admin duyệt/từ chối đơn ứng tuyển chương trình, backend ghi thông báo trong app và email vào `EMAIL_OUTBOX` trong cùng transaction. Worker nền gửi SMTP, chống claim đồng thời, retry theo cấp số nhân (30, 60, 120, 240 giây) và chuyển sang `FAILED` khi hết 5 lần thử. Notification và outbox có khóa deduplication theo hồ sơ/đơn và kết quả.
+Khi tạo tài khoản, backend sinh mật khẩu tạm, gửi qua email và buộc người dùng đổi mật khẩu ngay lần đăng nhập đầu tiên. Khi Admin/HR duyệt hoặc từ chối hồ sơ thực tập hay đơn ứng tuyển chương trình, backend ghi thông báo trong app và email vào `EMAIL_OUTBOX` trong cùng transaction. Worker nền gửi SMTP và chống claim đồng thời. Email mới được thử tối đa 4 lần (lần đầu và 3 lần gửi lại); các lần gửi lại cách nhau 1, 5 và 15 phút, sau đó chuyển sang `FAILED`. Notification và outbox có khóa deduplication theo hồ sơ/đơn và kết quả. HR/Admin xem trạng thái, số lần gửi và lỗi gần nhất ở màn Quản lý thực tập sinh; trạng thái email không nằm trong menu thông báo.
 
-Thêm cấu hình SMTP vào `backend/.env` (không commit tệp này):
+Để gửi email bằng Gmail cá nhân, mở `backend/.env` (tạo từ `backend/.env.example` nếu chưa có) và thêm hoặc cập nhật cấu hình dưới đây. Giữ nguyên các dòng cấu hình MySQL đang dùng:
 
-    SMTP_HOST=smtp.example.com
+    SMTP_HOST=smtp.gmail.com
     SMTP_PORT=587
-    SMTP_USERNAME=mailer@example.com
-    SMTP_PASSWORD=<SMTP app password>
-    SMTP_FROM=mailer@example.com
+    SMTP_USERNAME=your-address@gmail.com
+    SMTP_PASSWORD=<Google App Password>
+    SMTP_FROM=your-address@gmail.com
     SMTP_USE_SSL=false
     SMTP_USE_STARTTLS=true
     SMTP_TIMEOUT_SECONDS=15
     EMAIL_WORKER_INTERVAL_SECONDS=5
+    IMS_COMPANY_NAME=Ten cong ty
+    IMS_PORTAL_URL=https://dia-chi-portal-cua-ban
 
-Port 465 thường dùng `SMTP_USE_SSL=true` và `SMTP_USE_STARTTLS=false`. Admin/HR xem hàng đợi và lỗi gửi gần đây tại `GET /api/notifications/email-outbox`; người dùng chỉ thấy trạng thái email trên thông báo của họ. Lỗi SMTP không chứa stack trace trong API và mật khẩu được che khỏi thông tin lỗi.
+Thay cả hai giá trị `your-address@gmail.com` bằng cùng địa chỉ Gmail của bạn. Bật [Xác minh 2 bước](https://support.google.com/accounts/answer/10956730) cho Google Account, tạo [App Password](https://support.google.com/mail/answer/185833) riêng cho ứng dụng này, rồi đặt App Password vào `SMTP_PASSWORD`; không dùng mật khẩu đăng nhập Gmail. Google có thể không cung cấp App Password cho một số tài khoản được quản lý, bật Advanced Protection hoặc chỉ dùng security key cho Xác minh 2 bước. Sau khi lưu `.env`, khởi động lại backend để worker nạp cấu hình. Không commit `.env` hoặc chia sẻ App Password.
 
-Để kiểm tra lỗi kết nối thực tế ở môi trường local, cấu hình `SMTP_HOST=127.0.0.1`, `SMTP_PORT=1`, duyệt một hồ sơ test rồi xem trạng thái `RETRY` và số lần thử tại endpoint trên. Worker dùng backoff nên lần retry kế tiếp cách 30 giây; các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
+`SMTP_HOST` là máy chủ SMTP của Gmail; địa chỉ Gmail cá nhân được dùng làm tài khoản xác thực và địa chỉ người gửi. `IMS_COMPANY_NAME` và `IMS_PORTAL_URL` được dùng trong email kết quả ứng tuyển; nếu bỏ trống, công ty hiển thị là `IMS Portal` và email hướng dẫn mở địa chỉ portal đã được cung cấp. Với MySQL hiện có, rà soát và áp dụng `migrations/20260930_us08_email_notifications.sql` để đặt giới hạn bốn lần thử cho cả mặc định lẫn hàng đợi cũ; áp dụng `migrations/20260930_temporary_passwords.sql` trước khi tạo tài khoản để thêm cột đổi mật khẩu. Backend không tự chạy các migration này.
+
+Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
 
 Xem docs/audit/2026-09-26-repo-audit.md và AGENTS.md trước khi thay đổi cấu trúc hoặc bảo mật.

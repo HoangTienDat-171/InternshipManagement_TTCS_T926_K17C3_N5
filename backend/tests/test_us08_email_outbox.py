@@ -57,7 +57,7 @@ class US08OutboxTests(unittest.TestCase):
                 subject TEXT NOT NULL, body TEXT NOT NULL, template_type TEXT NOT NULL,
                 reference_type TEXT, reference_id TEXT, deduplication_key TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL DEFAULT 'PENDING', retry_count INTEGER NOT NULL DEFAULT 0,
-                max_retry INTEGER NOT NULL DEFAULT 5, last_error TEXT, next_retry_at DATETIME,
+                max_retry INTEGER NOT NULL DEFAULT 4, last_error TEXT, next_retry_at DATETIME,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at DATETIME,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
             db.execute("""CREATE TABLE THONG_BAO (
@@ -72,7 +72,7 @@ class US08OutboxTests(unittest.TestCase):
         self.backend_patch.stop()
         self.temp_dir.cleanup()
 
-    def enqueue(self, key="event-1", retry_count=0, max_retry=5):
+    def enqueue(self, key="event-1", retry_count=0, max_retry=4):
         with sqlite3.connect(self.db_path) as db:
             db.execute("""INSERT INTO EMAIL_OUTBOX
                 (recipient_email, subject, body, template_type, deduplication_key,
@@ -92,6 +92,10 @@ class US08OutboxTests(unittest.TestCase):
         self.assertEqual((status, attempts, error), ("SENT", 0, None))
         self.assertIsNotNone(sent_at)
 
+    def test_smtp_timeout_is_capped_below_the_stale_claim_lease(self):
+        with patch.dict(os.environ, {"SMTP_TIMEOUT_SECONDS": "9999"}):
+            self.assertEqual(email_outbox._smtp_config()["timeout"], 30)
+
     def test_temporary_smtp_disconnect_schedules_retry(self):
         self.enqueue()
         with patch.object(email_outbox.smtplib, "SMTP", side_effect=OSError("connection lost")):
@@ -101,13 +105,19 @@ class US08OutboxTests(unittest.TestCase):
         self.assertIn("connection lost", error)
 
     def test_retry_limit_marks_failed_and_redacts_password(self):
-        self.enqueue(retry_count=4, max_retry=5)
+        self.enqueue(retry_count=3, max_retry=5)
         failure = smtplib.SMTPAuthenticationError(535, b"denied test-secret")
         with patch.object(email_outbox.smtplib, "SMTP", side_effect=failure):
             self.assertTrue(email_outbox.process_one_email())
         status, attempts, error, _ = self.outbox_row()
-        self.assertEqual((status, attempts), ("FAILED", 5))
+        self.assertEqual((status, attempts), ("FAILED", 4))
         self.assertNotIn("test-secret", error)
+
+    def test_legacy_five_attempt_row_is_failed_without_a_fifth_send(self):
+        self.enqueue(retry_count=4, max_retry=5)
+        with patch.object(email_outbox.smtplib, "SMTP", FakeSMTP):
+            self.assertFalse(email_outbox.process_one_email())
+        self.assertEqual(self.outbox_row()[0:2], ("FAILED", 4))
 
     def test_worker_does_not_send_sent_item_again(self):
         self.enqueue()
@@ -146,6 +156,28 @@ class US08OutboxTests(unittest.TestCase):
             notifications = db.execute("SELECT COUNT(*) FROM THONG_BAO").fetchone()[0]
             emails = db.execute("SELECT COUNT(*) FROM EMAIL_OUTBOX").fetchone()[0]
         self.assertEqual((notifications, emails), (2, 1))
+
+    def test_non_duplicate_outbox_integrity_error_is_not_suppressed(self):
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("""CREATE TRIGGER reject_test_email BEFORE INSERT ON EMAIL_OUTBOX
+                         WHEN NEW.subject = 'invalid'
+                         BEGIN SELECT RAISE(ABORT, 'invalid outbox data'); END""")
+        db = database.get_db_connection()
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                create_notification(
+                    db, 7, "Result", "Review result",
+                    email_recipient="student@test.invalid",
+                    email_deduplication_key="us08:application:integrity",
+                    email_subject="invalid",
+                )
+            db.rollback()
+        finally:
+            db.close()
+        with sqlite3.connect(self.db_path) as db:
+            notifications = db.execute("SELECT COUNT(*) FROM THONG_BAO").fetchone()[0]
+            emails = db.execute("SELECT COUNT(*) FROM EMAIL_OUTBOX").fetchone()[0]
+        self.assertEqual((notifications, emails), (0, 0))
 
     def test_notification_and_outbox_roll_back_together(self):
         db = database.get_db_connection()

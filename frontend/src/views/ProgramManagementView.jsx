@@ -81,6 +81,9 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [applicantTotalPages, setApplicantTotalPages] = useState(0);
   const [applicantsLoading, setApplicantsLoading] = useState(false);
   const [pendingClose, setPendingClose] = useState(null);
+  const [pendingReject, setPendingReject] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const tableScrollRef = useRef(null);
 
   const requestPrograms = useCallback(async (requestedPage, requestedPageSize, signal) => {
@@ -244,23 +247,30 @@ export default function ProgramManagementView({ departments, onShowToast, curren
     }
   };
 
-  const reviewApplicant = async (application, status) => {
+  const reviewApplicant = async (application, status, reason = '') => {
+    setReviewSubmitting(true);
     try {
       const response = await apiFetch(
         `/api/programs/${application.ma_chuong_trinh}/applications/${application.ma_ung_tuyen}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ trang_thai: status }),
+          body: JSON.stringify({ trang_thai: status, reject_reason: status === 'TuChoi' ? reason : undefined }),
         },
       );
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể cập nhật đơn ứng tuyển.');
       onShowToast(data.message);
+      if (status === 'TuChoi') {
+        setPendingReject(null);
+        setRejectReason('');
+      }
       await loadApplicants(applicantProgram);
       await refreshPrograms();
     } catch (error) {
       onShowToast(error.message, 'error');
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
@@ -445,15 +455,15 @@ export default function ProgramManagementView({ departments, onShowToast, curren
               {applicantsLoading ? <div className="program-modal-message">Đang tải danh sách...</div>
                 : applicants.length === 0 ? <div className="program-modal-message">Chưa có ứng viên đăng ký.</div>
                   : <><div className="table-responsive program-applicants-scroll"><table className="data-table program-applicants-table">
-                    <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th>{isAdmin && <th>Thao tác</th>}</tr></thead>
+                    <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th>{isManager && <th>Thao tác</th>}</tr></thead>
                     <tbody>{applicants.map((application) => <tr key={application.ma_ung_tuyen}>
                       <td><strong>{application.ho_ten}</strong><small>{application.email}<br />{application.so_dien_thoai || 'Chưa có SĐT'}</small></td>
                       <td>{application.ten_truong || 'Chưa cập nhật'}<small>{application.chuyen_nganh || 'Chưa cập nhật'}</small></td>
                       <td>{application.ngay_ung_tuyen ? new Date(application.ngay_ung_tuyen).toLocaleString('vi-VN') : '—'}</td>
                       <td><StatusBadge status={application.trang_thai} /></td>
-                      {isAdmin && <td>{application.trang_thai === 'ChoDuyet' ? <div className="program-row-actions">
-                        <button type="button" className="btn btn-primary btn-sm" onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>
-                        <button type="button" className="btn btn-danger btn-sm" onClick={() => reviewApplicant(application, 'TuChoi')}><XCircle size={13} />Từ chối</button>
+                      {isManager && <td>{application.trang_thai === 'ChoDuyet' ? <div className="program-row-actions">
+                        <button type="button" className="btn btn-primary btn-sm" disabled={reviewSubmitting} onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>
+                        <button type="button" className="btn btn-danger btn-sm" disabled={reviewSubmitting} onClick={() => { setPendingReject(application); setRejectReason(''); }}><XCircle size={13} />Từ chối</button>
                       </div> : <span className="program-applicant-count">Đã xử lý</span>}</td>}
                     </tr>)}</tbody>
                   </table></div>
@@ -472,6 +482,39 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                       }}
                     />
                   </>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {pendingReject && (
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && !reviewSubmitting && setPendingReject(null)}>
+          <section className="modal-container program-reject-dialog" role="dialog" aria-modal="true" aria-labelledby="program-reject-title">
+            <div className="modal-header">
+              <div>
+                <h3 id="program-reject-title">Từ chối hồ sơ ứng tuyển</h3>
+                <p>{pendingReject.ho_ten} · {applicantProgram?.ten_ct}</p>
+              </div>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" disabled={reviewSubmitting} onClick={() => setPendingReject(null)}><X size={18} /></button>
+            </div>
+            <div className="modal-body program-reject-body">
+              <label className="form-label" htmlFor="program-reject-reason">Lý do hoặc ghi chú (không bắt buộc)</label>
+              <textarea
+                id="program-reject-reason"
+                className="form-control program-reject-reason"
+                maxLength={1000}
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                disabled={reviewSubmitting}
+                placeholder="Nhập ghi chú để gửi kèm email kết quả..."
+              />
+              <small className="program-reject-counter">{rejectReason.length}/1000 ký tự</small>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" disabled={reviewSubmitting} onClick={() => setPendingReject(null)}>Hủy</button>
+              <button type="button" className="btn btn-danger" disabled={reviewSubmitting} onClick={() => reviewApplicant(pendingReject, 'TuChoi', rejectReason)}>
+                <XCircle size={14} /><span>{reviewSubmitting ? 'Đang xử lý...' : 'Xác nhận từ chối'}</span>
+              </button>
             </div>
           </section>
         </div>

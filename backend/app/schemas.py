@@ -168,6 +168,7 @@ class ProgramDetail(BaseModel):
 
 class ProgramApplicationReview(BaseModel):
     trang_thai: Literal["DaDuyet", "TuChoi"]
+    reject_reason: Optional[str] = Field(default=None, max_length=1000)
 
 class ProgramApplicationDetail(BaseModel):
     ma_ung_tuyen: int

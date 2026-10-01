@@ -12,6 +12,15 @@ from .database import get_db_connection
 logger = logging.getLogger(__name__)
 _worker_task: asyncio.Task | None = None
 _worker_stop: asyncio.Event | None = None
+RETRY_DELAYS_SECONDS = (60, 300, 900)
+MAX_EMAIL_ATTEMPTS = len(RETRY_DELAYS_SECONDS) + 1
+MAX_SMTP_TIMEOUT_SECONDS = 30
+
+
+def _header_value(value, limit: int = 998) -> str:
+    """Remove header control characters before passing values to the mail library."""
+    normalized = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+    return normalized[:limit]
 
 
 def _database_now(db) -> datetime:
@@ -33,7 +42,7 @@ def _smtp_config():
         "sender": sender,
         "use_ssl": os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"},
         "use_starttls": os.getenv("SMTP_USE_STARTTLS", "true").lower() in {"1", "true", "yes"},
-        "timeout": float(os.getenv("SMTP_TIMEOUT_SECONDS", "15")),
+        "timeout": max(1.0, min(float(os.getenv("SMTP_TIMEOUT_SECONDS", "15")), MAX_SMTP_TIMEOUT_SECONDS)),
     }
 
 
@@ -43,10 +52,22 @@ def _claim_one():
         stale_before = (_database_now(db) - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
             """UPDATE EMAIL_OUTBOX
-               SET status=CASE WHEN retry_count + 1 >= max_retry THEN 'FAILED' ELSE 'RETRY' END,
+               SET body=CASE WHEN template_type='temporary_credentials' THEN '' ELSE body END,
+                   status='FAILED', last_error=COALESCE(last_error, 'Email retry limit reached.'),
+                   next_retry_at=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE status IN ('PENDING','RETRY')
+                 AND retry_count >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END"""
+        )
+        db.execute(
+            """UPDATE EMAIL_OUTBOX
+               SET body=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
+                                AND template_type='temporary_credentials' THEN '' ELSE body END,
+                   status=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
+                               THEN 'FAILED' ELSE 'RETRY' END,
                    retry_count=retry_count + 1,
                    last_error='Previous email delivery attempt timed out.',
-                   next_retry_at=CASE WHEN retry_count + 1 >= max_retry THEN NULL ELSE CURRENT_TIMESTAMP END,
+                   next_retry_at=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
+                                     THEN NULL ELSE CURRENT_TIMESTAMP END,
                    updated_at=CURRENT_TIMESTAMP
                WHERE status='PROCESSING' AND updated_at < ?""",
             (stale_before,),
@@ -77,7 +98,7 @@ def _claim_one():
 
 def _safe_error(exc: Exception) -> str:
     # Keep useful transport diagnostics without returning exception traces or credentials.
-    message = f"{type(exc).__name__}: {exc}"
+    message = " ".join(f"{type(exc).__name__}: {exc}".split())
     for secret in (os.getenv("SMTP_PASSWORD", ""), os.getenv("SMTP_USERNAME", "")):
         if secret:
             message = message.replace(secret, "[redacted]")
@@ -89,6 +110,7 @@ def _mark_sent(outbox_id: int):
     try:
         db.execute(
             """UPDATE EMAIL_OUTBOX SET status='SENT', sent_at=CURRENT_TIMESTAMP,
+                      body=CASE WHEN template_type='temporary_credentials' THEN '' ELSE body END,
                       next_retry_at=NULL, last_error=NULL, updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND status='PROCESSING'""",
             (outbox_id,),
@@ -103,17 +125,19 @@ def _mark_sent(outbox_id: int):
 
 def _mark_failed_attempt(item, exc: Exception):
     retry_count = item["retry_count"] + 1
-    failed = retry_count >= item["max_retry"]
-    delay_seconds = min(3600, 30 * (2 ** min(retry_count - 1, 7)))
+    failed = retry_count >= min(max(1, int(item["max_retry"] or MAX_EMAIL_ATTEMPTS)), MAX_EMAIL_ATTEMPTS)
+    delay_seconds = RETRY_DELAYS_SECONDS[min(retry_count - 1, len(RETRY_DELAYS_SECONDS) - 1)]
     db = get_db_connection()
     try:
         next_retry = (_database_now(db) + timedelta(seconds=delay_seconds)).strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
             """UPDATE EMAIL_OUTBOX
-               SET status=?, retry_count=?, last_error=?, next_retry_at=?, updated_at=CURRENT_TIMESTAMP
+               SET status=?, retry_count=?, last_error=?, next_retry_at=?,
+                   body=CASE WHEN ? AND template_type='temporary_credentials' THEN '' ELSE body END,
+                   updated_at=CURRENT_TIMESTAMP
                WHERE id=? AND status='PROCESSING'""",
             ("FAILED" if failed else "RETRY", retry_count, _safe_error(exc),
-             None if failed else next_retry, item["id"]),
+             None if failed else next_retry, failed, item["id"]),
         )
         db.commit()
     except Exception:
@@ -132,12 +156,12 @@ def process_one_email() -> bool:
     if not item:
         return False
 
-    message = EmailMessage()
-    message["From"] = config["sender"]
-    message["To"] = item["recipient_email"]
-    message["Subject"] = item["subject"]
-    message.set_content(item["body"])
     try:
+        message = EmailMessage()
+        message["From"] = _header_value(config["sender"])
+        message["To"] = _header_value(item["recipient_email"], 254)
+        message["Subject"] = _header_value(item["subject"], 255)
+        message.set_content(item["body"])
         if config["use_ssl"]:
             client = smtplib.SMTP_SSL(
                 config["host"], config["port"], timeout=config["timeout"],
@@ -153,7 +177,7 @@ def process_one_email() -> bool:
             smtp.send_message(message)
         _mark_sent(item["id"])
         logger.info("Email outbox item %s sent", item["id"])
-    except (smtplib.SMTPException, OSError, TimeoutError) as exc:
+    except (smtplib.SMTPException, OSError, TimeoutError, ValueError) as exc:
         _mark_failed_attempt(item, exc)
         logger.warning("Email outbox item %s delivery failed (%s)", item["id"], type(exc).__name__)
     except Exception:
