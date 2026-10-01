@@ -11,6 +11,7 @@ import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import MailboxView from './views/MailboxView';
+import PersonalScheduleView from './views/PersonalScheduleView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -455,6 +456,10 @@ export default function App() {
               onNavigatePrograms={() => navigateToTab('programs')}
               onShowToast={showToast}
             />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-schedule' && (
+            <PersonalScheduleView />
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (

@@ -1145,5 +1145,97 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_us14_personal_schedule_is_session_scoped_and_week_filtered(self):
+        suffix = str(time.time_ns())
+        intern_a = self.create_contract_intern(f"us14-a.{suffix}")
+        intern_b = self.create_contract_intern(f"us14-b.{suffix}")
+        empty_intern = self.create_contract_intern(f"us14-empty.{suffix}")
+        admin_token, admin = self.login("admin@internship.vn")
+        mentor = self.login("mentor@internship.vn")[1]
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            program_a = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US14 Backend Internship', 1, '2026-09-28', '2026-10-04', 2, 'DangMo')
+            """, (f"US14-A-{suffix}",)).lastrowid
+            program_b = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US14 Data Internship', 2, '2026-10-05', '2026-10-11', 2, 'DangMo')
+            """, (f"US14-B-{suffix}",)).lastrowid
+            for program_id, intern in ((program_a, intern_a), (program_b, intern_b)):
+                db.execute("""
+                    INSERT INTO UNG_TUYEN_CHUONG_TRINH
+                        (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet, nguoi_xet_duyet)
+                    VALUES (?, ?, 'DaDuyet', CURRENT_TIMESTAMP, ?)
+                """, (program_id, intern["profile_id"], admin["ma_nguoi_dung"]))
+            db.execute("""
+                INSERT INTO PHAN_CONG_MENTOR_TTS
+                    (ma_nguoi_dung_mentor, ma_ho_so, ma_nguoi_phan_cong)
+                VALUES (?, ?, ?)
+            """, (mentor["ma_nguoi_dung"], intern_a["profile_id"], admin["ma_nguoi_dung"]))
+            db.commit()
+        finally:
+            db.close()
+
+        intern_a_token, _ = self.login(intern_a["email"])
+        intern_b_token, _ = self.login(intern_b["email"])
+        mentor_token, _ = self.login("mentor@internship.vn")
+
+        status_code, _, _ = self.json_request("/api/interns/me/schedule")
+        self.assertEqual(status_code, 401)
+        status_code, _, _ = self.json_request("/api/interns/me/schedule", token=admin_token)
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.json_request("/api/interns/me/schedule", token=mentor_token)
+        self.assertEqual(status_code, 403)
+
+        status_code, schedule, _ = self.json_request(
+            f"/api/interns/me/schedule?week_start=2026-09-30&student_id={intern_b['user_id']}&user_id={intern_b['user_id']}",
+            token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200, schedule)
+        self.assertEqual(schedule["week"], {"start_date": "2026-09-28", "end_date": "2026-10-04"})
+        self.assertEqual(len(schedule["events"]), 1)
+        event = schedule["events"][0]
+        self.assertEqual(event["type"], "PROGRAM_PERIOD")
+        self.assertEqual(event["status"], "APPROVED")
+        self.assertEqual((event["program"]["id"], event["program"]["name"]), (program_a, "US14 Backend Internship"))
+        self.assertEqual((event["start_date"], event["end_date"], event["all_day"]), ("2026-09-28", "2026-10-04", True))
+        self.assertEqual(event["mentor"]["name"], mentor["ho_ten"])
+        self.assertNotIn("terms", schedule["filters"])
+        self.assertNotIn("location", event)
+        self.assertNotIn("meeting_url", event)
+        self.assertNotIn("department", event)
+        self.assertNotIn("ma_nguoi_dung", event)
+        self.assertNotIn("ma_ho_so", event)
+
+        status_code, program_schedule, _ = self.json_request(
+            f"/api/interns/me/schedule?week_start=2026-09-28&program_id={program_a}",
+            token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(len(program_schedule["events"]), 1)
+
+        status_code, next_week, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-10-05", token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(next_week["events"], [])
+        status_code, other_schedule, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-10-05", token=intern_b_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(other_schedule["events"][0]["program"]["id"], program_b)
+        self.assertTrue(other_schedule["warning"])
+
+        status_code, empty_schedule, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-09-28", token=self.login(empty_intern["email"])[0],
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(empty_schedule["events"], [])
+        self.assertTrue(empty_schedule["warning"])
+
 if __name__ == "__main__":
     unittest.main()

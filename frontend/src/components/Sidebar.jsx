@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   UserCheck, 
   Calendar, 
+  CalendarDays,
   FolderUp, 
   ShieldCheck, 
   Building2,
@@ -22,6 +23,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
 
   const navItems = [
     ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch cá nhân', icon: <CalendarDays size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...(canManage ? [
     {

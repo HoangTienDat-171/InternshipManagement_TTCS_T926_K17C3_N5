@@ -10,8 +10,22 @@ from ..schemas import InternCreate, InternUpdate, InternDetail
 from ..security import require_role, publish_force_logout
 from ..intern_workflow import APPROVAL_TO_ACCOUNT_STATUS, sync_intern_approval
 from ..notifications import create_notification
+from ..personal_schedule import PersonalScheduleService
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
+
+
+@router.get("/me/schedule")
+def intern_personal_schedule(
+    request: Request,
+    week_start: date | None = Query(None),
+    program_id: int | None = Query(None, ge=1),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user = require_role(request, "ThucTapSinh")
+    return PersonalScheduleService(db).get_for_intern(
+        user["ma_nguoi_dung"], week_start=week_start, program_id=program_id,
+    )
 
 
 @router.get("/me/workspace")

@@ -1888,6 +1888,72 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   color: var(--text-body);
 }
 
+.personal-schedule-heading { align-items: flex-end; }
+.personal-schedule-heading .btn { flex: 0 0 auto; }
+.personal-schedule-filters { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: end; gap: 12px; }
+.personal-schedule-filters > label { display: grid; gap: 6px; min-width: 0; color: var(--text-muted); font-size: 11px; font-weight: 650; }
+.personal-schedule-filters .form-select { width: 100%; min-width: 0; min-height: 39px; }
+.personal-schedule-week-picker { display: flex; align-items: center; gap: 7px; min-height: 39px; white-space: nowrap; }
+.personal-schedule-week-picker strong { min-width: 160px; color: var(--text-body); font-size: 12px; text-align: center; }
+.personal-schedule-week-picker .btn { min-height: 34px; }
+.personal-schedule-view-toggle { display: flex; padding: 3px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--surface-card-hover); }
+.personal-schedule-view-toggle button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.personal-schedule-view-toggle button.active { background: #4f46e5; color: #fff; box-shadow: 0 2px 6px rgb(79 70 229 / 18%); }
+.personal-schedule-warning { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--warning-border); border-radius: 11px; background: var(--warning-bg); color: var(--warning-text); font-size: 13px; line-height: 1.5; }
+.personal-schedule-warning svg { flex: 0 0 auto; margin-top: 1px; }
+.personal-schedule-error { align-items: center; }
+.personal-schedule-card { overflow: hidden; }
+.personal-schedule-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.personal-schedule-card-heading h3 { margin: 5px 0 0; color: var(--text-body); font-size: 17px; }
+.personal-schedule-empty { display: grid; justify-items: center; gap: 8px; min-height: 230px; align-content: center; color: var(--text-muted); text-align: center; }
+.personal-schedule-empty svg { margin-bottom: 4px; color: #7770e9; }
+.personal-schedule-empty strong { color: var(--text-body); font-size: 15px; }
+.personal-schedule-empty span { max-width: 460px; font-size: 12px; line-height: 1.5; }
+.personal-week-calendar { overflow-x: auto; }
+.personal-week-headings, .personal-week-track { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); min-width: 740px; }
+.personal-week-headings { border: 1px solid var(--border-color); border-bottom: 0; border-radius: 10px 10px 0 0; background: var(--surface-card-hover); }
+.personal-week-headings > div { display: grid; justify-items: center; gap: 3px; padding: 10px 5px; border-right: 1px solid var(--border-color); color: var(--text-muted); font-size: 10px; }
+.personal-week-headings > div:last-child { border-right: 0; }
+.personal-week-headings strong { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; color: var(--text-body); font-size: 12px; }
+.personal-week-headings > .is-today strong { background: #4f46e5; color: #fff; }
+.personal-week-track { grid-template-rows: repeat(var(--schedule-lanes), minmax(118px, auto)); position: relative; border: 1px solid var(--border-color); border-radius: 0 0 10px 10px; border-top: 0; }
+.personal-week-cell { min-height: 118px; border-right: 1px solid var(--border-color); background: var(--surface-card); }
+.personal-week-cell:nth-child(7) { border-right: 0; }
+.personal-week-cell.is-today { background: rgb(99 102 241 / 5%); }
+.personal-week-event-slot { z-index: 1; min-width: 0; padding: 7px 5px; }
+.personal-schedule-event { display: grid; gap: 8px; min-width: 0; padding: 13px; border: 1px solid var(--border-color); border-left: 3px solid #6366f1; border-radius: 10px; background: var(--surface-card); box-shadow: var(--shadow-sm); color: var(--text-body); }
+.personal-schedule-event.is-compact { height: 100%; align-content: start; padding: 9px; border-left-width: 3px; }
+.personal-schedule-event.is-approved { border-left-color: #10b981; }
+.personal-schedule-event-time { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 10px; }
+.personal-schedule-event > strong { overflow: hidden; color: var(--text-body); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; }
+.personal-schedule-event-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 12px; color: var(--text-muted); font-size: 10px; }
+.personal-schedule-event-meta > span:not(.personal-schedule-state) { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.personal-schedule-state { padding: 3px 7px; border-radius: 999px; background: var(--info-bg); color: var(--info-text); white-space: nowrap; }
+.personal-schedule-state.is-approved { background: var(--success-bg); color: var(--success-text); }
+.personal-agenda-list { display: grid; gap: 10px; }
+.personal-schedule-no-program { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.personal-schedule-no-program svg { color: #7770e9; }
+.personal-schedule-skeleton-header { width: 230px; height: 24px; margin-bottom: 18px; border-radius: 7px; background: linear-gradient(90deg, var(--surface-card-hover), #e9eaf4, var(--surface-card-hover)); background-size: 200% 100%; animation: personal-schedule-shimmer 1.3s infinite; }
+.personal-schedule-skeleton-grid { display: grid; grid-template-columns: repeat(7, minmax(80px, 1fr)); gap: 8px; overflow: hidden; }
+.personal-schedule-skeleton-day { display: grid; align-content: start; gap: 11px; min-height: 138px; padding: 12px; border: 1px solid var(--border-color); border-radius: 9px; }
+.personal-schedule-skeleton-day i { height: 9px; border-radius: 5px; background: linear-gradient(90deg, var(--surface-card-hover), #e9eaf4, var(--surface-card-hover)); background-size: 200% 100%; animation: personal-schedule-shimmer 1.3s infinite; }
+.personal-schedule-skeleton-day i:last-child { width: 72%; height: 54px; }
+@keyframes personal-schedule-shimmer { to { background-position: -200% 0; } }
+:root[data-theme='dark'] .personal-schedule-skeleton-header,
+:root[data-theme='dark'] .personal-schedule-skeleton-day i { background-image: linear-gradient(90deg, #27364b, #36445a, #27364b); }
+@media (max-width: 1100px) {
+  .personal-schedule-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-schedule-week-picker, .personal-schedule-view-toggle { justify-self: start; }
+}
+@media (max-width: 650px) {
+  .personal-schedule-heading { align-items: flex-start; }
+  .personal-schedule-filters { grid-template-columns: minmax(0, 1fr); }
+  .personal-schedule-week-picker { flex-wrap: wrap; }
+  .personal-schedule-week-picker strong { min-width: 135px; }
+  .personal-schedule-card-heading { align-items: flex-start; flex-direction: column; }
+  .personal-schedule-skeleton-grid { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
+}
+
 :root[data-theme='dark'] .content-wrapper h1[style],
 :root[data-theme='dark'] .content-wrapper h2[style],
 :root[data-theme='dark'] .content-wrapper h3[style],
