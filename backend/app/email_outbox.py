@@ -76,6 +76,7 @@ def _claim_one():
             """SELECT id, recipient_email, subject, body, retry_count, max_retry
                FROM EMAIL_OUTBOX
                WHERE status IN ('PENDING','RETRY')
+                 AND (reference_type IS NULL OR reference_type <> 'internal_message')
                  AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
                ORDER BY created_at, id LIMIT 1"""
         ).fetchone()

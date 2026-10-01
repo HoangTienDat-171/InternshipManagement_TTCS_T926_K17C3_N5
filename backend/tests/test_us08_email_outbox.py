@@ -127,6 +127,18 @@ class US08OutboxTests(unittest.TestCase):
             self.assertFalse(email_outbox.process_one_email())
         self.assertEqual(len(FakeSMTP.created), 1)
 
+    def test_worker_skips_queued_legacy_mailbox_email(self):
+        self.enqueue()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE EMAIL_OUTBOX SET reference_type='internal_message'")
+
+        FakeSMTP.created.clear()
+        with patch.object(email_outbox.smtplib, "SMTP", FakeSMTP):
+            self.assertFalse(email_outbox.process_one_email())
+
+        self.assertEqual(self.outbox_row()[0], "PENDING")
+        self.assertEqual(FakeSMTP.created, [])
+
     def test_stale_processing_claim_is_retried(self):
         self.enqueue()
         db = sqlite3.connect(self.db_path)

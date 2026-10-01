@@ -520,6 +520,13 @@ class Sprint1RuntimeTests(unittest.TestCase):
             rejected_email_status = db.execute(
                 "SELECT status FROM EMAIL_OUTBOX WHERE recipient_email=?", (rejected_email,),
             ).fetchone()[0]
+            db.execute("""
+                INSERT INTO THONG_BAO
+                    (ma_nguoi_dung, tieu_de, noi_dung, kenh, loai, reference_type, reference_id)
+                VALUES (?, 'Old mailbox message', 'Legacy message', 'App',
+                        'mailbox_message', 'internal_message', 'legacy-1')
+            """, (approved_user_id,))
+            db.commit()
         finally:
             db.close()
         self.assertEqual(rejected_email_status, "PENDING")
