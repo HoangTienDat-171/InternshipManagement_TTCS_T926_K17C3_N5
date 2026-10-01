@@ -1,12 +1,14 @@
 import sqlite3
+import os
 from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 
 from ..database import get_db
+from .. import database as database_module
 from .document_routes import MAX_FILE_SIZE, UPLOAD_ROOT, valid_file_content
 from ..notifications import create_notification
 from ..schemas import (
@@ -18,6 +20,17 @@ from ..schemas import (
 from ..security import require_role
 
 router = APIRouter(prefix="/api/programs", tags=["Internship Programs"])
+
+
+def _email_value(value: Any, fallback: str = "Chưa cập nhật") -> str:
+    """Render optional or user-provided values as safe, single-line plain text."""
+    normalized = " ".join(str(value or "").split())
+    return normalized or fallback
+
+
+def _email_date(value: Any) -> str:
+    normalized = _email_value(value, "")
+    return normalized[:10] if normalized else "Chưa xác định"
 
 
 def parse_required_date(value: str, field_name: str) -> str:
@@ -212,6 +225,7 @@ def close_program(program_id: int, request: Request, db: sqlite3.Connection = De
 @router.post("/{program_id}/apply", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
 async def apply_to_program(
     program_id: int, request: Request, cv: UploadFile | None = File(default=None),
+    use_approved_profile: bool = Form(default=False),
     db: sqlite3.Connection = Depends(get_db),
 ):
     user = require_role(request, "ThucTapSinh")
@@ -220,7 +234,7 @@ async def apply_to_program(
         raise HTTPException(status_code=400, detail="Chương trình đã ngừng nhận hồ sơ.")
 
     profile = db.execute("""
-        SELECT h.ma_ho_so
+        SELECT h.ma_ho_so, h.trang_thai_xet_duyet
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         WHERE h.ma_nguoi_dung = ? AND u.vai_tro = 'ThucTapSinh'
@@ -228,17 +242,35 @@ async def apply_to_program(
     if not profile:
         raise HTTPException(status_code=400, detail="Tài khoản chưa có hồ sơ thực tập sinh hợp lệ.")
 
-    if not cv or not cv.filename:
-        raise HTTPException(status_code=400, detail="Vui lòng đính kèm CV trước khi ứng tuyển.")
-    filename = PurePosixPath(cv.filename.replace("\\", "/")).name
-    extension = Path(filename).suffix.lower()
-    if len(filename) > 255 or extension not in {".pdf", ".docx", ".png"}:
-        raise HTTPException(status_code=400, detail="CV phải là tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
-    content = await cv.read(MAX_FILE_SIZE + 1)
-    if not content or len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="CV phải có dung lượng từ 1 byte đến 15 MB.")
-    if not valid_file_content(extension, content):
-        raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng CV đã chọn.")
+    filename = None
+    extension = None
+    content = None
+    if use_approved_profile:
+        if cv and cv.filename:
+            raise HTTPException(status_code=400, detail="Chỉ chọn dùng hồ sơ đã duyệt hoặc tải CV mới.")
+        if profile["trang_thai_xet_duyet"] != "DaDuyet":
+            raise HTTPException(status_code=400, detail="Hồ sơ của bạn chưa được duyệt để dùng ứng tuyển.")
+        approved_cv = db.execute("""
+            SELECT ma_tai_lieu
+            FROM TAI_LIEU_HO_SO
+            WHERE ma_ho_so = ? AND loai_tai_lieu = 'CV' AND trang_thai_duyet = 'DaDuyet'
+            ORDER BY ngay_tai_len DESC, ma_tai_lieu DESC
+            LIMIT 1
+        """, (profile["ma_ho_so"],)).fetchone()
+        if not approved_cv:
+            raise HTTPException(status_code=400, detail="Hồ sơ chưa có CV được duyệt để dùng ứng tuyển.")
+    else:
+        if not cv or not cv.filename:
+            raise HTTPException(status_code=400, detail="Vui lòng chọn hồ sơ đã duyệt hoặc đính kèm CV mới.")
+        filename = PurePosixPath(cv.filename.replace("\\", "/")).name
+        extension = Path(filename).suffix.lower()
+        if len(filename) > 255 or extension not in {".pdf", ".docx", ".png"}:
+            raise HTTPException(status_code=400, detail="CV phải là tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
+        content = await cv.read(MAX_FILE_SIZE + 1)
+        if not content or len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="CV phải có dung lượng từ 1 byte đến 15 MB.")
+        if not valid_file_content(extension, content):
+            raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng CV đã chọn.")
 
     absolute_path = None
     try:
@@ -249,16 +281,17 @@ async def apply_to_program(
         ).fetchone():
             raise HTTPException(status_code=400, detail="Bạn đã ứng tuyển chương trình này.")
 
-        storage_name = f"{uuid4().hex}{extension}"
-        absolute_path = UPLOAD_ROOT / storage_name
-        UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-        with absolute_path.open("xb") as stored_file:
-            stored_file.write(content)
-        db.execute("""
-            INSERT INTO TAI_LIEU_HO_SO
-                (ma_ho_so, loai_tai_lieu, duong_dan_file, ten_file, kich_thuoc)
-            VALUES (?, 'CV', ?, ?, ?)
-        """, (profile["ma_ho_so"], PurePosixPath("documents", storage_name).as_posix(), filename, len(content)))
+        if not use_approved_profile:
+            storage_name = f"{uuid4().hex}{extension}"
+            absolute_path = UPLOAD_ROOT / storage_name
+            UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+            with absolute_path.open("xb") as stored_file:
+                stored_file.write(content)
+            db.execute("""
+                INSERT INTO TAI_LIEU_HO_SO
+                    (ma_ho_so, loai_tai_lieu, duong_dan_file, ten_file, kich_thuoc)
+                VALUES (?, 'CV', ?, ?, ?)
+            """, (profile["ma_ho_so"], PurePosixPath("documents", storage_name).as_posix(), filename, len(content)))
         cursor = db.execute("""
             INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai)
             VALUES (?, ?, 'ChoDuyet')
@@ -289,11 +322,17 @@ async def apply_to_program(
             absolute_path.unlink(missing_ok=True)
         raise
     finally:
-        await cv.close()
+        if cv is not None:
+            await cv.close()
     return {
-        "message": "Đã ghi nhận hồ sơ. Đơn ứng tuyển đang chờ duyệt.",
+        "message": (
+            "Đã gửi hồ sơ đã được duyệt. Đơn ứng tuyển đang chờ duyệt."
+            if use_approved_profile
+            else "Đã ghi nhận hồ sơ. Đơn ứng tuyển đang chờ duyệt."
+        ),
         "ma_ung_tuyen": cursor.lastrowid,
         "trang_thai": "ChoDuyet",
+        "su_dung_ho_so_da_duyet": use_approved_profile,
     }
 
 
@@ -358,10 +397,17 @@ def review_program_application(
     request: Request,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    reviewer = require_role(request, "Admin")
+    reviewer = require_role(request, "Admin", "HR")
+    if database_module.DATABASE_BACKEND == "sqlite":
+        db.execute("BEGIN IMMEDIATE")
+    else:
+        db.execute(
+            "SELECT ma_chuong_trinh FROM CHUONG_TRINH_THUC_TAP WHERE ma_chuong_trinh = ? FOR UPDATE",
+            (program_id,),
+        ).fetchone()
     program = get_program(db, program_id)
     application = db.execute("""
-        SELECT a.ma_ung_tuyen, a.trang_thai, h.ma_nguoi_dung, u.ho_ten, u.email
+        SELECT a.ma_ung_tuyen, a.trang_thai, h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -380,21 +426,83 @@ def review_program_application(
         if approved_count >= program["chi_tieu"]:
             raise HTTPException(status_code=400, detail="Chương trình đã đủ chỉ tiêu được duyệt.")
 
-    db.execute("""
+    cursor = db.execute("""
         UPDATE UNG_TUYEN_CHUONG_TRINH
         SET trang_thai = ?, ngay_xet_duyet = CURRENT_TIMESTAMP, nguoi_xet_duyet = ?
-        WHERE ma_ung_tuyen = ?
-    """, (data.trang_thai, reviewer["ma_nguoi_dung"], application_id))
+        WHERE ma_ung_tuyen = ? AND ma_chuong_trinh = ? AND trang_thai = 'ChoDuyet'
+    """, (data.trang_thai, reviewer["ma_nguoi_dung"], application_id, program_id))
+    if cursor.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Đơn ứng tuyển vừa được HR/Admin khác xử lý. Tải lại danh sách trước khi thử lại.",
+        )
+
     approved = data.trang_thai == "DaDuyet"
+    rejection_reason = _email_value(data.reject_reason, "") if not approved else ""
+    company_name = _email_value(os.getenv("IMS_COMPANY_NAME"), "IMS Portal")
+    student_name = _email_value(application["ho_ten"], "Ứng viên")
+    program_name = _email_value(program["ten_ct"], "Chương trình thực tập")
+    portal_url = _email_value(os.getenv("IMS_PORTAL_URL"), "")
+    email_subject = f"[{company_name}] Thông báo kết quả xét duyệt hồ sơ thực tập sinh - {student_name}"[:255]
+    if approved:
+        mentor = db.execute("""
+            SELECT u.ho_ten
+            FROM PHAN_CONG_MENTOR_TTS assignment
+            JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
+            WHERE assignment.ma_ho_so = ? AND u.vai_tro = 'Mentor'
+            LIMIT 1
+        """, (application["ma_ho_so"],)).fetchone()
+        email_lines = [
+            f"Xin chào {student_name},",
+            "",
+            f"Chúc mừng bạn đã được duyệt vào chương trình {program_name}.",
+            f"Chương trình/vị trí: {program_name}",
+            f"Đơn vị tiếp nhận: {company_name}",
+            f"Phòng ban: {_email_value(program['phong_ban'])}",
+            f"Thời gian dự kiến: {_email_date(program['ngay_bat_dau'])} đến {_email_date(program['ngay_ket_thuc'])}",
+        ]
+        if mentor:
+            email_lines.append(f"Mentor hiện tại: {_email_value(mentor['ho_ten'])}")
+        email_lines.extend([
+            (f"Đăng nhập IMS Portal tại: {portal_url}" if portal_url
+             else "Đăng nhập IMS Portal bằng địa chỉ hệ thống đã được đơn vị cung cấp."),
+            "Bước tiếp theo: kiểm tra thông báo trong IMS Portal và xác nhận lịch nhận việc với bộ phận Nhân sự.",
+            "Bộ phận Nhân sự sẽ hướng dẫn xác nhận hồ sơ và ký thỏa thuận/hợp đồng trước ngày bắt đầu.",
+            "Bạn không cần gửi lại CV đã nộp; nếu cần bổ sung tài liệu, Nhân sự sẽ thông báo riêng.",
+            "",
+        ])
+    else:
+        email_lines = [
+            f"Xin chào {student_name},",
+            "",
+            f"Cảm ơn bạn đã ứng tuyển chương trình {program_name} tại {company_name}.",
+            "Rất tiếc, hồ sơ của bạn chưa được chọn trong đợt xét duyệt này.",
+        ]
+        if rejection_reason:
+            email_lines.extend(["", f"Ghi chú từ HR: {rejection_reason}"])
+        email_lines.extend([
+            "Chúng tôi sẽ lưu hồ sơ của bạn để cân nhắc cho cơ hội phù hợp trong tương lai.",
+            "Bạn có thể tiếp tục theo dõi các chương trình khác trên IMS Portal.",
+            "",
+        ])
+    email_lines.extend(["Trân trọng,", f"Bộ phận Nhân sự - {company_name}"])
+    notification_message = f"Đơn ứng tuyển {program_name} của bạn đã {'được duyệt' if approved else 'bị từ chối'}."
+    if rejection_reason:
+        notification_message += f" Lý do: {rejection_reason}"
     create_notification(
         db,
         application["ma_nguoi_dung"],
         "Kết quả ứng tuyển chương trình",
-        f"Đơn ứng tuyển {program['ten_ct']} của bạn đã {'được duyệt' if approved else 'bị từ chối'}.",
+        notification_message,
         notification_type="program_application_result",
         reference_type="program_application", reference_id=application_id,
         email_recipient=application["email"],
         email_deduplication_key=f"us08:program_application:{application_id}:{data.trang_thai}",
+        email_reference_type="program_application",
+        email_reference_id=application_id,
+        email_subject=email_subject,
+        email_body="\n".join(email_lines),
     )
     db.commit()
     return {"message": f"Đã {'duyệt' if approved else 'từ chối'} ứng viên {application['ho_ten']}."}

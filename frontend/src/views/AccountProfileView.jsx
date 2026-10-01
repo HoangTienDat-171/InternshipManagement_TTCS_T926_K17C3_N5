@@ -4,15 +4,16 @@ import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
-export default function AccountProfileView({ currentUser, initialSection = 'profile', onUserUpdated, onShowToast }) {
-  const [section, setSection] = useState(initialSection === 'password' ? 'password' : 'profile');
+export default function AccountProfileView({ currentUser, initialSection = 'profile', forcePasswordChange = false, onUserUpdated, onShowToast }) {
+  const [section, setSection] = useState(forcePasswordChange || initialSection === 'password' ? 'password' : 'profile');
   const [profile, setProfile] = useState({ ho_ten: currentUser.ho_ten || '', so_dien_thoai: currentUser.so_dien_thoai || '' });
   const [saving, setSaving] = useState(false);
   const [password, setPassword] = useState({ mat_khau_hien_tai: '', mat_khau_moi: '', xac_nhan: '' });
-  const sections = [
+  const allSections = [
     { id: 'profile', label: 'Tài khoản', icon: <UserRound size={17} /> },
     { id: 'password', label: 'Cập nhật mật khẩu', icon: <KeyRound size={17} /> }
   ];
+  const sections = forcePasswordChange ? allSections.filter((item) => item.id === 'password') : allSections;
 
   const saveProfile = async (event) => {
     event.preventDefault();
@@ -47,6 +48,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể đổi mật khẩu.');
       setPassword({ mat_khau_hien_tai: '', mat_khau_moi: '', xac_nhan: '' });
+      onUserUpdated({ ...currentUser, must_change_password: false });
       onShowToast(data.message || 'Đã đổi mật khẩu.');
     } catch (error) { onShowToast(error.message, 'error'); }
     finally { setSaving(false); }
@@ -54,7 +56,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
 
   return (
     <div className="account-page">
-      <div className="page-heading"><div><h2>Thông tin tài khoản</h2><p>Quản lý thông tin cá nhân và mật khẩu.</p></div></div>
+      <div className="page-heading"><div><h2>{forcePasswordChange ? 'Đổi mật khẩu lần đầu' : 'Thông tin tài khoản'}</h2><p>{forcePasswordChange ? 'Bạn đang dùng mật khẩu tạm. Hãy đặt mật khẩu mới để tiếp tục sử dụng hệ thống.' : 'Quản lý thông tin cá nhân và mật khẩu.'}</p></div></div>
       <div className="account-layout">
         <aside className="account-nav-card">
           <div className="account-identity"><span className="user-avatar">{currentUser.ho_ten?.charAt(0)?.toUpperCase() || 'U'}</span><div><strong>{currentUser.ho_ten}</strong><small>{currentUser.email}</small></div></div>
@@ -62,7 +64,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
         </aside>
         <section className="account-content-card">
           <header className="account-content-header"><div><h3>{sections.find((item) => item.id === section)?.label}</h3><p>{section === 'profile' ? 'Thông tin được dùng trong hồ sơ của bạn.' : 'Đặt mật khẩu mới để bảo vệ tài khoản.'}</p></div></header>
-          {section === 'profile' && <form className="account-profile-form" onSubmit={saveProfile}>
+          {!forcePasswordChange && section === 'profile' && <form className="account-profile-form" onSubmit={saveProfile}>
             <div className="account-avatar-large">{currentUser.ho_ten?.charAt(0)?.toUpperCase() || 'U'}</div>
             <div className="account-profile-grid">
               <label className="form-group"><span className="form-label">Tên tài khoản</span><input className="form-control is-readonly" value={currentUser.email?.split('@')[0] || ''} readOnly /></label>

@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request, status, WebSocket
 
-from .database import get_db_connection
+from .database import get_db_connection, has_password_change_column
 
 
 def token_digest(token: str) -> str:
@@ -15,15 +15,16 @@ def token_digest(token: str) -> str:
 def get_session_user(token: str) -> dict[str, Any] | None:
     conn = get_db_connection()
     try:
+        password_flag = "u.must_change_password" if has_password_change_column(conn) else "0 AS must_change_password"
         row = conn.execute("""
             SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                    u.vai_tro, u.trang_thai, u.ma_phong_ban, p.ten_phong_ban,
-                   s.session_id
+                   s.session_id, {password_flag}
             FROM ACTIVE_SESSIONS s
             JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = s.ma_nguoi_dung
             LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban
             WHERE s.token_hash = ?
-        """, (token_digest(token),)).fetchone()
+        """.format(password_flag=password_flag), (token_digest(token),)).fetchone()
         if not row or row["trang_thai"] != "HoatDong":
             return None
         return dict(row)
