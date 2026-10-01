@@ -434,6 +434,7 @@ export default function App() {
               currentUser={currentUser}
               requestedContractId={requestedContractId}
               onNavigatePrograms={() => navigateToTab('programs')}
+              onShowToast={showToast}
             />
           )}
 
