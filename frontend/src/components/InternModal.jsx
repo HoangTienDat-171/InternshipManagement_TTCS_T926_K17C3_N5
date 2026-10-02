@@ -5,6 +5,12 @@ import CustomSelect from './CustomSelect';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
+const REVIEW_STATUS_LABELS = {
+  ChoDuyet: 'Chờ xét duyệt',
+  DaDuyet: 'Đã duyệt',
+  TuChoi: 'Từ chối'
+};
+
 const createEmptyForm = (departments, universities) => ({
   ho_ten: '',
   email: '',
@@ -224,9 +230,16 @@ export default function InternModal({
                 </CustomSelect>
               </div>
 
-              {isEdit && (approvalStatus === 'DaDuyet' ? <div className="form-group">
-                <label className="form-label">Trạng thái</label>
-                <CustomSelect
+              {isEdit && <div className="form-group">
+                <label className="form-label">Trạng thái xét duyệt</label>
+                <span className="form-control is-readonly" aria-live="polite">
+                  {REVIEW_STATUS_LABELS[approvalStatus] || 'Không xác định'}
+                </span>
+              </div>}
+
+              {isEdit && <div className="form-group">
+                <label className="form-label">Trạng thái thực tập</label>
+                {approvalStatus === 'DaDuyet' ? <CustomSelect
                   name="trang_thai_thuc_tap"
                   className="form-select"
                   value={formData.trang_thai_thuc_tap}
@@ -235,11 +248,8 @@ export default function InternModal({
                   <option value="DangThucTap">Đang thực tập</option>
                   <option value="HoanThanh">Hoàn thành</option>
                   <option value="ThoiHoc">Thôi học</option>
-                </CustomSelect>
-              </div> : <div className="form-group">
-                <label className="form-label">Trạng thái</label>
-                <span className="form-control is-readonly" aria-live="polite">Chưa bắt đầu — hồ sơ chờ xét duyệt</span>
-              </div>)}
+                </CustomSelect> : <span className="form-control is-readonly" aria-live="polite">Chưa bắt đầu</span>}
+              </div>}
             </form>
           )}
         </div>
