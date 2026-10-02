@@ -13,6 +13,7 @@ const createEmptyForm = (departments, universities) => ({
   ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
   chuyen_nganh: '',
   trang_thai_xet_duyet: 'DaDuyet',
+  expected_trang_thai_xet_duyet: 'ChoDuyet',
   trang_thai_thuc_tap: 'DangThucTap'
 });
 
@@ -51,6 +52,7 @@ export default function InternModal({
             ma_truong: data.ma_truong ? String(data.ma_truong) : '',
             chuyen_nganh: data.chuyen_nganh || '',
             trang_thai_xet_duyet: data.trang_thai_xet_duyet || 'ChoDuyet',
+            expected_trang_thai_xet_duyet: data.trang_thai_xet_duyet || 'ChoDuyet',
             trang_thai_thuc_tap: data.trang_thai_thuc_tap || 'DangThucTap'
           });
         })
@@ -84,6 +86,7 @@ export default function InternModal({
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
         ...(isEdit ? { trang_thai_xet_duyet: formData.trang_thai_xet_duyet } : {}),
+        ...(isEdit ? { expected_trang_thai_xet_duyet: formData.expected_trang_thai_xet_duyet } : {}),
         ...(isEdit ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 

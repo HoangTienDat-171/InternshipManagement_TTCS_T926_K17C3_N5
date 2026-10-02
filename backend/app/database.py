@@ -304,17 +304,68 @@ def init_mysql_db():
             """CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 recipient_email VARCHAR(254) NOT NULL, subject VARCHAR(255) NOT NULL,
-                body TEXT NOT NULL, template_type VARCHAR(80) NOT NULL,
+                body TEXT NOT NULL, body_html LONGTEXT NULL,
+                has_attachments TINYINT(1) NOT NULL DEFAULT 0,
+                template_type VARCHAR(80) NOT NULL,
                 reference_type VARCHAR(80), reference_id VARCHAR(100),
                 deduplication_key VARCHAR(190) NOT NULL UNIQUE,
+                dedup_hash VARCHAR(64) NULL,
                 status ENUM('PENDING','PROCESSING','SENT','FAILED','RETRY') NOT NULL DEFAULT 'PENDING',
                 retry_count INT NOT NULL DEFAULT 0, max_retry INT NOT NULL DEFAULT 4,
                 last_error TEXT, next_retry_at DATETIME NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 sent_at DATETIME NULL,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                KEY idx_email_outbox_due (status, next_retry_at, created_at)
+                KEY idx_email_outbox_due (status, next_retry_at, created_at),
+                KEY idx_email_dedup (recipient_email, dedup_hash, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS EMAIL_DEDUP_LOCKS (
+                recipient_email VARCHAR(254) NOT NULL,
+                dedup_hash VARCHAR(64) NOT NULL,
+                expires_at DATETIME NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_outbox_id BIGINT NULL,
+                PRIMARY KEY (recipient_email, dedup_hash),
+                KEY idx_email_dedup_expires (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS EMAIL_ATTACHMENTS (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                email_id BIGINT NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                file_path VARCHAR(500) NOT NULL,
+                mime_type VARCHAR(127) NOT NULL,
+                file_size BIGINT UNSIGNED NOT NULL,
+                disposition ENUM('attachment', 'inline') NOT NULL DEFAULT 'attachment',
+                content_id VARCHAR(100) NULL,
+                checksum_sha256 CHAR(64) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_email_attachments_email_id (email_id, disposition),
+                CONSTRAINT fk_email_attachments_outbox FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS HO_SO_UNG_TUYEN_GUEST (
+                ma_ung_tuyen BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_tracking VARCHAR(32) NOT NULL UNIQUE,
+                ma_chuong_trinh INT NULL,
+                ho_ten VARCHAR(150) NOT NULL,
+                email VARCHAR(191) NOT NULL,
+                so_dien_thoai VARCHAR(20) NOT NULL,
+                truong_dai_hoc VARCHAR(200) NOT NULL,
+                chuyen_nganh VARCHAR(150) NOT NULL,
+                nam_hoc VARCHAR(50) NOT NULL,
+                thoi_gian_thuc_tap VARCHAR(100) NOT NULL,
+                link_portfolio VARCHAR(500) NULL,
+                duong_dan_cv VARCHAR(500) NOT NULL,
+                ten_file_cv VARCHAR(255) NOT NULL,
+                kich_thuoc_file BIGINT NOT NULL,
+                mime_type VARCHAR(100) NOT NULL,
+                trang_thai VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+                ip_address VARCHAR(50) NULL,
+                ghi_chu_noi_bo TEXT NULL,
+                ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ngay_cap_nhat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_guest_tracking (ma_tracking, email),
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
         ]
         for statement in statements:
             conn.execute(statement)
@@ -342,6 +393,26 @@ def init_mysql_db():
         ):
             if name not in notification_column_names:
                 conn.execute(f"ALTER TABLE THONG_BAO ADD COLUMN {name} {definition}")
+
+        user_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NGUOI_DUNG'
+        """).fetchall()
+        user_column_names = {row["COLUMN_NAME"] for row in user_columns}
+        if "must_change_password" not in user_column_names:
+            conn.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER mat_khau")
+
+        outbox_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'EMAIL_OUTBOX'
+        """).fetchall()
+        outbox_column_names = {row["COLUMN_NAME"] for row in outbox_columns}
+        if "body_html" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN body_html LONGTEXT NULL AFTER body")
+        if "has_attachments" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN has_attachments TINYINT(1) NOT NULL DEFAULT 0 AFTER body_html")
+        if "dedup_hash" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN dedup_hash VARCHAR(64) NULL AFTER deduplication_key")
 
         if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
             conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
@@ -418,6 +489,10 @@ def init_db():
         FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
     );
     """)
+
+    user_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NGUOI_DUNG)")}
+    if "must_change_password" not in user_columns:
+        cursor.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
     # One active opaque session per account. Tokens themselves are never stored.
     cursor.execute("""
@@ -657,6 +732,73 @@ def init_db():
         ON EMAIL_OUTBOX(status, next_retry_at, created_at)
     """)
 
+    outbox_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(EMAIL_OUTBOX)")}
+    if "body_html" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN body_html TEXT")
+    if "has_attachments" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0")
+    if "dedup_hash" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN dedup_hash TEXT")
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_dedup
+        ON EMAIL_OUTBOX(recipient_email, dedup_hash, created_at)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS EMAIL_DEDUP_LOCKS (
+        recipient_email TEXT NOT NULL,
+        dedup_hash TEXT NOT NULL,
+        expires_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_outbox_id INTEGER,
+        PRIMARY KEY (recipient_email, dedup_hash)
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_dedup_expires ON EMAIL_DEDUP_LOCKS(expires_at);")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS EMAIL_ATTACHMENTS (
+        id TEXT PRIMARY KEY,
+        email_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL CHECK(file_size > 0 AND file_size <= 10485760),
+        disposition TEXT NOT NULL DEFAULT 'attachment' CHECK(disposition IN ('attachment', 'inline')),
+        content_id TEXT,
+        checksum_sha256 TEXT,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_attachments_email_id ON EMAIL_ATTACHMENTS(email_id, disposition);")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS HO_SO_UNG_TUYEN_GUEST (
+        ma_ung_tuyen INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_tracking TEXT NOT NULL UNIQUE,
+        ma_chuong_trinh INTEGER,
+        ho_ten TEXT NOT NULL,
+        email TEXT NOT NULL,
+        so_dien_thoai TEXT NOT NULL,
+        truong_dai_hoc TEXT NOT NULL,
+        chuyen_nganh TEXT NOT NULL,
+        nam_hoc TEXT NOT NULL,
+        thoi_gian_thuc_tap TEXT NOT NULL,
+        link_portfolio TEXT,
+        duong_dan_cv TEXT NOT NULL,
+        ten_file_cv TEXT NOT NULL,
+        kich_thuoc_file INTEGER NOT NULL,
+        mime_type TEXT NOT NULL,
+        trang_thai TEXT NOT NULL DEFAULT 'PENDING',
+        ip_address TEXT,
+        ghi_chu_noi_bo TEXT,
+        ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        ngay_cap_nhat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_guest_tracking ON HO_SO_UNG_TUYEN_GUEST(ma_tracking, email)")
 
     # Giai đoạn 3: Cơ chế phòng thủ tầng ứng dụng (Application Layer Defense)
     # 7. Bảng theo dõi số lần đăng nhập sai chống Brute-force & Account Lockout
@@ -798,6 +940,59 @@ def init_db():
                     (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
                 VALUES (?, ?, ?, ?, ?)
             """, (demo_user[0], university_id, major, approval, internship_status))
+
+    cursor.execute("SELECT COUNT(*) FROM CHUONG_TRINH_THUC_TAP")
+    if not os.getenv("IMS_SQLITE_PATH") and cursor.fetchone()[0] == 0:
+        cursor.executemany("""
+            INSERT INTO CHUONG_TRINH_THUC_TAP
+                (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, mo_ta_cong_viec, yeu_cau, quyen_loi, trang_thai)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DangMo')
+        """, [
+            (
+                "TTS-BE-2026",
+                "Thực tập sinh Backend Developer (Python/FastAPI)",
+                1,
+                "2026-10-15",
+                "2026-12-30",
+                5,
+                "Tham gia phát triển các dịch vụ backend, thiết kế RESTful API và tối ưu hóa truy vấn cơ sở dữ liệu MySQL. Trực tiếp tham gia dự án thực tế cùng các kỹ sư cao cấp.",
+                "Sinh viên năm 3, 4 hoặc mới tốt nghiệp chuyên ngành CNTT/KTPM. Nắm vững lập trình Python, cơ bản về FastAPI/Django/Flask và cơ sở dữ liệu SQL.",
+                "Trợ cấp thực tập hấp dẫn, được cấp máy tính làm việc, hướng dẫn 1-1 bởi Senior Mentor, cơ hội trở thành nhân viên chính thức sau kỳ thực tập."
+            ),
+            (
+                "TTS-FE-2026",
+                "Thực tập sinh Frontend Developer (React/Vite)",
+                1,
+                "2026-10-15",
+                "2026-12-30",
+                4,
+                "Xây dựng giao diện ứng dụng web hiện đại, tối ưu trải nghiệm người dùng (UX/UI) và tương tác với các RESTful API.",
+                "Có kiến thức vững về HTML5, CSS3, JavaScript/TypeScript. Đã từng thực hành với ReactJS, hiểu về state management và responsive web design.",
+                "Được đào tạo bài bản quy trình Agile/Scrum, phụ cấp hàng tháng, môi trường làm việc trẻ trung năng động."
+            ),
+            (
+                "TTS-AI-2026",
+                "Thực tập sinh Trí tuệ Nhân tạo & Khoa học Dữ liệu (AI/Data)",
+                3,
+                "2026-11-01",
+                "2026-12-31",
+                3,
+                "Nghiên cứu ứng dụng các mô hình Machine Learning, LLM và xử lý dữ liệu lớn phục vụ bài toán nội bộ doanh nghiệp.",
+                "Nắm vững toán học/xác suất thống kê, thành thạo Python, pandas, scikit-learn hoặc PyTorch/TensorFlow.",
+                "Làm việc với hạ tầng GPU hiện đại, tài trợ chi phí thi chứng chỉ quốc tế, cơ hội xuất bản báo cáo khoa học."
+            ),
+            (
+                "TTS-SEC-2026",
+                "Thực tập sinh An toàn Thông tin & An ninh mạng",
+                2,
+                "2026-10-20",
+                "2026-12-15",
+                3,
+                "Tham gia đánh giá an toàn ứng dụng, dò quét lỗ hổng bảo mật web/hệ thống và hỗ trợ rà soát tuân thủ tiêu chuẩn an ninh thông tin.",
+                "Có kiến thức về mạng máy tính, hệ điều hành Linux, hiểu biết về OWASP Top 10 và các công cụ pentest cơ bản.",
+                "Hướng dẫn bởi chuyên gia bảo mật hàng đầu, trải nghiệm các kịch bản diễn tập phòng thủ thực chiến."
+            )
+        ])
 
     conn.commit()
     conn.close()

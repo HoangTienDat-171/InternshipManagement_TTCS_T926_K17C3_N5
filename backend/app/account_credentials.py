@@ -15,8 +15,20 @@ def require_password_change_schema(db):
         )
 
 
-def create_temporary_password() -> str:
-    return secrets.token_urlsafe(12)
+def create_temporary_password(length: int = 8) -> str:
+    target_length = max(int(length), 8)
+    digits = "23456789"
+    lowercase = "abcdefghjkmnpqrstuvwxyz"
+    uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    alphabet = digits + lowercase + uppercase
+    chars = [
+        secrets.choice(digits),
+        secrets.choice(lowercase),
+        secrets.choice(uppercase),
+    ]
+    chars += [secrets.choice(alphabet) for _ in range(target_length - len(chars))]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
 
 
 def temporary_password_email_body(

@@ -85,11 +85,19 @@ Khi tạo tài khoản, backend sinh mật khẩu tạm, gửi qua email và bu�
     EMAIL_WORKER_INTERVAL_SECONDS=5
     IMS_COMPANY_NAME=Ten cong ty
     IMS_PORTAL_URL=https://dia-chi-portal-cua-ban
+    CAPTCHA_SECRET=<random secret shared by backend workers>
 
 Thay cả hai giá trị `your-address@gmail.com` bằng cùng địa chỉ Gmail của bạn. Bật [Xác minh 2 bước](https://support.google.com/accounts/answer/10956730) cho Google Account, tạo [App Password](https://support.google.com/mail/answer/185833) riêng cho ứng dụng này, rồi đặt App Password vào `SMTP_PASSWORD`; không dùng mật khẩu đăng nhập Gmail. Google có thể không cung cấp App Password cho một số tài khoản được quản lý, bật Advanced Protection hoặc chỉ dùng security key cho Xác minh 2 bước. Sau khi lưu `.env`, khởi động lại backend để worker nạp cấu hình. Không commit `.env` hoặc chia sẻ App Password.
 
 `SMTP_HOST` là máy chủ SMTP của Gmail; địa chỉ Gmail cá nhân được dùng làm tài khoản xác thực và địa chỉ người gửi. `IMS_COMPANY_NAME` và `IMS_PORTAL_URL` được dùng trong email kết quả ứng tuyển; nếu bỏ trống, công ty hiển thị là `IMS Portal` và email hướng dẫn mở địa chỉ portal đã được cung cấp. Với MySQL hiện có, rà soát và áp dụng `migrations/20260930_us08_email_notifications.sql` để đặt giới hạn bốn lần thử cho cả mặc định lẫn hàng đợi cũ; áp dụng `migrations/20260930_temporary_passwords.sql` trước khi tạo tài khoản để thêm cột đổi mật khẩu. Backend không tự chạy các migration này.
 
 Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
+
+## Các tính năng và cập nhật mới
+
+- Thêm chức năng khách vãng lai (Guest) hôm trc Mentor có nhắc đến
+- Sửa lại lỗi đăng kí, Thêm quên mật khẩu, khi hồ sơ được duyệt thì sẽ có email gửi về gmail để xác nhận cho thực tập sinh đã đăng kì thành công và gửi cho mật khẩu để thực tập sinh đăng nhập và đổi mật khẩu mới
+- Thêm Chức năng cho gửi email (gửi ảnh, file tài liệu)
+- Thêm tránh thư trùng lặp cùng một nội dung và không cho gửi
 
 Xem docs/audit/2026-09-26-repo-audit.md và AGENTS.md trước khi thay đổi cấu trúc hoặc bảo mật.

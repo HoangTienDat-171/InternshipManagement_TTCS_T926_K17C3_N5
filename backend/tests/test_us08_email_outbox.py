@@ -65,6 +65,10 @@ class US08OutboxTests(unittest.TestCase):
                 tieu_de TEXT, noi_dung TEXT, kenh TEXT, loai TEXT, reference_type TEXT,
                 reference_id TEXT, da_doc INTEGER DEFAULT 0, thoi_gian_gui DATETIME DEFAULT CURRENT_TIMESTAMP,
                 thoi_gian_doc DATETIME)""")
+            db.execute("""CREATE TABLE EMAIL_DEDUP_LOCKS (
+                recipient_email TEXT NOT NULL, dedup_hash TEXT NOT NULL,
+                expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_outbox_id INTEGER, PRIMARY KEY (recipient_email, dedup_hash))""")
 
     def tearDown(self):
         self.env_patch.stop()
