@@ -249,6 +249,8 @@ def init_mysql_db():
                 han_hoan_thanh DATE NOT NULL,
                 do_uu_tien ENUM('LOW','MEDIUM','HIGH','URGENT') NOT NULL DEFAULT 'MEDIUM',
                 trang_thai ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL DEFAULT 'TODO',
+                progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                progress_note VARCHAR(2000) NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 KEY idx_nhiem_vu_mentor (ma_nguoi_dung_mentor, created_at),
@@ -256,6 +258,21 @@ def init_mysql_db():
                 KEY idx_nhiem_vu_filters (trang_thai, do_uu_tien, han_hoan_thanh),
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
                 FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS LICH_SU_TIEN_DO_CONG_VIEC (
+                ma_lich_su BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_nhiem_vu BIGINT NOT NULL,
+                updated_by INT NOT NULL,
+                old_progress TINYINT UNSIGNED NOT NULL,
+                new_progress TINYINT UNSIGNED NOT NULL,
+                old_status ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL,
+                new_status ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL,
+                note VARCHAR(2000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_task_progress_history (ma_nhiem_vu, created_at, ma_lich_su),
+                KEY idx_task_progress_actor (updated_by),
+                FOREIGN KEY (ma_nhiem_vu) REFERENCES NHIEM_VU_THUC_TAP(ma_nhiem_vu) ON DELETE RESTRICT,
+                FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
                 ma_chuong_trinh INT AUTO_INCREMENT PRIMARY KEY, ma_ct VARCHAR(40) NOT NULL UNIQUE,
@@ -431,6 +448,22 @@ def init_mysql_db():
         if "dedup_hash" not in outbox_column_names:
             conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN dedup_hash VARCHAR(64) NULL AFTER deduplication_key")
 
+        task_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NHIEM_VU_THUC_TAP'
+        """).fetchall()
+        task_column_names = {row["COLUMN_NAME"] for row in task_columns}
+        if "progress_percent" not in task_column_names:
+            conn.execute("""
+                ALTER TABLE NHIEM_VU_THUC_TAP
+                ADD COLUMN progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER trang_thai
+            """)
+        if "progress_note" not in task_column_names:
+            conn.execute("""
+                ALTER TABLE NHIEM_VU_THUC_TAP
+                ADD COLUMN progress_note VARCHAR(2000) NULL AFTER progress_percent
+            """)
+
         if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
             conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
                 ("Trung tâm Công nghệ Thông tin", "Phát triển phần mềm, giải pháp Web/App, AI và Cloud"),
@@ -595,6 +628,9 @@ def init_db():
             CHECK(do_uu_tien IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')),
         trang_thai TEXT NOT NULL DEFAULT 'TODO'
             CHECK(trang_thai IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        progress_percent INTEGER NOT NULL DEFAULT 0
+            CHECK(progress_percent BETWEEN 0 AND 100),
+        progress_note TEXT CHECK(progress_note IS NULL OR length(progress_note) <= 2000),
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
@@ -604,6 +640,30 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_mentor ON NHIEM_VU_THUC_TAP(ma_nguoi_dung_mentor, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_ho_so ON NHIEM_VU_THUC_TAP(ma_ho_so, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_filters ON NHIEM_VU_THUC_TAP(trang_thai, do_uu_tien, han_hoan_thanh)")
+
+    task_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NHIEM_VU_THUC_TAP)")}
+    if "progress_percent" not in task_columns:
+        cursor.execute("ALTER TABLE NHIEM_VU_THUC_TAP ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0 CHECK(progress_percent BETWEEN 0 AND 100)")
+    if "progress_note" not in task_columns:
+        cursor.execute("ALTER TABLE NHIEM_VU_THUC_TAP ADD COLUMN progress_note TEXT CHECK(progress_note IS NULL OR length(progress_note) <= 2000)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_SU_TIEN_DO_CONG_VIEC (
+        ma_lich_su INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_nhiem_vu INTEGER NOT NULL,
+        updated_by INTEGER NOT NULL,
+        old_progress INTEGER NOT NULL CHECK(old_progress BETWEEN 0 AND 100),
+        new_progress INTEGER NOT NULL CHECK(new_progress BETWEEN 0 AND 100),
+        old_status TEXT NOT NULL CHECK(old_status IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        new_status TEXT NOT NULL CHECK(new_status IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        note TEXT CHECK(note IS NULL OR length(note) <= 2000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_nhiem_vu) REFERENCES NHIEM_VU_THUC_TAP(ma_nhiem_vu) ON DELETE RESTRICT,
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_history ON LICH_SU_TIEN_DO_CONG_VIEC(ma_nhiem_vu, created_at, ma_lich_su)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_actor ON LICH_SU_TIEN_DO_CONG_VIEC(updated_by)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (

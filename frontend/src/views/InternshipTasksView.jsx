@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CalendarClock, CheckCircle2, ClipboardList, Filter, Pencil, Plus,
-  RefreshCw, Trash2, UserRound, X,
+  History, RefreshCw, Save, Trash2, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { apiFetch, readJsonResponse } from '../utils/api';
@@ -19,6 +19,7 @@ const statuses = {
   CANCELLED: { label: 'Đã hủy', tone: 'muted' },
 };
 const emptyForm = { internship_profile_id: '', title: '', description: '', due_date: '', priority: 'MEDIUM' };
+const emptyProgressForm = { progress_percent: 0, status: 'TODO', note: '' };
 
 function displayDate(value, withTime = false) {
   if (!value) return '—';
@@ -36,11 +37,20 @@ function TaskBadge({ value, map }) {
   return <span className={`task-badge is-${item.tone}`}>{item.label}</span>;
 }
 
+function ProgressBar({ value = 0 }) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  return <div className="task-progress" aria-label={`Tiến độ ${percent}%`}>
+    <div><span>Tiến độ</span><strong>{percent}%</strong></div>
+    <span className="task-progress-track"><i style={{ width: `${percent}%` }} /></span>
+  </div>;
+}
+
 export default function InternshipTasksView({ currentUser, onShowToast }) {
   const isMentor = currentUser?.vai_tro === 'Mentor';
   const [tasks, setTasks] = useState([]);
   const [interns, setInterns] = useState([]);
   const [selectedTask, setSelectedTask] = useState(null);
+  const canManageSelectedTask = isMentor && selectedTask?.mentor_id === currentUser?.ma_nguoi_dung;
   const [form, setForm] = useState(emptyForm);
   const [filters, setFilters] = useState({ internship_profile_id: '', status: '', priority: '', due_date: '' });
   const [loading, setLoading] = useState(true);
@@ -49,6 +59,10 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
   const [formError, setFormError] = useState('');
   const [editing, setEditing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [progressForm, setProgressForm] = useState(emptyProgressForm);
+  const [progressError, setProgressError] = useState('');
 
   const taskUrl = useMemo(() => {
     if (!isMentor) return '/api/interns/me/tasks';
@@ -85,14 +99,31 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
 
   const openDetail = async (task) => {
     setError('');
+    setProgressError('');
+    setHistoryLoading(true);
     try {
-      const response = await apiFetch(`/api/tasks/${task.id}`);
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể mở nhiệm vụ.');
+      const [detailResponse, historyResponse] = await Promise.all([
+        apiFetch(`/api/tasks/${task.id}`),
+        apiFetch(`/api/tasks/${task.id}/progress-history`),
+      ]);
+      const [data, historyData] = await Promise.all([
+        readJsonResponse(detailResponse),
+        readJsonResponse(historyResponse),
+      ]);
+      if (!detailResponse.ok) throw new Error(data.detail || 'Không thể mở nhiệm vụ.');
+      if (!historyResponse.ok) throw new Error(historyData.detail || 'Không thể tải lịch sử tiến độ.');
       setSelectedTask(data);
+      setHistory(historyData);
+      setProgressForm({
+        progress_percent: data.progress_percent ?? 0,
+        status: data.status,
+        note: data.progress_note || '',
+      });
       setEditing(false);
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -168,11 +199,47 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       }
       setDeleteTarget(null);
       setSelectedTask(null);
-      onShowToast?.('Đã xóa nhiệm vụ.');
+      onShowToast?.('Đã xử lý yêu cầu xóa hoặc hủy nhiệm vụ.');
       await loadTasks();
     } catch (requestError) {
       setError(requestError.message);
       setDeleteTarget(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitProgress = async (event) => {
+    event.preventDefault();
+    const progress = Number(progressForm.progress_percent);
+    setProgressError('');
+    if (!Number.isInteger(progress) || progress < 0 || progress > 100) {
+      setProgressError('Tiến độ phải là số nguyên từ 0 đến 100.');
+      return;
+    }
+    if ((progress === 100) !== (progressForm.status === 'COMPLETED')) {
+      setProgressError('Tiến độ 100% phải đi cùng trạng thái Hoàn thành.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await apiFetch(`/api/interns/me/tasks/${selectedTask.id}/progress`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...progressForm, progress_percent: progress }),
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail?.[0]?.msg || data.detail || 'Không thể cập nhật tiến độ.');
+      const historyResponse = await apiFetch(`/api/tasks/${selectedTask.id}/progress-history`);
+      const historyData = await readJsonResponse(historyResponse);
+      if (!historyResponse.ok) throw new Error(historyData.detail || 'Không thể tải lại lịch sử tiến độ.');
+      setSelectedTask(data);
+      setHistory(historyData);
+      setTasks((current) => current.map((task) => task.id === data.id ? data : task));
+      setProgressForm({ progress_percent: data.progress_percent, status: data.status, note: data.progress_note || '' });
+      onShowToast?.('Đã cập nhật tiến độ nhiệm vụ.');
+    } catch (requestError) {
+      setProgressError(requestError.message);
     } finally {
       setSaving(false);
     }
@@ -198,6 +265,27 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
     </div>
   </form>;
 
+  const renderProgressForm = () => {
+    const terminal = ['COMPLETED', 'CANCELLED'].includes(selectedTask.status);
+    const statusOptions = selectedTask.status === 'TODO'
+      ? ['TODO', 'IN_PROGRESS', 'COMPLETED']
+      : ['IN_PROGRESS', 'COMPLETED'];
+    if (terminal) return <p className="task-progress-locked" role="status">
+      <CheckCircle2 size={16} />Nhiệm vụ đã ở trạng thái cuối và không thể cập nhật thêm.
+    </p>;
+    return <form className="task-progress-form" onSubmit={submitProgress}>
+      <div className="task-form-row">
+        <label><span>Phần trăm hoàn thành</span><input type="number" min="0" max="100" step="1" value={progressForm.progress_percent} onChange={(event) => setProgressForm((current) => ({ ...current, progress_percent: event.target.value }))} required /></label>
+        <label><span>Trạng thái tiến độ</span><select value={progressForm.status} onChange={(event) => setProgressForm((current) => ({ ...current, status: event.target.value }))} required>
+          {statusOptions.map((value) => <option value={value} key={value}>{statuses[value].label}</option>)}
+        </select></label>
+      </div>
+      <label><span>Ghi chú tiến độ</span><textarea rows={4} maxLength={2000} value={progressForm.note} onChange={(event) => setProgressForm((current) => ({ ...current, note: event.target.value }))} placeholder="Mô tả phần việc đã hoàn thành hoặc vướng mắc hiện tại" /></label>
+      {progressError && <p className="task-form-error" role="alert">{progressError}</p>}
+      <div className="task-form-actions"><button type="submit" className="btn btn-primary" disabled={saving}><Save size={15} />{saving ? 'Đang lưu…' : 'Cập nhật tiến độ'}</button></div>
+    </form>;
+  };
+
   return <div className="workspace-page task-page">
     <header className="workspace-heading"><div><span className="workspace-eyebrow">QUẢN LÝ CÔNG VIỆC & ĐÁNH GIÁ</span><h2>Nhiệm vụ thực tập</h2><p>{isMentor ? 'Giao và theo dõi nhiệm vụ của các thực tập sinh bạn đang phụ trách.' : 'Xem nhiệm vụ được Mentor giao và thông tin hạn hoàn thành.'}</p></div><button className="btn btn-secondary" type="button" disabled={loading} onClick={loadTasks}><RefreshCw size={15} />Làm mới</button></header>
 
@@ -213,9 +301,9 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
 
     <div className={`task-layout${isMentor ? '' : ' is-intern'}`}>
       <section className="workspace-card task-list-card">
-        <div className="workspace-section-heading"><div><span className="workspace-eyebrow">DANH SÁCH</span><h3>{isMentor ? 'Nhiệm vụ đã giao' : 'Nhiệm vụ của tôi'} <small>{tasks.length}</small></h3></div><ClipboardList size={19} /></div>
+        <div className="workspace-section-heading"><div><span className="workspace-eyebrow">DANH SÁCH</span><h3>{isMentor ? 'Nhiệm vụ đang phụ trách' : 'Nhiệm vụ của tôi'} <small>{tasks.length}</small></h3></div><ClipboardList size={19} /></div>
         {loading ? <div className="workspace-loading">Đang tải nhiệm vụ…</div> : tasks.length ? <div className="task-list">{tasks.map((task) => <button type="button" className={`task-list-item${selectedTask?.id === task.id ? ' selected' : ''}`} key={task.id} onClick={() => openDetail(task)}>
-          <div className="task-list-title"><strong>{task.title}</strong><TaskBadge value={task.priority} map={priorities} /></div>
+          <div className="task-list-title"><strong>{task.title}</strong><TaskBadge value={task.priority} map={priorities} /><span className="task-list-progress">{task.progress_percent ?? 0}%</span></div>
           <span><UserRound size={13} />{isMentor ? task.intern_name : task.mentor_name}</span>
           <span><CalendarClock size={13} />Hạn {displayDate(task.due_date)}</span>
           <TaskBadge value={task.status} map={statuses} />
@@ -226,7 +314,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
     </div>
 
     {selectedTask && <section className="workspace-card task-detail-card">
-      <div className="workspace-section-heading"><div><span className="workspace-eyebrow">CHI TIẾT NHIỆM VỤ</span><h3>{selectedTask.title}</h3></div><div className="task-detail-actions">{isMentor && !editing && <><button type="button" className="btn btn-secondary btn-sm" onClick={beginEdit}><Pencil size={14} />Chỉnh sửa</button><button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(selectedTask)}><Trash2 size={14} />Xóa</button></>}</div></div>
+      <div className="workspace-section-heading"><div><span className="workspace-eyebrow">CHI TIẾT NHIỆM VỤ</span><h3>{selectedTask.title}</h3></div><div className="task-detail-actions">{canManageSelectedTask && !editing && <><button type="button" className="btn btn-secondary btn-sm" onClick={beginEdit}><Pencil size={14} />Chỉnh sửa</button><button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(selectedTask)}><Trash2 size={14} />Xóa / hủy</button></>}</div></div>
       {editing ? renderTaskForm(true) : <div className="task-detail-content">
         <p>{selectedTask.description || 'Không có nội dung bổ sung.'}</p>
         <dl className="task-detail-grid">
@@ -234,14 +322,40 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
           <div><dt>Mentor giao</dt><dd>{selectedTask.mentor_name}</dd></div>
           <div><dt>Độ ưu tiên</dt><dd><TaskBadge value={selectedTask.priority} map={priorities} /></dd></div>
           <div><dt>Trạng thái</dt><dd><TaskBadge value={selectedTask.status} map={statuses} /></dd></div>
+          <div><dt>Tiến độ hiện tại</dt><dd>{selectedTask.progress_percent ?? 0}%</dd></div>
           <div><dt>Hạn hoàn thành</dt><dd>{displayDate(selectedTask.due_date)}</dd></div>
           <div><dt>Thời gian tạo</dt><dd>{displayDate(selectedTask.created_at, true)}</dd></div>
           <div><dt>Cập nhật gần nhất</dt><dd>{displayDate(selectedTask.updated_at, true)}</dd></div>
         </dl>
+        <div className="task-current-progress">
+          <ProgressBar value={selectedTask.progress_percent} />
+          <div className="task-latest-note"><strong>Ghi chú gần nhất</strong><p>{selectedTask.progress_note || 'Chưa có ghi chú tiến độ.'}</p></div>
+        </div>
         {selectedTask.status === 'COMPLETED' && <p className="task-complete-note"><CheckCircle2 size={16} />Nhiệm vụ đã hoàn thành.</p>}
       </div>}
     </section>}
 
-    <ConfirmDialog open={Boolean(deleteTarget)} title="Xóa nhiệm vụ" message={`Nhiệm vụ “${deleteTarget?.title || ''}” sẽ bị xóa khỏi hệ thống.`} confirmLabel="Xóa nhiệm vụ" danger busy={saving} onCancel={() => !saving && setDeleteTarget(null)} onConfirm={confirmDelete} />
+    {selectedTask && !editing && <div className={`task-progress-layout${isMentor ? ' is-mentor' : ''}`}>
+      {!isMentor && <section className="workspace-card task-progress-update-card">
+        <div className="workspace-section-heading"><div><span className="workspace-eyebrow">CẬP NHẬT TIẾN ĐỘ</span><h3>Tiến độ của bạn</h3></div><TrendingUp size={19} /></div>
+        {renderProgressForm()}
+      </section>}
+      <section className="workspace-card task-history-card">
+        <div className="workspace-section-heading"><div><span className="workspace-eyebrow">NHẬT KÝ THAY ĐỔI</span><h3>Lịch sử tiến độ <small>{history.length}</small></h3></div><History size={19} /></div>
+        {historyLoading ? <div className="workspace-loading small">Đang tải lịch sử…</div> : history.length ? <ol className="task-history-list">
+          {[...history].reverse().map((entry) => <li key={entry.id}>
+            <span className="task-history-dot" />
+            <div className="task-history-main">
+              <time>{displayDate(entry.created_at, true)}</time>
+              <div className="task-history-change"><strong>{entry.old_progress}%</strong><span>→</span><strong>{entry.new_progress}%</strong><TaskBadge value={entry.new_status} map={statuses} /></div>
+              <p>{entry.note || 'Không có ghi chú.'}</p>
+              <small>Cập nhật bởi {entry.updated_by_name}</small>
+            </div>
+          </li>)}
+        </ol> : <div className="workspace-empty"><History size={24} /><span>Chưa có lần cập nhật tiến độ nào.</span></div>}
+      </section>
+    </div>}
+
+    <ConfirmDialog open={Boolean(deleteTarget)} title="Xóa hoặc hủy nhiệm vụ" message={`Nhiệm vụ “${deleteTarget?.title || ''}” sẽ bị xóa nếu chưa có tiến độ; nếu đã có lịch sử, nhiệm vụ sẽ chuyển sang Đã hủy để giữ dữ liệu.`} confirmLabel="Tiếp tục" danger busy={saving} onCancel={() => !saving && setDeleteTarget(null)} onConfirm={confirmDelete} />
   </div>;
 }

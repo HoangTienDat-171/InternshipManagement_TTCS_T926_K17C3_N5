@@ -1,17 +1,15 @@
 import sqlite3
 from datetime import date
-from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from ..database import get_db
-from ..schemas import MentorTaskCreate, MentorTaskUpdate, TaskPriority
+from ..schemas import InternTaskProgressUpdate, MentorTaskCreate, MentorTaskUpdate, TaskPriority, TaskStatus
 from ..security import require_role
 from ..task_service import InternshipTaskService
 
 
 router = APIRouter(tags=["Internship Tasks - US15"])
-TaskStatus = Literal["TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
 
 
 @router.get("/api/mentor/me/interns")
@@ -77,7 +75,24 @@ def list_my_intern_tasks(request: Request, db: sqlite3.Connection = Depends(get_
     return InternshipTaskService(db).list_intern_tasks(intern["ma_nguoi_dung"])
 
 
+@router.patch("/api/interns/me/tasks/{task_id}/progress")
+def update_my_task_progress(
+    task_id: int,
+    data: InternTaskProgressUpdate,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    intern = require_role(request, "ThucTapSinh")
+    return InternshipTaskService(db).update_progress(task_id, intern, data)
+
+
 @router.get("/api/tasks/{task_id}")
 def get_task_detail(task_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
     actor = require_role(request, "Mentor", "ThucTapSinh")
     return InternshipTaskService(db).get_task(task_id, actor)
+
+
+@router.get("/api/tasks/{task_id}/progress-history")
+def get_task_progress_history(task_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    actor = require_role(request, "Mentor", "ThucTapSinh")
+    return InternshipTaskService(db).get_progress_history(task_id, actor)

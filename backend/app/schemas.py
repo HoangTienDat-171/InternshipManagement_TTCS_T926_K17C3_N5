@@ -201,6 +201,34 @@ class MentorTaskUpdate(BaseModel):
             raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
         return self
 
+
+TaskStatus = Literal["TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
+InternProgressStatus = Literal["TODO", "IN_PROGRESS", "COMPLETED"]
+
+
+class InternTaskProgressUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    progress_percent: int = Field(ge=0, le=100)
+    status: InternProgressStatus
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        note = value.strip()
+        return note or None
+
+    @model_validator(mode="after")
+    def validate_completed_progress(self):
+        if self.progress_percent == 100 and self.status != "COMPLETED":
+            raise ValueError("Tiến độ 100% phải có trạng thái COMPLETED.")
+        if self.status == "COMPLETED" and self.progress_percent != 100:
+            raise ValueError("Trạng thái COMPLETED yêu cầu tiến độ bằng 100%.")
+        return self
+
 class ProgramCreate(BaseModel):
     ma_ct: str = Field(min_length=1, max_length=40)
     ten_ct: str = Field(min_length=1, max_length=200)
