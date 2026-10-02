@@ -171,6 +171,10 @@ export default function ProgramManagementView({ departments, onShowToast, curren
 
   const handleSaveProgram = async (event) => {
     event.preventDefault();
+    if (!form.ma_ct.trim() || !form.ten_ct.trim() || !form.ma_phong_ban || !form.ngay_bat_dau || !form.ngay_ket_thuc || !form.mo_ta_cong_viec.trim() || !form.yeu_cau.trim()) {
+      onShowToast('Vui lòng nhập đầy đủ các trường bắt buộc của chương trình.', 'error');
+      return;
+    }
     if (form.ngay_ket_thuc < form.ngay_bat_dau) {
       onShowToast('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.', 'error');
       return;
@@ -355,7 +359,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
             <div className="card-title-box"><h2>{editingProgram ? 'Chỉnh sửa chương trình' : 'Tạo mới chương trình thực tập'}</h2></div>
           </div>
           <div className="card-body">
-            <form onSubmit={handleSaveProgram} className="form-grid program-form-grid">
+            <form noValidate onSubmit={handleSaveProgram} className="form-grid program-form-grid">
               <div className="form-group">
                 <label className="form-label">Mã CT <span className="required">*</span></label>
                 <input type="text" name="ma_ct" className="form-control" maxLength="40" required
@@ -571,7 +575,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
               <div><h3 id="program-apply-title">Ứng tuyển chương trình</h3><p>{applicationProgram.ten_ct} · {applicationProgram.ma_ct}</p></div>
               <button type="button" className="modal-close-btn" aria-label="Đóng" onClick={closeApplication}><X size={18} /></button>
             </div>
-            <form onSubmit={handleApply}>
+            <form noValidate onSubmit={handleApply}>
               <div className="modal-body program-apply-body">
                 <div className="apply-confirm-card"><Users size={19} /><span>Ứng tuyển vào <strong>{applicationProgram.ten_ct}</strong>. Bạn có thể dùng lại hồ sơ và CV đã được duyệt, hoặc tải CV riêng. Đơn ứng tuyển vẫn chờ chương trình xét duyệt.</span></div>
                 {applicationProfileLoading && <p className="apply-profile-hint">Đang kiểm tra hồ sơ và CV đã duyệt…</p>}

@@ -12,8 +12,10 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg('');
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) return setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ.');
+    if (!password) return setErrorMsg('Vui lòng nhập mật khẩu.');
+    setLoading(true);
 
     try {
       const res = await apiFetch('/api/auth/login', {
@@ -66,7 +68,7 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
             </div>
           )}
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <form noValidate onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="form-group">
               <label className="form-label">Email tài khoản</label>
               <div style={{ position: 'relative' }}>

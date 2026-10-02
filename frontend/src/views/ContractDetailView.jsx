@@ -315,7 +315,7 @@ export default function ContractDetailView({ contractId, currentUser, onBack, on
     </ConfirmDialog>
 
     {rejectOpen && <div className="modal-overlay confirm-overlay" onMouseDown={(event) => !submitting && event.target === event.currentTarget && closeReject()}>
-      <form className="confirm-dialog contract-reject-dialog" role="alertdialog" aria-modal="true" aria-labelledby="contract-reject-title" onSubmit={(event) => { event.preventDefault(); void submitDecision('REJECTED'); }}>
+      <form className="confirm-dialog contract-reject-dialog" noValidate role="alertdialog" aria-modal="true" aria-labelledby="contract-reject-title" onSubmit={(event) => { event.preventDefault(); void submitDecision('REJECTED'); }}>
         <div className="confirm-icon danger"><CircleX size={22} /></div>
         <button className="modal-close-btn confirm-close" type="button" aria-label="Đóng" disabled={submitting} onClick={closeReject}><CircleX size={18} /></button>
         <h3 id="contract-reject-title">Từ chối tiếp nhận hợp đồng</h3>

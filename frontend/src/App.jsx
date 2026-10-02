@@ -12,7 +12,7 @@ import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
 function clearSavedSession() {
@@ -362,7 +362,7 @@ export default function App() {
   if (passwordChangeRequired) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--app-bg, #f8fafc)' }}>
-        {toast && <div role="status" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: toast.type === 'success' ? '#0f766e' : '#b91c1c', color: 'white', padding: '12px 18px', borderRadius: 10, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>{toast.message}</div>}
+        {toast && <Toast {...toast} onClose={() => setToast(null)} />}
         <header style={{ minHeight: 68, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'var(--surface, #fff)', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
           <strong>IMS PORTAL · Đổi mật khẩu lần đầu</strong>
           <button type="button" className="btn btn-secondary" onClick={handleLogout}>Đăng xuất</button>
@@ -385,28 +385,7 @@ export default function App() {
   return (
     <div className={`app-layout${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       {/* Toast Notification */}
-      {toast && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 9999,
-          background: toast.type === 'success' ? '#0f766e' : '#b91c1c',
-          color: 'white',
-          padding: '12px 18px',
-          borderRadius: '10px',
-          boxShadow: '0 8px 20px rgba(0,0,0,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '13px',
-          fontWeight: 600,
-          animation: 'modalIn 0.2s ease-out'
-        }}>
-          {toast.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-          <span>{toast.message}</span>
-        </div>
-      )}
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
       {/* Sidebar */}
       <Sidebar 

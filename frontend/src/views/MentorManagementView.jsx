@@ -96,6 +96,8 @@ export default function MentorManagementView({ departments, onShowToast, current
 
   const handleAddMentor = async (e) => {
     e.preventDefault();
+    if (!form.ho_ten.trim()) return onShowToast('Vui lòng nhập họ và tên Mentor.', 'error');
+    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) return onShowToast('Vui lòng nhập email Mentor hợp lệ.', 'error');
     if (form.so_dien_thoai && !isValidVietnamPhone(form.so_dien_thoai)) {
       onShowToast('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.', 'error');
       return;
@@ -135,6 +137,10 @@ export default function MentorManagementView({ departments, onShowToast, current
 
   const saveProfile = async (e) => {
     e.preventDefault();
+    if (profileForm.so_tts_toi_da === '' || Number(profileForm.so_tts_toi_da) < 0) {
+      onShowToast('Sức chứa TTS phải là số từ 0 trở lên.', 'error');
+      return;
+    }
     setModalLoading(true);
     try {
       const response = await apiFetch(`/api/mentors/${editingMentor.ma_nguoi_dung}/profile`, {
@@ -254,7 +260,7 @@ export default function MentorManagementView({ departments, onShowToast, current
             </div>
           </div>
           <div className="card-body">
-            <form onSubmit={handleAddMentor} className="form-grid">
+            <form noValidate onSubmit={handleAddMentor} className="form-grid">
               <div className="form-group">
                 <label className="form-label">
                   Họ và tên <span className="required">*</span>
@@ -468,7 +474,7 @@ export default function MentorManagementView({ departments, onShowToast, current
       {editingMentor && <div className="modal-overlay" onClick={() => setEditingMentor(null)}>
         <div className="modal-container" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h3>Cập nhật Mentor: {editingMentor.ho_ten}</h3><button className="modal-close-btn" type="button" onClick={() => setEditingMentor(null)}><X size={18} /></button></div>
-          <form onSubmit={saveProfile}>
+          <form noValidate onSubmit={saveProfile}>
             <div className="modal-body mentor-modal-fields">
               <div className="form-group"><label className="form-label">Chuyên môn</label><input className="form-control" value={profileForm.chuyen_mon} onChange={(e) => setProfileForm((prev) => ({ ...prev, chuyen_mon: e.target.value }))} /></div>
               <div className="form-group"><label className="form-label">Số năm kinh nghiệm</label><input type="number" min="0" className="form-control" value={profileForm.kinh_nghiem} onChange={(e) => setProfileForm((prev) => ({ ...prev, kinh_nghiem: e.target.value }))} /></div>
@@ -482,7 +488,7 @@ export default function MentorManagementView({ departments, onShowToast, current
       {assignmentMentor && <div className="modal-overlay" onClick={() => setAssignmentMentor(null)}>
         <div className="modal-container mentor-assignment-dialog" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><div><h3>Phân công thực tập sinh</h3><p>{assignmentMentor.ho_ten} · {assignmentMentor.phong_ban || 'Chưa phân phòng'}</p></div><button className="modal-close-btn" type="button" onClick={() => setAssignmentMentor(null)}><X size={18} /></button></div>
-          <form onSubmit={assignIntern}>
+          <form noValidate onSubmit={assignIntern}>
             <div className="modal-body mentor-assignment-body">
                 {(() => {
                   const capacity = assignmentMentor.so_tts_toi_da ?? 3;

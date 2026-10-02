@@ -4,6 +4,7 @@ import {
   History, RefreshCw, Save, Trash2, TrendingUp, UserRound, X,
 } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CustomSelect from '../components/CustomSelect';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
 const priorities = {
@@ -144,8 +145,11 @@ export default function InternshipTasksView({ currentUser, onShowToast, requeste
 
   const submitCreate = async (event) => {
     event.preventDefault();
-    setSaving(true);
     setFormError('');
+    if (!form.internship_profile_id) return setFormError('Vui lòng chọn thực tập sinh.');
+    if (!form.title.trim()) return setFormError('Vui lòng nhập tiêu đề nhiệm vụ.');
+    if (!form.due_date) return setFormError('Vui lòng chọn hạn hoàn thành.');
+    setSaving(true);
     try {
       const response = await apiFetch('/api/mentor/tasks', {
         method: 'POST',
@@ -181,8 +185,10 @@ export default function InternshipTasksView({ currentUser, onShowToast, requeste
 
   const submitEdit = async (event) => {
     event.preventDefault();
-    setSaving(true);
     setFormError('');
+    if (!form.title.trim()) return setFormError('Vui lòng nhập tiêu đề nhiệm vụ.');
+    if (!form.due_date) return setFormError('Vui lòng chọn hạn hoàn thành.');
+    setSaving(true);
     try {
       const response = await apiFetch(`/api/mentor/tasks/${selectedTask.id}`, {
         method: 'PUT',
@@ -260,18 +266,18 @@ export default function InternshipTasksView({ currentUser, onShowToast, requeste
     }
   };
 
-  const renderTaskForm = (edit = false) => <form className="task-form" onSubmit={edit ? submitEdit : submitCreate}>
-    {!edit && <label><span>Thực tập sinh</span><select name="internship_profile_id" value={form.internship_profile_id} onChange={updateForm} required>
+  const renderTaskForm = (edit = false) => <form className="task-form" noValidate onSubmit={edit ? submitEdit : submitCreate}>
+    {!edit && <label><span>Thực tập sinh</span><CustomSelect name="internship_profile_id" className="form-select" value={form.internship_profile_id} onChange={updateForm} required>
       <option value="">Chọn thực tập sinh</option>
       {interns.map((intern) => <option key={intern.internship_profile_id} value={intern.internship_profile_id}>{intern.intern_name}</option>)}
-    </select></label>}
+    </CustomSelect></label>}
     <label><span>Tiêu đề</span><input name="title" value={form.title} onChange={updateForm} maxLength={200} required placeholder="Ví dụ: Hoàn thiện API đăng nhập" /></label>
     <label><span>Nội dung</span><textarea name="description" value={form.description} onChange={updateForm} maxLength={5000} rows={5} placeholder="Mô tả kết quả mong đợi và yêu cầu thực hiện" /></label>
     <div className="task-form-row">
       <label><span>Hạn hoàn thành</span><input type="date" name="due_date" value={form.due_date} onChange={updateForm} required /></label>
-      <label><span>Độ ưu tiên</span><select name="priority" value={form.priority} onChange={updateForm} required>
+      <label><span>Độ ưu tiên</span><CustomSelect name="priority" className="form-select" value={form.priority} onChange={updateForm} required>
         {Object.entries(priorities).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}
-      </select></label>
+      </CustomSelect></label>
     </div>
     {formError && <p className="task-form-error" role="alert">{formError}</p>}
     <div className="task-form-actions">
@@ -288,12 +294,12 @@ export default function InternshipTasksView({ currentUser, onShowToast, requeste
     if (terminal) return <p className="task-progress-locked" role="status">
       <CheckCircle2 size={16} />Nhiệm vụ đã ở trạng thái cuối và không thể cập nhật thêm.
     </p>;
-    return <form className="task-progress-form" onSubmit={submitProgress}>
+    return <form className="task-progress-form" noValidate onSubmit={submitProgress}>
       <div className="task-form-row">
         <label><span>Phần trăm hoàn thành</span><input type="number" min="0" max="100" step="1" value={progressForm.progress_percent} onChange={(event) => setProgressForm((current) => ({ ...current, progress_percent: event.target.value }))} required /></label>
-        <label><span>Trạng thái tiến độ</span><select value={progressForm.status} onChange={(event) => setProgressForm((current) => ({ ...current, status: event.target.value }))} required>
+        <label><span>Trạng thái tiến độ</span><CustomSelect name="progress_status" className="form-select" value={progressForm.status} onChange={(event) => setProgressForm((current) => ({ ...current, status: event.target.value }))} required>
           {statusOptions.map((value) => <option value={value} key={value}>{statuses[value].label}</option>)}
-        </select></label>
+        </CustomSelect></label>
       </div>
       <label><span>Ghi chú tiến độ</span><textarea rows={4} maxLength={2000} value={progressForm.note} onChange={(event) => setProgressForm((current) => ({ ...current, note: event.target.value }))} placeholder="Mô tả phần việc đã hoàn thành hoặc vướng mắc hiện tại" /></label>
       {progressError && <p className="task-form-error" role="alert">{progressError}</p>}
@@ -306,9 +312,9 @@ export default function InternshipTasksView({ currentUser, onShowToast, requeste
 
     {isMentor && <section className="workspace-card task-filters" aria-label="Bộ lọc nhiệm vụ">
       <Filter size={17} />
-      <select aria-label="Lọc theo thực tập sinh" value={filters.internship_profile_id} onChange={(event) => setFilters((current) => ({ ...current, internship_profile_id: event.target.value }))}><option value="">Tất cả TTS</option>{interns.map((intern) => <option value={intern.internship_profile_id} key={intern.internship_profile_id}>{intern.intern_name}</option>)}</select>
-      <select aria-label="Lọc theo trạng thái" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Tất cả trạng thái</option>{Object.entries(statuses).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</select>
-      <select aria-label="Lọc theo độ ưu tiên" value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}><option value="">Tất cả ưu tiên</option>{Object.entries(priorities).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</select>
+      <CustomSelect className="filter-select" aria-label="Lọc theo thực tập sinh" value={filters.internship_profile_id} onChange={(event) => setFilters((current) => ({ ...current, internship_profile_id: event.target.value }))}><option value="">Tất cả TTS</option>{interns.map((intern) => <option value={intern.internship_profile_id} key={intern.internship_profile_id}>{intern.intern_name}</option>)}</CustomSelect>
+      <CustomSelect className="filter-select" aria-label="Lọc theo trạng thái" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Tất cả trạng thái</option>{Object.entries(statuses).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</CustomSelect>
+      <CustomSelect className="filter-select" aria-label="Lọc theo độ ưu tiên" value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}><option value="">Tất cả ưu tiên</option>{Object.entries(priorities).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</CustomSelect>
       <input aria-label="Lọc theo hạn hoàn thành" type="date" value={filters.due_date} onChange={(event) => setFilters((current) => ({ ...current, due_date: event.target.value }))} />
       {hasActiveFilters && <button type="button" className="btn btn-secondary btn-sm task-filter-reset" onClick={() => setFilters({ internship_profile_id: '', status: '', priority: '', due_date: '' })}><X size={14} />Xóa lọc</button>}
     </section>}

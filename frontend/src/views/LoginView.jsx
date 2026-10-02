@@ -72,8 +72,16 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg('');
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+      setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ.');
+      return;
+    }
+    if (!password) {
+      setErrorMsg('Vui lòng nhập mật khẩu.');
+      return;
+    }
+    setLoading(true);
 
     try {
       const res = await apiFetch('/api/auth/login', {
@@ -103,9 +111,18 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
-    setRegLoading(true);
     setErrorMsg('');
     setRegSuccessMsg('');
+
+    if (!regForm.ho_ten.trim()) {
+      setErrorMsg('Vui lòng nhập họ và tên.');
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(regForm.email.trim())) {
+      setErrorMsg('Vui lòng nhập email sinh viên hợp lệ.');
+      return;
+    }
+    setRegLoading(true);
 
     if (regForm.so_dien_thoai && !isValidVietnamPhone(regForm.so_dien_thoai)) {
       setErrorMsg('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.');
@@ -176,6 +193,11 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
     const targetEmail = (forgotEmail || email).trim();
     if (!targetEmail) {
       setErrorMsg('Vui lòng nhập địa chỉ email.');
+      setForgotLoading(false);
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(targetEmail)) {
+      setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ.');
       setForgotLoading(false);
       return;
     }
@@ -270,7 +292,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
         {/* Form Đăng nhập & Quên mật khẩu */}
         {isForgotMode ? (
-          <form onSubmit={handleForgotSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <form noValidate onSubmit={handleForgotSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{
               background: '#eff6ff',
               padding: '12px 14px',
@@ -326,7 +348,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             </button>
           </form>
         ) : !isRegisterMode ? (
-          <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <form noValidate onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="form-group">
               <label className="form-label" style={{ fontSize: '13px' }}>
                 Email
@@ -410,7 +432,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           </form>
         ) : (
           /* Form Đăng ký tài khoản (Mặc định là Thực tập sinh) */
-          <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <form noValidate onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="form-group">
               <label className="form-label" style={{ fontSize: '13px' }}>Họ và tên</label>
               <input

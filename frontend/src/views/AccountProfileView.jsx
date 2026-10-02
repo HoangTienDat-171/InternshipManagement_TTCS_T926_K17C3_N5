@@ -37,6 +37,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
 
   const changePassword = async (event) => {
     event.preventDefault();
+    if (!password.mat_khau_hien_tai) return onShowToast('Vui lòng nhập mật khẩu hiện tại.', 'error');
     if (password.mat_khau_moi.length < 6) return onShowToast('Mật khẩu mới cần ít nhất 6 ký tự.', 'error');
     if (password.mat_khau_moi !== password.xac_nhan) return onShowToast('Mật khẩu xác nhận không khớp.', 'error');
     setSaving(true);
@@ -64,7 +65,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
         </aside>
         <section className="account-content-card">
           <header className="account-content-header"><div><h3>{sections.find((item) => item.id === section)?.label}</h3><p>{section === 'profile' ? 'Thông tin được dùng trong hồ sơ của bạn.' : 'Đặt mật khẩu mới để bảo vệ tài khoản.'}</p></div></header>
-          {!forcePasswordChange && section === 'profile' && <form className="account-profile-form" onSubmit={saveProfile}>
+          {!forcePasswordChange && section === 'profile' && <form className="account-profile-form" noValidate onSubmit={saveProfile}>
             <div className="account-avatar-large">{currentUser.ho_ten?.charAt(0)?.toUpperCase() || 'U'}</div>
             <div className="account-profile-grid">
               <label className="form-group"><span className="form-label">Tên tài khoản</span><input className="form-control is-readonly" value={currentUser.email?.split('@')[0] || ''} readOnly /></label>
@@ -76,7 +77,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
             </div>
             <footer className="account-form-footer"><button className="btn btn-primary" disabled={saving}><Save size={16} />{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</button></footer>
           </form>}
-          {section === 'password' && <form className="password-form" onSubmit={changePassword}>
+          {section === 'password' && <form className="password-form" noValidate onSubmit={changePassword}>
             <label className="form-group"><span className="form-label">Mật khẩu hiện tại <span className="required">*</span></span><input className="form-control" type="password" autoComplete="current-password" required value={password.mat_khau_hien_tai} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_hien_tai: event.target.value }))} /></label>
             <label className="form-group"><span className="form-label">Mật khẩu mới <span className="required">*</span></span><input className="form-control" type="password" autoComplete="new-password" minLength={6} required value={password.mat_khau_moi} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_moi: event.target.value }))} /></label>
             <label className="form-group"><span className="form-label">Xác nhận mật khẩu mới <span className="required">*</span></span><input className="form-control" type="password" autoComplete="new-password" minLength={6} required value={password.xac_nhan} onChange={(event) => setPassword((old) => ({ ...old, xac_nhan: event.target.value }))} /></label>

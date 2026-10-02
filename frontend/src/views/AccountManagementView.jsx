@@ -102,6 +102,8 @@ export default function AccountManagementView({ departments, onShowToast, curren
       onShowToast('Chỉ Quản trị viên (Admin) mới có quyền tạo người dùng!', 'error');
       return;
     }
+    if (!formData.ho_ten.trim()) return setFormError('Vui lòng nhập họ và tên.');
+    if (!/^\S+@\S+\.\S+$/.test(formData.email.trim())) return setFormError('Vui lòng nhập email hợp lệ.');
     setFormSubmitting(true);
     setFormError('');
 
@@ -535,7 +537,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
                   <AlertCircle size={15} /><span>{formError}</span>
                 </div>
               )}
-              <form id="create-account-form" onSubmit={handleCreateAccount} className="create-account-form">
+              <form id="create-account-form" noValidate onSubmit={handleCreateAccount} className="create-account-form">
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-name">Họ và tên <span className="required">*</span></label>
                   <input id="new-user-name" type="text" name="ho_ten" className="form-control" placeholder="Ví dụ: Hoàng Tuấn Anh" required value={formData.ho_ten} onChange={handleChange} />

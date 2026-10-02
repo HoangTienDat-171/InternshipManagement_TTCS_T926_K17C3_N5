@@ -6,6 +6,7 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/vi';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import CustomSelect from '../components/CustomSelect';
 
 const weekdays = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật'];
 
@@ -121,10 +122,10 @@ export default function PersonalScheduleView() {
     </header>
 
     <section className="workspace-card personal-schedule-filters" aria-label="Bộ lọc lịch thực tập">
-      <label><span>Chương trình</span><select className="form-select" value={programId} onChange={(event) => { beginReload(); setProgramId(event.target.value); }}>
+      <label><span>Chương trình</span><CustomSelect className="form-select" aria-label="Chọn chương trình" value={programId} onChange={(event) => { beginReload(); setProgramId(event.target.value); }}>
         <option value="">Tất cả chương trình</option>
         {(schedule?.filters?.programs || []).map((program) => <option value={program.id} key={program.id}>{program.name}</option>)}
-      </select></label>
+      </CustomSelect></label>
       <div className="personal-schedule-week-picker" aria-label="Chọn tuần">
         <button type="button" className="btn btn-secondary btn-sm" aria-label="Tuần trước" onClick={() => moveWeek(-1)}><ChevronLeft size={16} /></button>
         <strong>{start.locale('vi').format('DD/MM/YYYY')} – {end.locale('vi').format('DD/MM/YYYY')}</strong>
