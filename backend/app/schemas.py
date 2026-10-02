@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from datetime import date
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, List, Literal
 
 class UserLogin(BaseModel):
@@ -137,6 +138,96 @@ class MentorAssignmentDetail(InternAssignmentCandidate):
 
 class MentorBatchAssignment(BaseModel):
     ma_ho_so_list: List[int] = Field(min_length=1, max_length=50)
+
+
+TaskPriority = Literal["LOW", "MEDIUM", "HIGH", "URGENT"]
+
+
+class MentorTaskCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    internship_profile_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    due_date: date
+    priority: TaskPriority = "MEDIUM"
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("Tiêu đề không được chỉ chứa khoảng trắng.")
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        description = value.strip()
+        return description or None
+
+
+class MentorTaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    due_date: Optional[date] = None
+    priority: Optional[TaskPriority] = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        title = value.strip()
+        if not title:
+            raise ValueError("Tiêu đề không được chỉ chứa khoảng trắng.")
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        description = value.strip()
+        return description or None
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        return self
+
+
+TaskStatus = Literal["TODO", "IN_PROGRESS", "COMPLETED", "CANCELLED"]
+InternProgressStatus = Literal["TODO", "IN_PROGRESS", "COMPLETED"]
+
+
+class InternTaskProgressUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    progress_percent: int = Field(ge=0, le=100)
+    status: InternProgressStatus
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        note = value.strip()
+        return note or None
+
+    @model_validator(mode="after")
+    def validate_completed_progress(self):
+        if self.progress_percent == 100 and self.status != "COMPLETED":
+            raise ValueError("Tiến độ 100% phải có trạng thái COMPLETED.")
+        if self.status == "COMPLETED" and self.progress_percent != 100:
+            raise ValueError("Trạng thái COMPLETED yêu cầu tiến độ bằng 100%.")
+        return self
 
 class ProgramCreate(BaseModel):
     ma_ct: str = Field(min_length=1, max_length=40)

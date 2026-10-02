@@ -11,6 +11,7 @@ import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
+import InternshipTasksView from './views/InternshipTasksView';
 import GuestJobPortalView from './views/GuestJobPortalView';
 import GuestTrackingView from './views/GuestTrackingView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
@@ -72,6 +73,7 @@ export default function App() {
       : currentUser && (
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
       )
         ? personalWorkspace
@@ -504,6 +506,10 @@ export default function App() {
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
             <MentorWorkspaceView currentUser={currentUser} />
+          )}
+
+          {['Mentor', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'tasks' && (
+            <InternshipTasksView currentUser={currentUser} onShowToast={showToast} />
           )}
 
           {visibleActiveTab === 'profile' && (

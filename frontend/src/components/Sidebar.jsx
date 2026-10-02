@@ -9,6 +9,7 @@ import {
   GraduationCap,
   LayoutDashboard,
   UsersRound,
+  ClipboardList,
   LogOut,
   X
 } from 'lucide-react';
@@ -24,6 +25,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
     ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
     ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch cá nhân', icon: <CalendarDays size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
+    ...((isMentor || isIntern) ? [{ id: 'tasks', label: 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
     ...(canManage ? [
     {
       id: 'interns',
