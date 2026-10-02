@@ -73,7 +73,7 @@ def _claim_one():
             (stale_before,),
         )
         row = db.execute(
-            """SELECT id, recipient_email, subject, body, retry_count, max_retry
+            """SELECT *
                FROM EMAIL_OUTBOX
                WHERE status IN ('PENDING','RETRY')
                  AND (reference_type IS NULL OR reference_type <> 'internal_message')
@@ -149,7 +149,7 @@ def _mark_failed_attempt(item, exc: Exception):
 
 
 def process_one_email() -> bool:
-    """Claim and deliver one message. Returns whether an item was claimed."""
+    """Claim and deliver one message with attachments. Returns whether an item was claimed."""
     config = _smtp_config()
     if not config:
         return False
@@ -157,19 +157,99 @@ def process_one_email() -> bool:
     if not item:
         return False
 
+    db = get_db_connection()
     try:
-        message = EmailMessage()
-        message["From"] = _header_value(config["sender"])
-        message["To"] = _header_value(item["recipient_email"], 254)
-        message["Subject"] = _header_value(item["subject"], 255)
-        message.set_content(item["body"])
+        attachments = []
+        try:
+            att_rows = db.execute(
+                """SELECT id, filename, file_path, mime_type, file_size, disposition, content_id
+                   FROM EMAIL_ATTACHMENTS WHERE email_id = ?""",
+                (item["id"],)
+            ).fetchall()
+            for ar in att_rows:
+                att = dict(ar)
+                if not os.path.isfile(att["file_path"]):
+                    raise FileNotFoundError(f"ATTACHMENT_NOT_FOUND: Tệp đính kèm không tồn tại: {att['filename']}")
+                attachments.append(att)
+        except Exception as e:
+            if "no such table" not in str(e).lower():
+                raise
+
+        total_attachment_bytes = sum(a.get("file_size", 0) for a in attachments)
+        payload_timeout = max(
+            config["timeout"],
+            min(60.0, 15.0 + total_attachment_bytes / (256 * 1024))
+        )
+
+        from .email_deduplication import compute_email_dedup_hash, get_dedup_window_seconds
+        dedup_hash = item.get("dedup_hash")
+        if not dedup_hash:
+            dedup_hash = compute_email_dedup_hash(
+                recipient_email=item["recipient_email"],
+                subject=item["subject"],
+                body_text=item["body"],
+                template_type=item.get("template_type"),
+                attachments=attachments,
+            )
+
+        window = get_dedup_window_seconds()
+        cutoff = (_database_now(db) - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
+        already_sent = None
+        try:
+            already_sent = db.execute(
+                """SELECT id, sent_at FROM EMAIL_OUTBOX
+                   WHERE recipient_email = ? AND (dedup_hash = ? OR (subject = ? AND body = ?))
+                     AND status = 'SENT' AND id != ?
+                     AND sent_at IS NOT NULL AND sent_at >= ?
+                   LIMIT 1""",
+                (item["recipient_email"], dedup_hash, item["subject"], item["body"], item["id"], cutoff),
+            ).fetchone()
+        except Exception as e:
+            if "no such column: dedup_hash" in str(e).lower() or "unknown column 'dedup_hash'" in str(e).lower():
+                already_sent = db.execute(
+                    """SELECT id, sent_at FROM EMAIL_OUTBOX
+                       WHERE recipient_email = ? AND subject = ? AND body = ?
+                         AND status = 'SENT' AND id != ?
+                         AND sent_at IS NOT NULL AND sent_at >= ?
+                       LIMIT 1""",
+                    (item["recipient_email"], item["subject"], item["body"], item["id"], cutoff),
+                ).fetchone()
+            else:
+                raise
+
+        if already_sent:
+            logger.warning(
+                "DUPLICATE_EMAIL_SUPPRESSED (Worker): Outbox item %s suppressed. Identical email %s was already sent to %s at %s.",
+                item["id"], already_sent["id"], item["recipient_email"], already_sent["sent_at"]
+            )
+            db.execute(
+                """UPDATE EMAIL_OUTBOX
+                   SET status='FAILED', last_error='DUPLICATE_EMAIL_SUPPRESSED: Email tương tự đã được gửi gần đây.',
+                       next_retry_at=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=? AND status='PROCESSING'""",
+                (item["id"],),
+            )
+            db.commit()
+            return True
+
+        from .email_service import build_mime_message
+        body_html = item.get("body_html") if "body_html" in item else None
+        message = build_mime_message(
+            sender=config["sender"],
+            recipient=item["recipient_email"],
+            subject=item["subject"],
+            body_text=item["body"],
+            body_html=body_html,
+            attachments=attachments,
+        )
+
         if config["use_ssl"]:
             client = smtplib.SMTP_SSL(
-                config["host"], config["port"], timeout=config["timeout"],
+                config["host"], config["port"], timeout=payload_timeout,
                 context=ssl.create_default_context(),
             )
         else:
-            client = smtplib.SMTP(config["host"], config["port"], timeout=config["timeout"])
+            client = smtplib.SMTP(config["host"], config["port"], timeout=payload_timeout)
         with client as smtp:
             if config["use_starttls"] and not config["use_ssl"]:
                 smtp.starttls(context=ssl.create_default_context())
@@ -177,14 +257,16 @@ def process_one_email() -> bool:
                 smtp.login(config["username"], config["password"])
             smtp.send_message(message)
         _mark_sent(item["id"])
-        logger.info("Email outbox item %s sent", item["id"])
-    except (smtplib.SMTPException, OSError, TimeoutError, ValueError) as exc:
+        logger.info("Email outbox item %s sent (attachments: %s)", item["id"], len(attachments))
+    except (smtplib.SMTPException, OSError, TimeoutError, ValueError, FileNotFoundError) as exc:
         _mark_failed_attempt(item, exc)
         logger.warning("Email outbox item %s delivery failed (%s)", item["id"], type(exc).__name__)
     except Exception:
         # Database errors are surfaced so the worker logs them; delivery state is not guessed.
         logger.exception("Email outbox item %s processing failed", item["id"])
         raise
+    finally:
+        db.close()
     return True
 
 

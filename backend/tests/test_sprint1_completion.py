@@ -340,7 +340,9 @@ class Sprint1RuntimeTests(unittest.TestCase):
         status_code, updated, _ = self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
             "ho_ten": "Sprint 1 CRUD Intern Updated", "email": f"sprint1.{suffix}@test.invalid",
             "ma_phong_ban": 2, "ma_truong": 2, "chuyen_nganh": "Data Engineering",
-            "trang_thai_xet_duyet": "ChoDuyet", "trang_thai_thuc_tap": "DangThucTap",
+            "trang_thai_xet_duyet": "ChoDuyet",
+            "expected_trang_thai_xet_duyet": detail["trang_thai_xet_duyet"],
+            "trang_thai_thuc_tap": "DangThucTap",
         })
         self.assertEqual(status_code, 200, updated)
         status_code, detail, _ = self.json_request(f"/api/interns/{profile_id}", token=token)
@@ -495,6 +497,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
         approved_data = {
             "ho_ten": "US08 Approved", "email": approved_email, "ma_phong_ban": 1,
             "ma_truong": 1, "chuyen_nganh": "QA", "trang_thai_xet_duyet": "DaDuyet",
+            "expected_trang_thai_xet_duyet": "ChoDuyet",
             "trang_thai_thuc_tap": "DangThucTap",
         }
         status_code, _, _ = self.json_request(
@@ -595,6 +598,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
                 "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
                 "ma_truong": 1, "chuyen_nganh": "QA",
                 "trang_thai_xet_duyet": decision, "trang_thai_thuc_tap": "DangThucTap",
+                "expected_trang_thai_xet_duyet": "ChoDuyet",
             })
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -620,6 +624,29 @@ class Sprint1RuntimeTests(unittest.TestCase):
             db.close()
         self.assertIn(final_status, {"DaDuyet", "TuChoi"})
         self.assertEqual((email_count, notification_count), (1, 1))
+
+        stale_decision = "TuChoi" if final_status == "DaDuyet" else "DaDuyet"
+        status_code, _, _ = review(
+            stale_decision, hr_token if stale_decision == "TuChoi" else admin_token,
+        )
+        self.assertEqual(status_code, 409)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            retry_status = db.execute(
+                "SELECT trang_thai_xet_duyet FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_id,),
+            ).fetchone()[0]
+            retry_email_count = db.execute(
+                "SELECT COUNT(*) FROM EMAIL_OUTBOX WHERE deduplication_key LIKE ?",
+                (f"us08:intern_profile:{profile_id}:%",),
+            ).fetchone()[0]
+            retry_notification_count = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE ma_nguoi_dung=?", (user_id,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(retry_status, final_status)
+        self.assertEqual((retry_email_count, retry_notification_count), (1, 1))
 
     def test_us08_program_review_is_serialized_and_queues_complete_result_emails(self):
         admin_token, _ = self.login("admin@internship.vn")

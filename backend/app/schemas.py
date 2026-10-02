@@ -28,6 +28,9 @@ class PasswordChange(BaseModel):
     mat_khau_hien_tai: str
     mat_khau_moi: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
 class UserResponse(BaseModel):
     ma_nguoi_dung: int
     ho_ten: str
@@ -56,6 +59,7 @@ class InternUpdate(BaseModel):
     ma_truong: Optional[int] = None
     chuyen_nganh: Optional[str] = None
     trang_thai_xet_duyet: Literal["ChoDuyet", "DaDuyet", "TuChoi"]
+    expected_trang_thai_xet_duyet: Literal["ChoDuyet", "DaDuyet", "TuChoi"]
     trang_thai_thuc_tap: Literal["DangThucTap", "HoanThanh", "ThoiHoc"]
 
 class InternDetail(BaseModel):
