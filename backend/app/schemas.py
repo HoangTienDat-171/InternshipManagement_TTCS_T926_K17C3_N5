@@ -53,15 +53,15 @@ class InternCreate(BaseModel):
     trang_thai_thuc_tap: Optional[Literal["DangThucTap", "HoanThanh", "ThoiHoc"]] = "DangThucTap"
 
 class InternUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     ho_ten: str
     email: str
     so_dien_thoai: Optional[str] = None
     ma_phong_ban: Optional[int] = None
     ma_truong: Optional[int] = None
     chuyen_nganh: Optional[str] = None
-    trang_thai_xet_duyet: Literal["ChoDuyet", "DaDuyet", "TuChoi"]
-    expected_trang_thai_xet_duyet: Literal["ChoDuyet", "DaDuyet", "TuChoi"]
-    trang_thai_thuc_tap: Literal["DangThucTap", "HoanThanh", "ThoiHoc"]
+    trang_thai_thuc_tap: Optional[Literal["DangThucTap", "HoanThanh", "ThoiHoc"]] = None
 
 class InternDetail(BaseModel):
     ma_ho_so: int

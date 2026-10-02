@@ -438,9 +438,9 @@ export default function InternManagementView({
           <div className="table-pagination-controls">
             <label className="table-page-size">
               <span>Số dòng</span>
-              <select className="form-select" aria-label="Số dòng mỗi trang" value={pageSize} onChange={changePageSize}>
+              <CustomSelect className="form-select" aria-label="Số dòng mỗi trang" value={pageSize} onChange={changePageSize}>
                 {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
-              </select>
+              </CustomSelect>
             </label>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => changePage(currentPage - 1)} disabled={currentPage <= 1 || loading}>
               <ChevronLeft size={15} /><span>Trước</span>

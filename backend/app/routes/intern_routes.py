@@ -1,16 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Query, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, status, Query, Request
 import sqlite3
 import re
 import math
 from datetime import date
 from typing import List, Optional, Dict, Any
-from uuid import uuid4
 from ..database import get_db, hash_password
 from ..account_credentials import create_temporary_password, queue_temporary_password_email, require_password_change_schema
 from ..schemas import InternCreate, InternUpdate, InternDetail
-from ..security import require_role, publish_force_logout
-from ..intern_workflow import APPROVAL_TO_ACCOUNT_STATUS, sync_intern_approval
-from ..notifications import create_notification
+from ..security import require_role
 from ..personal_schedule import PersonalScheduleService
 
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
@@ -181,7 +178,7 @@ def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends
     return dict(row)
 
 @router.put("/{id}", response_model=Dict[str, Any])
-def update_intern(id: int, data: InternUpdate, request: Request, background_tasks: BackgroundTasks, db: sqlite3.Connection = Depends(get_db)):
+def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
     """
     US02 – Cập nhật/Chỉnh sửa hồ sơ thực tập sinh (Quản lý hồ sơ)
     Viết API Cập nhật (Update) dữ liệu.
@@ -192,10 +189,8 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
     
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
-        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet,
-               u.ho_ten, u.email, u.trang_thai AS trang_thai_tai_khoan, s.session_id
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
-        LEFT JOIN ACTIVE_SESSIONS s ON s.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
     record = cursor.fetchone()
@@ -205,13 +200,6 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
             detail=f"Không tìm thấy hồ sơ thực tập sinh với ID = {id}"
         )
 
-    if record["trang_thai_xet_duyet"] != data.expected_trang_thai_xet_duyet:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Hồ sơ đã được cập nhật bởi HR/Admin khác. Tải lại dữ liệu trước khi thử lại.",
-        )
-    
     ma_nguoi_dung = record["ma_nguoi_dung"]
 
     # Kiểm tra nếu đổi email thì email mới không được trùng với người dùng khác
@@ -225,40 +213,16 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
             detail=f"Email '{data.email}' đã được sử dụng bởi người dùng khác!"
         )
 
-    # Only a changed review decision should change account access. A manual account
-    # lock is independent and must survive ordinary edits to an already-approved profile.
-    previous_session_id = record["session_id"]
-    target_account_status = APPROVAL_TO_ACCOUNT_STATUS[data.trang_thai_xet_duyet]
-    approval_changed = record["trang_thai_xet_duyet"] != data.trang_thai_xet_duyet
-    account_status_drift = (
-        record["trang_thai_tai_khoan"] != target_account_status
-        and record["trang_thai_tai_khoan"] != "Khoa"
-    )
-    internship_status = data.trang_thai_thuc_tap if data.trang_thai_xet_duyet == "DaDuyet" else None
-    if approval_changed:
-        cursor.execute("""
-            UPDATE HO_SO_THUC_TAP
-            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
-            WHERE ma_ho_so = ? AND trang_thai_xet_duyet = ?
-        """, (
-            data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet,
-            internship_status, id, data.expected_trang_thai_xet_duyet,
-        ))
-        if cursor.rowcount != 1:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Hồ sơ vừa được HR/Admin khác xử lý. Tải lại dữ liệu trước khi thử lại.",
-            )
-    else:
-        cursor.execute("""
-            UPDATE HO_SO_THUC_TAP
-            SET ma_truong = ?, chuyen_nganh = ?, trang_thai_xet_duyet = ?, trang_thai_thuc_tap = ?
-            WHERE ma_ho_so = ?
-        """, (data.ma_truong, data.chuyen_nganh, data.trang_thai_xet_duyet, internship_status, id))
-
-    if approval_changed or account_status_drift:
-        sync_intern_approval(cursor, ma_nguoi_dung, data.trang_thai_xet_duyet)
+    # Approval is intentionally immutable here. Only the dedicated approve/reject
+    # endpoints may change review state, account access, notifications, or email.
+    internship_status = record["trang_thai_thuc_tap"]
+    if record["trang_thai_xet_duyet"] == "DaDuyet" and data.trang_thai_thuc_tap is not None:
+        internship_status = data.trang_thai_thuc_tap
+    cursor.execute("""
+        UPDATE HO_SO_THUC_TAP
+        SET ma_truong = ?, chuyen_nganh = ?, trang_thai_thuc_tap = ?
+        WHERE ma_ho_so = ?
+    """, (data.ma_truong, data.chuyen_nganh, internship_status, id))
 
     # 2. Cập nhật thông tin tài khoản
     cursor.execute("""
@@ -267,83 +231,10 @@ def update_intern(id: int, data: InternUpdate, request: Request, background_task
         WHERE ma_nguoi_dung = ?
     """, (data.ho_ten.strip(), data.email.strip().lower(), data.so_dien_thoai, data.ma_phong_ban, ma_nguoi_dung))
 
-    decision = data.trang_thai_xet_duyet
-    if approval_changed or account_status_drift:
-        title, message = {
-            "ChoDuyet": ("Hồ sơ đang chờ duyệt", "Hồ sơ thực tập của bạn đang chờ xét duyệt."),
-            "DaDuyet": ("Hồ sơ thực tập đã được duyệt", "Hồ sơ của bạn đã được duyệt và tài khoản đã được kích hoạt. Mật khẩu đăng nhập tạm thời đã được gửi về email của bạn."),
-            "TuChoi": ("Hồ sơ thực tập bị từ chối", "Hồ sơ của bạn đã bị từ chối. Hãy liên hệ Quản lý thực tập sinh để biết thêm chi tiết."),
-        }[decision]
-
-        user_info = cursor.execute("SELECT must_change_password FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (ma_nguoi_dung,)).fetchone()
-        needs_temp_password = bool(user_info and user_info["must_change_password"])
-
-        temporary_password = None
-        email_body = None
-        email_subject = None
-        if decision == "DaDuyet":
-            if needs_temp_password:
-                temporary_password = create_temporary_password()
-                cursor.execute(
-                    "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
-                    (hash_password(temporary_password), ma_nguoi_dung),
-                )
-                email_subject = "[IMS Portal] Xác nhận hồ sơ thực tập sinh đã được duyệt & Mật khẩu đăng nhập"
-                email_body = (
-                    f"Xin chào {data.ho_ten.strip()},\n\n"
-                    "Chúc mừng! Hồ sơ thực tập sinh của bạn đã được phê duyệt thành công.\n"
-                    "Tài khoản của bạn đã được kích hoạt trên hệ thống IMS Portal.\n\n"
-                    "Thông tin đăng nhập:\n"
-                    f"- Tên đăng nhập (Email): {data.email.strip().lower()}\n"
-                    f"- Mật khẩu tạm thời: {temporary_password}\n\n"
-                    "Lưu ý: Để đảm bảo bảo mật tài khoản, sau khi đăng nhập bằng mật khẩu tạm này, hệ thống sẽ yêu cầu bạn đổi sang mật khẩu mới trước khi tiếp tục sử dụng.\n\n"
-                    "Trân trọng,\nBan Quản lý Thực tập sinh"
-                )
-            else:
-                email_subject = "[IMS Portal] Xác nhận hồ sơ thực tập sinh đã được duyệt"
-                email_body = (
-                    f"Xin chào {data.ho_ten.strip()},\n\n"
-                    "Chúc mừng! Hồ sơ thực tập sinh của bạn đã được phê duyệt thành công.\n"
-                    "Tài khoản của bạn đã được kích hoạt trên hệ thống IMS Portal.\n\n"
-                    "Bạn có thể đăng nhập bằng email và mật khẩu của mình để truy cập hệ thống.\n\n"
-                    "Trân trọng,\nBan Quản lý Thực tập sinh"
-                )
-        elif decision == "TuChoi":
-            email_subject = "[IMS Portal] Thông báo kết quả xét duyệt hồ sơ thực tập sinh"
-            email_body = (
-                f"Xin chào {data.ho_ten.strip()},\n\n"
-                "Rất tiếc, hồ sơ thực tập sinh của bạn đã không được duyệt vào thời điểm hiện tại.\n"
-                "Vui lòng liên hệ Phòng Quản lý thực tập sinh nếu bạn có bất kỳ thắc mắc nào.\n\n"
-                "Trân trọng,\nBan Quản lý Thực tập sinh"
-            )
-
-        email_deduplication_key = f"us08:intern_profile:{id}:{decision}"
-        if decision == "DaDuyet" and temporary_password:
-            email_deduplication_key += f":credentials:{uuid4().hex}"
-
-        create_notification(
-            db, ma_nguoi_dung, title, message,
-            notification_type="internship_review_result",
-            reference_type="intern_profile", reference_id=id,
-            email_recipient=(data.email.strip().lower() if decision in {"DaDuyet", "TuChoi"} else None),
-            email_deduplication_key=(email_deduplication_key if decision in {"DaDuyet", "TuChoi"} else None),
-            email_subject=email_subject,
-            email_template_type="temporary_credentials" if (decision == "DaDuyet" and temporary_password) else "approval_result",
-            email_reference_type="intern_profile",
-            email_reference_id=id,
-            email_body=email_body,
-        )
-
     db.commit()
-    if previous_session_id and data.trang_thai_xet_duyet != "DaDuyet":
-        background_tasks.add_task(publish_force_logout, ma_nguoi_dung, previous_session_id)
-
-    response_message = "Cập nhật hồ sơ thực tập sinh thành công!"
-    if decision == "DaDuyet":
-        response_message = "Đã duyệt hồ sơ thực tập sinh thành công! Mật khẩu đăng nhập tạm thời đã được gửi tới email của thực tập sinh."
 
     return {
-        "message": response_message,
+        "message": "Cập nhật hồ sơ thực tập sinh thành công!",
         "ma_ho_so": id,
         "ho_ten": data.ho_ten,
         "email": data.email.strip().lower()

@@ -12,7 +12,7 @@ import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
 function clearSavedSession() {
@@ -27,7 +27,7 @@ function clearSavedSession() {
 function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
-  if (path === '/tasks') return 'tasks';
+  if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   return 'interns';
 }
 
@@ -43,6 +43,7 @@ export default function App() {
   const requestedContractPath = initialContractPath || pendingContractPath;
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
   const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
+  const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -309,7 +310,16 @@ export default function App() {
     if (passwordChangeRequired) return;
     const nextPath = pathForTab(tab);
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
+    setRequestedTaskId(null);
     setActiveTab(tab);
+  };
+
+  const openNotificationReference = (notification) => {
+    if (notification.reference_type !== 'internship_task' || !notification.reference_id) return;
+    const taskId = String(notification.reference_id);
+    window.history.pushState(null, '', `/tasks/${taskId}`);
+    setRequestedTaskId(taskId);
+    setActiveTab('tasks');
   };
 
   useEffect(() => {
@@ -318,6 +328,7 @@ export default function App() {
         window.history.replaceState(null, '', '/');
         setActiveTab('interns');
       } else {
+        setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
         setActiveTab(tabForPath(window.location.pathname));
       }
     };
@@ -351,7 +362,7 @@ export default function App() {
   if (passwordChangeRequired) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--app-bg, #f8fafc)' }}>
-        {toast && <div role="status" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: toast.type === 'success' ? '#0f766e' : '#b91c1c', color: 'white', padding: '12px 18px', borderRadius: 10, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>{toast.message}</div>}
+        {toast && <Toast {...toast} onClose={() => setToast(null)} />}
         <header style={{ minHeight: 68, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'var(--surface, #fff)', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
           <strong>IMS PORTAL · Đổi mật khẩu lần đầu</strong>
           <button type="button" className="btn btn-secondary" onClick={handleLogout}>Đăng xuất</button>
@@ -374,28 +385,7 @@ export default function App() {
   return (
     <div className={`app-layout${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       {/* Toast Notification */}
-      {toast && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 9999,
-          background: toast.type === 'success' ? '#0f766e' : '#b91c1c',
-          color: 'white',
-          padding: '12px 18px',
-          borderRadius: '10px',
-          boxShadow: '0 8px 20px rgba(0,0,0,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '13px',
-          fontWeight: 600,
-          animation: 'modalIn 0.2s ease-out'
-        }}>
-          {toast.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-          <span>{toast.message}</span>
-        </div>
-      )}
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
       {/* Sidebar */}
       <Sidebar 
@@ -427,6 +417,7 @@ export default function App() {
           sidebarOpen={window.innerWidth <= 1000 ? sidebarOpen : !desktopSidebarCollapsed}
           theme={theme}
           onToggleTheme={() => setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')}
+          onOpenNotificationReference={openNotificationReference}
         />
 
         <main className="content-wrapper">
@@ -487,7 +478,12 @@ export default function App() {
           )}
 
           {['Mentor', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'tasks' && (
-            <InternshipTasksView currentUser={currentUser} onShowToast={showToast} />
+            <InternshipTasksView
+              currentUser={currentUser}
+              onShowToast={showToast}
+              requestedTaskId={requestedTaskId}
+              onTaskOpened={(taskId) => setRequestedTaskId(String(taskId))}
+            />
           )}
 
           {visibleActiveTab === 'profile' && (

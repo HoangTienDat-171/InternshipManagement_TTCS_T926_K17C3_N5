@@ -203,7 +203,7 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
 
       <ContractManagementPanel interns={interns} onShowToast={onShowToast} />
 
-      <form className="card document-upload-card" style={{ marginBottom: '24px' }} onSubmit={uploadDocument}>
+      <form className="card document-upload-card" noValidate style={{ marginBottom: '24px' }} onSubmit={uploadDocument}>
         <div className="card-header"><div className="card-title-box"><h2>Tải lên tài liệu mới</h2></div></div>
         <div className="card-body document-upload-body">
           <div className="form-grid document-upload-fields">
