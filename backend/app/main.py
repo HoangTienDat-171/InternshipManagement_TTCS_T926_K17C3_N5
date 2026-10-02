@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import auth_routes, contract_routes, document_routes, guest_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes
+from .routes import auth_routes, contract_routes, document_routes, guest_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, task_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -109,6 +109,7 @@ app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(guest_routes.router)
+app.include_router(task_routes.router)
 
 
 @app.websocket("/api/auth/events")

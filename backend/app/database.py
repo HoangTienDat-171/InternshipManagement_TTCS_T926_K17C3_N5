@@ -240,6 +240,23 @@ def init_mysql_db():
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
+                ma_nhiem_vu BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_nguoi_dung_mentor INT NOT NULL,
+                tieu_de VARCHAR(200) NOT NULL,
+                noi_dung TEXT NULL,
+                han_hoan_thanh DATE NOT NULL,
+                do_uu_tien ENUM('LOW','MEDIUM','HIGH','URGENT') NOT NULL DEFAULT 'MEDIUM',
+                trang_thai ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL DEFAULT 'TODO',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_nhiem_vu_mentor (ma_nguoi_dung_mentor, created_at),
+                KEY idx_nhiem_vu_ho_so (ma_ho_so, created_at),
+                KEY idx_nhiem_vu_filters (trang_thai, do_uu_tien, han_hoan_thanh),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
                 ma_chuong_trinh INT AUTO_INCREMENT PRIMARY KEY, ma_ct VARCHAR(40) NOT NULL UNIQUE,
                 ten_ct VARCHAR(200) NOT NULL, ma_phong_ban INT NULL, ngay_bat_dau DATE NULL,
@@ -565,6 +582,28 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_phan_cong_mentor
         ON PHAN_CONG_MENTOR_TTS(ma_nguoi_dung_mentor)
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
+        ma_nhiem_vu INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        tieu_de TEXT NOT NULL CHECK(length(tieu_de) BETWEEN 1 AND 200),
+        noi_dung TEXT CHECK(noi_dung IS NULL OR length(noi_dung) <= 5000),
+        han_hoan_thanh TEXT NOT NULL,
+        do_uu_tien TEXT NOT NULL DEFAULT 'MEDIUM'
+            CHECK(do_uu_tien IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')),
+        trang_thai TEXT NOT NULL DEFAULT 'TODO'
+            CHECK(trang_thai IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_mentor ON NHIEM_VU_THUC_TAP(ma_nguoi_dung_mentor, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_ho_so ON NHIEM_VU_THUC_TAP(ma_ho_so, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_filters ON NHIEM_VU_THUC_TAP(trang_thai, do_uu_tien, han_hoan_thanh)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
