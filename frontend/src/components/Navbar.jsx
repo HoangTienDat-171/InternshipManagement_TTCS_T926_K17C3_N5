@@ -9,7 +9,8 @@ export default function Navbar({
   onToggleSidebar,
   sidebarOpen = false,
   theme = 'light',
-  onToggleTheme
+  onToggleTheme,
+  onOpenNotificationReference
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -50,6 +51,12 @@ export default function Navbar({
     } catch (error) {
       setNotificationsError(error.message || 'Không thể cập nhật thông báo.');
     }
+  };
+
+  const openNotification = async (item) => {
+    if (!item.da_doc) await markNotificationRead(item.ma_thong_bao);
+    if (item.reference_type && item.reference_id) onOpenNotificationReference?.(item);
+    setNotificationsOpen(false);
   };
 
   const formatNotificationDate = (value) => {
@@ -112,7 +119,7 @@ export default function Navbar({
                 {notificationsLoading && notifications.length === 0 ? <p className="notification-message">Đang tải thông báo…</p> : notifications.length === 0 ? <p className="notification-message">Bạn chưa có thông báo.</p> : (
                   <div className="notification-list">
                     {notifications.map((item) => (
-                      <button type="button" key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`} onClick={() => item.da_doc ? null : markNotificationRead(item.ma_thong_bao)}>
+                      <button type="button" key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`} onClick={() => openNotification(item)}>
                         <span className="notification-item-title">{item.tieu_de}</span>
                         <span>{item.noi_dung}</span>
                         <small>{formatNotificationDate(item.thoi_gian_gui)}</small>

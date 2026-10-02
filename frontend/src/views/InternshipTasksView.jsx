@@ -45,7 +45,7 @@ function ProgressBar({ value = 0 }) {
   </div>;
 }
 
-export default function InternshipTasksView({ currentUser, onShowToast }) {
+export default function InternshipTasksView({ currentUser, onShowToast, requestedTaskId, onTaskOpened }) {
   const isMentor = currentUser?.vai_tro === 'Mentor';
   const [tasks, setTasks] = useState([]);
   const [interns, setInterns] = useState([]);
@@ -72,6 +72,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
     const query = params.toString();
     return `/api/mentor/tasks${query ? `?${query}` : ''}`;
   }, [filters, isMentor]);
+  const hasActiveFilters = Object.values(filters).some(Boolean);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -98,7 +99,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
 
   useEffect(() => { void Promise.resolve().then(loadTasks); }, [loadTasks]);
 
-  const openDetail = async (task) => {
+  const openDetail = useCallback(async (task) => {
     setError('');
     setProgressError('');
     setHistoryLoading(true);
@@ -121,12 +122,23 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
         note: data.progress_note || '',
       });
       setEditing(false);
+      const taskPath = `/tasks/${task.id}`;
+      if (window.location.pathname !== taskPath) window.history.pushState(null, '', taskPath);
+      onTaskOpened?.(task.id);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, [onTaskOpened]);
+
+  useEffect(() => {
+    if (!requestedTaskId || loading) return;
+    const requestedTask = tasks.find((task) => String(task.id) === String(requestedTaskId));
+    if (requestedTask && String(selectedTask?.id) !== String(requestedTaskId)) {
+      void Promise.resolve().then(() => openDetail(requestedTask));
+    }
+  }, [requestedTaskId, loading, tasks, selectedTask?.id, openDetail]);
 
   const updateForm = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
 
@@ -146,7 +158,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       setSelectedTask(data);
       setHistory([]);
       setCreating(false);
-      onShowToast?.('Đã giao nhiệm vụ cho thực tập sinh.');
+      onShowToast?.(`Đã giao nhiệm vụ “${data.title}” cho ${data.intern_name}.`);
       await loadTasks();
     } catch (requestError) {
       setFormError(requestError.message);
@@ -182,7 +194,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       setSelectedTask(data);
       setEditing(false);
       setForm(emptyForm);
-      onShowToast?.('Đã cập nhật nhiệm vụ.');
+      onShowToast?.(`Đã lưu thay đổi cho nhiệm vụ “${data.title}”.`);
       await loadTasks();
     } catch (requestError) {
       setFormError(requestError.message);
@@ -202,7 +214,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       }
       setDeleteTarget(null);
       setSelectedTask(null);
-      onShowToast?.('Đã xử lý yêu cầu xóa hoặc hủy nhiệm vụ.');
+      onShowToast?.(`Đã xử lý nhiệm vụ “${deleteTarget.title}”.`);
       await loadTasks();
     } catch (requestError) {
       setError(requestError.message);
@@ -240,7 +252,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       setHistory(historyData);
       setTasks((current) => current.map((task) => task.id === data.id ? data : task));
       setProgressForm({ progress_percent: data.progress_percent, status: data.status, note: data.progress_note || '' });
-      onShowToast?.('Đã cập nhật tiến độ nhiệm vụ.');
+      onShowToast?.(`Đã cập nhật tiến độ “${data.title}” lên ${data.progress_percent}%.`);
     } catch (requestError) {
       setProgressError(requestError.message);
     } finally {
@@ -298,26 +310,27 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       <select aria-label="Lọc theo trạng thái" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Tất cả trạng thái</option>{Object.entries(statuses).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</select>
       <select aria-label="Lọc theo độ ưu tiên" value={filters.priority} onChange={(event) => setFilters((current) => ({ ...current, priority: event.target.value }))}><option value="">Tất cả ưu tiên</option>{Object.entries(priorities).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</select>
       <input aria-label="Lọc theo hạn hoàn thành" type="date" value={filters.due_date} onChange={(event) => setFilters((current) => ({ ...current, due_date: event.target.value }))} />
+      {hasActiveFilters && <button type="button" className="btn btn-secondary btn-sm task-filter-reset" onClick={() => setFilters({ internship_profile_id: '', status: '', priority: '', due_date: '' })}><X size={14} />Xóa lọc</button>}
     </section>}
 
     {error && <div className="workspace-error" role="alert"><span>{error}</span><button className="btn btn-secondary btn-sm" type="button" onClick={loadTasks}>Thử lại</button></div>}
 
-    <div className={`task-layout${isMentor && creating ? '' : ' is-intern'}`}>
+    <div className="task-layout is-intern">
       <section className="workspace-card task-list-card">
         <div className="workspace-section-heading"><div><span className="workspace-eyebrow">DANH SÁCH</span><h3>{isMentor ? 'Nhiệm vụ đang phụ trách' : 'Nhiệm vụ của tôi'} <small>{tasks.length}</small></h3></div><ClipboardList size={19} /></div>
         {loading ? <div className="workspace-loading">Đang tải nhiệm vụ…</div> : tasks.length ? <div className="task-list">{tasks.map((task) => <button type="button" className={`task-list-item${selectedTask?.id === task.id ? ' selected' : ''}`} key={task.id} onClick={() => openDetail(task)}>
-          <div className="task-list-title"><strong>{task.title}</strong><TaskBadge value={task.priority} map={priorities} /><span className="task-list-progress">{task.progress_percent ?? 0}%</span></div>
-          <span><UserRound size={13} />{isMentor ? task.intern_name : task.mentor_name}</span>
-          <span><CalendarClock size={13} />Hạn {displayDate(task.due_date)}</span>
-          <TaskBadge value={task.status} map={statuses} />
+          <div className="task-list-main">
+            <div className="task-list-title"><strong>{task.title}</strong><TaskBadge value={task.priority} map={priorities} /></div>
+            <div className="task-list-meta"><span><UserRound size={13} />{isMentor ? task.intern_name : task.mentor_name}</span><span><CalendarClock size={13} />Hạn {displayDate(task.due_date)}</span></div>
+          </div>
+          <div className="task-list-progress-block"><span><strong>{task.progress_percent ?? 0}%</strong> hoàn thành</span><span className="task-progress-track"><i style={{ width: `${task.progress_percent ?? 0}%` }} /></span></div>
+          <div className="task-list-state"><TaskBadge value={task.status} map={statuses} /><span>Xem chi tiết</span></div>
         </button>)}</div> : <div className="workspace-empty"><ClipboardList size={25} /><strong>Chưa có nhiệm vụ</strong><span>{isMentor ? 'Chọn Giao nhiệm vụ để tạo nhiệm vụ đầu tiên.' : 'Nhiệm vụ Mentor giao sẽ xuất hiện tại đây.'}</span></div>}
       </section>
-
-      {isMentor && creating && <section className="workspace-card task-create-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">GIAO VIỆC</span><h3>Giao nhiệm vụ mới</h3></div><Plus size={19} /></div>{interns.length ? renderTaskForm() : <div className="workspace-empty"><UserRound size={24} /><span>Bạn chưa có thực tập sinh được phân công nên chưa thể giao nhiệm vụ.</span></div>}</section>}
     </div>
 
     {selectedTask && <section className="workspace-card task-detail-card">
-      <div className="workspace-section-heading"><div><span className="workspace-eyebrow">CHI TIẾT NHIỆM VỤ</span><h3>{selectedTask.title}</h3></div><div className="task-detail-actions">{canManageSelectedTask && !editing && <><button type="button" className="btn btn-secondary btn-sm" onClick={beginEdit}><Pencil size={14} />Chỉnh sửa</button><button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(selectedTask)}><Trash2 size={14} />Xóa / hủy</button></>}</div></div>
+      <div className="workspace-section-heading"><div><span className="workspace-eyebrow">CHI TIẾT NHIỆM VỤ</span><h3>{selectedTask.title}</h3></div><div className="task-detail-actions">{canManageSelectedTask && !editing && <><button type="button" className="btn btn-secondary btn-sm" onClick={beginEdit}><Pencil size={14} />Chỉnh sửa</button><button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(selectedTask)}><Trash2 size={14} />Xóa / hủy</button></>}<button type="button" className="btn btn-secondary btn-sm" aria-label="Đóng chi tiết nhiệm vụ" onClick={() => { setSelectedTask(null); setEditing(false); window.history.pushState(null, '', '/tasks'); }}><X size={14} /></button></div></div>
       {editing ? renderTaskForm(true) : <div className="task-detail-content">
         <p>{selectedTask.description || 'Không có nội dung bổ sung.'}</p>
         <dl className="task-detail-grid">
@@ -358,6 +371,8 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
         </ol> : <div className="workspace-empty"><History size={24} /><span>Chưa có lần cập nhật tiến độ nào.</span></div>}
       </section>
     </div>}
+
+    {isMentor && creating && <div className="modal-overlay" role="presentation"><section className="modal-container task-create-modal" role="dialog" aria-modal="true" aria-labelledby="task-create-title"><div className="modal-header"><div><span className="workspace-eyebrow">GIAO VIỆC</span><h3 id="task-create-title">Giao nhiệm vụ mới</h3></div><button type="button" className="modal-close-btn" aria-label="Đóng" onClick={() => { setCreating(false); setForm(emptyForm); setFormError(''); }}><X size={18} /></button></div><div className="modal-body">{interns.length ? renderTaskForm() : <div className="workspace-empty"><UserRound size={24} /><span>Bạn chưa có thực tập sinh được phân công nên chưa thể giao nhiệm vụ.</span></div>}</div></section></div>}
 
     <ConfirmDialog open={Boolean(deleteTarget)} title="Xóa hoặc hủy nhiệm vụ" message={`Nhiệm vụ “${deleteTarget?.title || ''}” sẽ bị xóa nếu chưa có tiến độ; nếu đã có lịch sử, nhiệm vụ sẽ chuyển sang Đã hủy để giữ dữ liệu.`} confirmLabel="Tiếp tục" danger busy={saving} onCancel={() => !saving && setDeleteTarget(null)} onConfirm={confirmDelete} />
   </div>;

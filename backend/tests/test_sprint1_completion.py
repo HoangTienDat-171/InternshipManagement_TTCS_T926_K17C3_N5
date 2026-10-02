@@ -339,14 +339,16 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual((status_code, detail["email"]), (200, f"sprint1.{suffix}@test.invalid"))
         status_code, updated, _ = self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
             "ho_ten": "Sprint 1 CRUD Intern Updated", "email": f"sprint1.{suffix}@test.invalid",
-            "ma_phong_ban": 2, "ma_truong": 2, "chuyen_nganh": "Data Engineering",
-            "trang_thai_xet_duyet": "ChoDuyet",
-            "expected_trang_thai_xet_duyet": detail["trang_thai_xet_duyet"],
+            "so_dien_thoai": "0912345678", "ma_phong_ban": 2,
+            "ma_truong": 2, "chuyen_nganh": "Data Engineering",
             "trang_thai_thuc_tap": "DangThucTap",
         })
         self.assertEqual(status_code, 200, updated)
         status_code, detail, _ = self.json_request(f"/api/interns/{profile_id}", token=token)
-        self.assertEqual((status_code, detail["chuyen_nganh"], detail["ma_truong"]), (200, "Data Engineering", 2))
+        self.assertEqual(
+            (status_code, detail["so_dien_thoai"], detail["chuyen_nganh"], detail["ma_truong"]),
+            (200, "0912345678", "Data Engineering", 2),
+        )
 
         mentor_email = f"sprint1.mentor.{suffix}@test.invalid"
         status_code, mentor, _ = self.json_request("/api/mentors", "POST", token, {
@@ -464,6 +466,20 @@ class Sprint1RuntimeTests(unittest.TestCase):
         })
         self.assertEqual(status_code, 403)
 
+        status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=tts_token)
+        self.assertEqual(status_code, 200)
+        profile = workspace["profile"]
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{profile['ma_ho_so']}", "PUT", tts_token,
+            {
+                "ho_ten": profile["ho_ten"], "email": profile["email"],
+                "so_dien_thoai": "0912345678", "ma_phong_ban": None,
+                "ma_truong": profile["ma_truong"], "chuyen_nganh": "Unauthorized",
+                "trang_thai_thuc_tap": "DangThucTap",
+            },
+        )
+        self.assertEqual(status_code, 403)
+
     def test_us08_approval_email_outbox_and_notification_ownership(self):
         admin_token, _ = self.login("admin@internship.vn")
         suffix = str(time.time_ns())
@@ -494,21 +510,13 @@ class Sprint1RuntimeTests(unittest.TestCase):
 
         approved_user_id, approved_profile_id = profiles[approved_email]
         rejected_user_id, rejected_profile_id = profiles[rejected_email]
-        approved_data = {
-            "ho_ten": "US08 Approved", "email": approved_email, "ma_phong_ban": 1,
-            "ma_truong": 1, "chuyen_nganh": "QA", "trang_thai_xet_duyet": "DaDuyet",
-            "expected_trang_thai_xet_duyet": "ChoDuyet",
-            "trang_thai_thuc_tap": "DangThucTap",
-        }
         status_code, _, _ = self.json_request(
-            f"/api/interns/{approved_profile_id}", "PUT", admin_token, approved_data,
+            f"/api/auth/users/{approved_user_id}/approve", "PUT", admin_token,
         )
         self.assertEqual(status_code, 200)
 
-        rejected_data = {**approved_data, "ho_ten": "US08 Rejected", "email": rejected_email,
-                         "trang_thai_xet_duyet": "TuChoi"}
         status_code, _, _ = self.json_request(
-            f"/api/interns/{rejected_profile_id}", "PUT", admin_token, rejected_data,
+            f"/api/auth/users/{rejected_user_id}/reject", "PUT", admin_token,
         )
         self.assertEqual(status_code, 200)
 
@@ -529,6 +537,12 @@ class Sprint1RuntimeTests(unittest.TestCase):
                 VALUES (?, 'Old mailbox message', 'Legacy message', 'App',
                         'mailbox_message', 'internal_message', 'legacy-1')
             """, (approved_user_id,))
+            # Restore the shared test password after the approval endpoint rotates
+            # real credentials, so ownership checks can authenticate this fixture.
+            db.execute(
+                "UPDATE NGUOI_DUNG SET mat_khau=?, must_change_password=0 WHERE ma_nguoi_dung=?",
+                (password_hash, approved_user_id),
+            )
             db.commit()
         finally:
             db.close()
@@ -554,6 +568,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual(len(own_notifications), 1)
         self.assertNotIn("email_status", own_notifications[0])
+        self.assertEqual(own_notifications[0]["reference_type"], "intern_profile")
         status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
         self.assertEqual(status_code, 403)
         status_code, _, _ = self.json_request(
@@ -568,7 +583,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 404)
 
-    def test_us08_concurrent_profile_reviews_commit_only_one_result(self):
+    def test_intern_profile_update_rejects_approval_fields_and_dedicated_review_works(self):
         admin_token, _ = self.login("admin@internship.vn")
         hr_token, _ = self.login("hr@internship.vn")
         email = f"us08.concurrent.{time.time_ns()}@test.invalid"
@@ -593,20 +608,12 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
 
-        def review(decision, token):
-            return self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
-                "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
-                "ma_truong": 1, "chuyen_nganh": "QA",
-                "trang_thai_xet_duyet": decision, "trang_thai_thuc_tap": "DangThucTap",
-                "expected_trang_thai_xet_duyet": "ChoDuyet",
-            })
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            outcomes = list(executor.map(
-                lambda values: review(*values),
-                (("DaDuyet", admin_token), ("TuChoi", hr_token)),
-            ))
-        self.assertEqual(sorted(code for code, _, _ in outcomes), [200, 409])
+        status_code, _, _ = self.json_request(f"/api/interns/{profile_id}", "PUT", admin_token, {
+            "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
+            "ma_truong": 1, "chuyen_nganh": "QA",
+            "trang_thai_xet_duyet": "DaDuyet", "trang_thai_thuc_tap": "DangThucTap",
+        })
+        self.assertEqual(status_code, 422)
 
         db = sqlite3.connect(self.db_path)
         try:
@@ -622,14 +629,13 @@ class Sprint1RuntimeTests(unittest.TestCase):
             ).fetchone()[0]
         finally:
             db.close()
-        self.assertIn(final_status, {"DaDuyet", "TuChoi"})
-        self.assertEqual((email_count, notification_count), (1, 1))
+        self.assertEqual(final_status, "ChoDuyet")
+        self.assertEqual((email_count, notification_count), (0, 0))
 
-        stale_decision = "TuChoi" if final_status == "DaDuyet" else "DaDuyet"
-        status_code, _, _ = review(
-            stale_decision, hr_token if stale_decision == "TuChoi" else admin_token,
+        status_code, _, _ = self.json_request(
+            f"/api/auth/users/{user_id}/approve", "PUT", hr_token,
         )
-        self.assertEqual(status_code, 409)
+        self.assertEqual(status_code, 200)
 
         db = sqlite3.connect(self.db_path)
         try:
@@ -645,7 +651,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
             ).fetchone()[0]
         finally:
             db.close()
-        self.assertEqual(retry_status, final_status)
+        self.assertEqual(retry_status, "DaDuyet")
         self.assertEqual((retry_email_count, retry_notification_count), (1, 1))
 
     def test_us08_program_review_is_serialized_and_queues_complete_result_emails(self):

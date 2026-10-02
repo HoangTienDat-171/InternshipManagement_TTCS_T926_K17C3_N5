@@ -134,7 +134,7 @@ class InternshipTaskService:
                 self.db,
                 profile["ma_nguoi_dung"],
                 "Nhiệm vụ thực tập mới",
-                f"Bạn có nhiệm vụ mới: {data.title}",
+                f"Mentor {mentor['ho_ten']} đã giao cho bạn nhiệm vụ: {data.title}.",
                 notification_type="TASK_ASSIGNED",
                 reference_type="internship_task",
                 reference_id=task_id,

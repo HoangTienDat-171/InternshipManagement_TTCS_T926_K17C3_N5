@@ -27,7 +27,7 @@ function clearSavedSession() {
 function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
-  if (path === '/tasks') return 'tasks';
+  if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   return 'interns';
 }
 
@@ -43,6 +43,7 @@ export default function App() {
   const requestedContractPath = initialContractPath || pendingContractPath;
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
   const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
+  const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -309,7 +310,16 @@ export default function App() {
     if (passwordChangeRequired) return;
     const nextPath = pathForTab(tab);
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
+    setRequestedTaskId(null);
     setActiveTab(tab);
+  };
+
+  const openNotificationReference = (notification) => {
+    if (notification.reference_type !== 'internship_task' || !notification.reference_id) return;
+    const taskId = String(notification.reference_id);
+    window.history.pushState(null, '', `/tasks/${taskId}`);
+    setRequestedTaskId(taskId);
+    setActiveTab('tasks');
   };
 
   useEffect(() => {
@@ -318,6 +328,7 @@ export default function App() {
         window.history.replaceState(null, '', '/');
         setActiveTab('interns');
       } else {
+        setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
         setActiveTab(tabForPath(window.location.pathname));
       }
     };
@@ -427,6 +438,7 @@ export default function App() {
           sidebarOpen={window.innerWidth <= 1000 ? sidebarOpen : !desktopSidebarCollapsed}
           theme={theme}
           onToggleTheme={() => setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')}
+          onOpenNotificationReference={openNotificationReference}
         />
 
         <main className="content-wrapper">
@@ -487,7 +499,12 @@ export default function App() {
           )}
 
           {['Mentor', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'tasks' && (
-            <InternshipTasksView currentUser={currentUser} onShowToast={showToast} />
+            <InternshipTasksView
+              currentUser={currentUser}
+              onShowToast={showToast}
+              requestedTaskId={requestedTaskId}
+              onTaskOpened={(taskId) => setRequestedTaskId(String(taskId))}
+            />
           )}
 
           {visibleActiveTab === 'profile' && (

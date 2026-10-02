@@ -12,8 +12,6 @@ const createEmptyForm = (departments, universities) => ({
   ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
   ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
   chuyen_nganh: '',
-  trang_thai_xet_duyet: 'DaDuyet',
-  expected_trang_thai_xet_duyet: 'ChoDuyet',
   trang_thai_thuc_tap: 'DangThucTap'
 });
 
@@ -32,6 +30,7 @@ export default function InternModal({
   const [loading, setLoading] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(isEdit);
   const [errorMsg, setErrorMsg] = useState('');
+  const [approvalStatus, setApprovalStatus] = useState('DaDuyet');
 
   useEffect(() => {
     if (!isOpen || !isEdit || !internId) return undefined;
@@ -51,10 +50,9 @@ export default function InternModal({
             ma_phong_ban: data.ma_phong_ban ? String(data.ma_phong_ban) : '',
             ma_truong: data.ma_truong ? String(data.ma_truong) : '',
             chuyen_nganh: data.chuyen_nganh || '',
-            trang_thai_xet_duyet: data.trang_thai_xet_duyet || 'ChoDuyet',
-            expected_trang_thai_xet_duyet: data.trang_thai_xet_duyet || 'ChoDuyet',
             trang_thai_thuc_tap: data.trang_thai_thuc_tap || 'DangThucTap'
           });
+          setApprovalStatus(data.trang_thai_xet_duyet || 'ChoDuyet');
         })
         .catch((err) => {
           if (!controller.signal.aborted) setErrorMsg(err.message);
@@ -78,6 +76,8 @@ export default function InternModal({
     setErrorMsg('');
 
     try {
+      if (!formData.ho_ten.trim()) throw new Error('Vui lòng nhập họ và tên.');
+      if (!/^\S+@\S+\.\S+$/.test(formData.email.trim())) throw new Error('Vui lòng nhập email hợp lệ.');
       const payload = {
         ho_ten: formData.ho_ten.trim(),
         email: formData.email.trim(),
@@ -85,9 +85,7 @@ export default function InternModal({
         ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null,
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
-        ...(isEdit ? { trang_thai_xet_duyet: formData.trang_thai_xet_duyet } : {}),
-        ...(isEdit ? { expected_trang_thai_xet_duyet: formData.expected_trang_thai_xet_duyet } : {}),
-        ...(isEdit ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
+        ...(isEdit && approvalStatus === 'DaDuyet' ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 
       if (payload.so_dien_thoai && !isValidVietnamPhone(payload.so_dien_thoai)) {
@@ -147,7 +145,7 @@ export default function InternModal({
               Đang tải dữ liệu...
             </div>
           ) : (
-            <form id="internForm" onSubmit={handleSubmit} className="form-grid">
+            <form id="internForm" onSubmit={handleSubmit} className="form-grid" noValidate>
               <div className="form-group">
                 <label className="form-label">
                   Họ và tên <span className="required">*</span>
@@ -226,21 +224,7 @@ export default function InternModal({
                 </CustomSelect>
               </div>
 
-              {isEdit && <div className="form-group">
-                <label className="form-label">Xét duyệt</label>
-                <CustomSelect
-                  name="trang_thai_xet_duyet"
-                  className="form-select"
-                  value={formData.trang_thai_xet_duyet}
-                  onChange={handleChange}
-                >
-                  <option value="ChoDuyet">Chờ duyệt</option>
-                  <option value="DaDuyet">Đã duyệt</option>
-                  <option value="TuChoi">Từ chối</option>
-                </CustomSelect>
-              </div>}
-
-              {isEdit && (formData.trang_thai_xet_duyet === 'DaDuyet' ? <div className="form-group">
+              {isEdit && (approvalStatus === 'DaDuyet' ? <div className="form-group">
                 <label className="form-label">Trạng thái</label>
                 <CustomSelect
                   name="trang_thai_thuc_tap"

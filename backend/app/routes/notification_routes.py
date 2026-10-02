@@ -13,7 +13,7 @@ def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db
     user = require_role(request)
     rows = db.execute("""
         SELECT n.ma_thong_bao, n.tieu_de, n.noi_dung, n.da_doc, n.thoi_gian_gui,
-               n.thoi_gian_doc, n.loai
+               n.thoi_gian_doc, n.loai, n.reference_type, n.reference_id
         FROM THONG_BAO n
         WHERE n.ma_nguoi_dung = ? AND (n.loai IS NULL OR n.loai <> 'mailbox_message')
         ORDER BY n.ma_thong_bao DESC LIMIT 50
