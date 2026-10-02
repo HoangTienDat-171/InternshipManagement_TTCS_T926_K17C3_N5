@@ -57,6 +57,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
+  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [history, setHistory] = useState([]);
@@ -143,6 +144,8 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
       if (!response.ok) throw new Error(data.detail?.[0]?.msg || data.detail || 'Không thể giao nhiệm vụ.');
       setForm(emptyForm);
       setSelectedTask(data);
+      setHistory([]);
+      setCreating(false);
       onShowToast?.('Đã giao nhiệm vụ cho thực tập sinh.');
       await loadTasks();
     } catch (requestError) {
@@ -260,7 +263,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
     </div>
     {formError && <p className="task-form-error" role="alert">{formError}</p>}
     <div className="task-form-actions">
-      {edit && <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => { setEditing(false); setForm(emptyForm); }}><X size={15} />Hủy</button>}
+      <button type="button" className="btn btn-secondary" disabled={saving} onClick={() => { setEditing(false); setCreating(false); setForm(emptyForm); setFormError(''); }}><X size={15} />Hủy</button>
       <button type="submit" className="btn btn-primary" disabled={saving || (!edit && !interns.length)}>{edit ? <Pencil size={15} /> : <Plus size={15} />}{saving ? 'Đang lưu…' : edit ? 'Lưu thay đổi' : 'Giao nhiệm vụ'}</button>
     </div>
   </form>;
@@ -287,7 +290,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
   };
 
   return <div className="workspace-page task-page">
-    <header className="workspace-heading"><div><span className="workspace-eyebrow">QUẢN LÝ CÔNG VIỆC & ĐÁNH GIÁ</span><h2>Nhiệm vụ thực tập</h2><p>{isMentor ? 'Giao và theo dõi nhiệm vụ của các thực tập sinh bạn đang phụ trách.' : 'Xem nhiệm vụ được Mentor giao và thông tin hạn hoàn thành.'}</p></div><button className="btn btn-secondary" type="button" disabled={loading} onClick={loadTasks}><RefreshCw size={15} />Làm mới</button></header>
+    <header className="workspace-heading"><div><span className="workspace-eyebrow">QUẢN LÝ CÔNG VIỆC & ĐÁNH GIÁ</span><h2>Nhiệm vụ thực tập</h2><p>{isMentor ? 'Giao và theo dõi nhiệm vụ của các thực tập sinh bạn đang phụ trách.' : 'Xem nhiệm vụ được Mentor giao và thông tin hạn hoàn thành.'}</p></div><div className="task-heading-actions">{isMentor && <button className="btn btn-primary" type="button" onClick={() => { setCreating(true); setEditing(false); setForm(emptyForm); setFormError(''); }}><Plus size={15} />Giao nhiệm vụ</button>}<button className="btn btn-secondary" type="button" disabled={loading} onClick={loadTasks}><RefreshCw size={15} />Làm mới</button></div></header>
 
     {isMentor && <section className="workspace-card task-filters" aria-label="Bộ lọc nhiệm vụ">
       <Filter size={17} />
@@ -299,7 +302,7 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
 
     {error && <div className="workspace-error" role="alert"><span>{error}</span><button className="btn btn-secondary btn-sm" type="button" onClick={loadTasks}>Thử lại</button></div>}
 
-    <div className={`task-layout${isMentor ? '' : ' is-intern'}`}>
+    <div className={`task-layout${isMentor && creating ? '' : ' is-intern'}`}>
       <section className="workspace-card task-list-card">
         <div className="workspace-section-heading"><div><span className="workspace-eyebrow">DANH SÁCH</span><h3>{isMentor ? 'Nhiệm vụ đang phụ trách' : 'Nhiệm vụ của tôi'} <small>{tasks.length}</small></h3></div><ClipboardList size={19} /></div>
         {loading ? <div className="workspace-loading">Đang tải nhiệm vụ…</div> : tasks.length ? <div className="task-list">{tasks.map((task) => <button type="button" className={`task-list-item${selectedTask?.id === task.id ? ' selected' : ''}`} key={task.id} onClick={() => openDetail(task)}>
@@ -307,10 +310,10 @@ export default function InternshipTasksView({ currentUser, onShowToast }) {
           <span><UserRound size={13} />{isMentor ? task.intern_name : task.mentor_name}</span>
           <span><CalendarClock size={13} />Hạn {displayDate(task.due_date)}</span>
           <TaskBadge value={task.status} map={statuses} />
-        </button>)}</div> : <div className="workspace-empty"><ClipboardList size={25} /><strong>Chưa có nhiệm vụ</strong><span>{isMentor ? 'Hãy dùng biểu mẫu để giao nhiệm vụ đầu tiên.' : 'Nhiệm vụ Mentor giao sẽ xuất hiện tại đây.'}</span></div>}
+        </button>)}</div> : <div className="workspace-empty"><ClipboardList size={25} /><strong>Chưa có nhiệm vụ</strong><span>{isMentor ? 'Chọn Giao nhiệm vụ để tạo nhiệm vụ đầu tiên.' : 'Nhiệm vụ Mentor giao sẽ xuất hiện tại đây.'}</span></div>}
       </section>
 
-      {isMentor && <section className="workspace-card task-create-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">GIAO VIỆC</span><h3>Nhiệm vụ mới</h3></div><Plus size={19} /></div>{interns.length ? renderTaskForm() : <div className="workspace-empty"><UserRound size={24} /><span>Bạn chưa có thực tập sinh được phân công nên chưa thể giao nhiệm vụ.</span></div>}</section>}
+      {isMentor && creating && <section className="workspace-card task-create-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">GIAO VIỆC</span><h3>Giao nhiệm vụ mới</h3></div><Plus size={19} /></div>{interns.length ? renderTaskForm() : <div className="workspace-empty"><UserRound size={24} /><span>Bạn chưa có thực tập sinh được phân công nên chưa thể giao nhiệm vụ.</span></div>}</section>}
     </div>
 
     {selectedTask && <section className="workspace-card task-detail-card">
