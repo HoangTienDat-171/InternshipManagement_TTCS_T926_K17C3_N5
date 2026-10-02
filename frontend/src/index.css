@@ -949,6 +949,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* US15 internship tasks */
 .task-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .85fr); gap: 18px; align-items: start; }
 .task-layout.is-intern { grid-template-columns: minmax(0, 1fr); }
+.task-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
 .task-filters { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 14px; }
 .task-filters > svg { flex: 0 0 auto; color: var(--text-muted); }
 .task-filters select, .task-filters input, .task-form select, .task-form input, .task-form textarea, .task-progress-form select, .task-progress-form input, .task-progress-form textarea { width: 100%; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); font: inherit; }

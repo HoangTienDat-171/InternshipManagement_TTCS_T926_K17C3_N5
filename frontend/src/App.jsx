@@ -12,8 +12,6 @@ import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
-import GuestJobPortalView from './views/GuestJobPortalView';
-import GuestTrackingView from './views/GuestTrackingView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiFetch } from './utils/api';
 
@@ -26,27 +24,26 @@ function clearSavedSession() {
   }
 }
 
+function tabForPath(path) {
+  if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
+  if (path === '/schedule') return 'intern-schedule';
+  if (path === '/tasks') return 'tasks';
+  return 'interns';
+}
+
+function pathForTab(tab) {
+  if (tab === 'intern-schedule') return '/schedule';
+  if (tab === 'tasks') return '/tasks';
+  return '/';
+}
+
 export default function App() {
   const initialContractPath = window.location.pathname.match(/^\/contracts\/(\d+)$/)?.[0];
   const pendingContractPath = new URLSearchParams(window.location.search).get('next')?.match(/^\/contracts\/\d+$/)?.[0];
   const requestedContractPath = initialContractPath || pendingContractPath;
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
-  const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : 'interns');
+  const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
   
-  const [unauthView, setUnauthView] = useState(() => {
-    const path = window.location.pathname;
-    const search = window.location.search;
-    if (path === '/tracking' || search.includes('code=')) return 'guest-tracking';
-    if (path === '/jobs' || path === '/guest' || search.includes('guest')) return 'guest-portal';
-    return 'login';
-  });
-  const [trackingInitialCode, setTrackingInitialCode] = useState(() => {
-    return new URLSearchParams(window.location.search).get('code') || '';
-  });
-  const [trackingInitialEmail, setTrackingInitialEmail] = useState(() => {
-    return new URLSearchParams(window.location.search).get('email') || '';
-  });
-
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
     if (window.location.pathname === '/login') {
@@ -74,6 +71,9 @@ export default function App() {
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
       )
         ? personalWorkspace
@@ -307,7 +307,7 @@ export default function App() {
 
   const navigateToTab = (tab) => {
     if (passwordChangeRequired) return;
-    const nextPath = '/';
+    const nextPath = pathForTab(tab);
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
     setActiveTab(tab);
   };
@@ -317,16 +317,19 @@ export default function App() {
       if (window.location.pathname === '/mailbox') {
         window.history.replaceState(null, '', '/');
         setActiveTab('interns');
-      } else if (/^\/contracts\/\d+$/.test(window.location.pathname)) {
-        setActiveTab('contract-link');
       } else {
-        setActiveTab((current) => current === 'contract-link' ? 'interns' : current);
+        setActiveTab(tabForPath(window.location.pathname));
       }
     };
     syncTabWithPath();
     window.addEventListener('popstate', syncTabWithPath);
     return () => window.removeEventListener('popstate', syncTabWithPath);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser || passwordChangeRequired || visibleActiveTab === activeTab) return;
+    if (!requestedContractPath) window.history.replaceState(null, '', pathForTab(visibleActiveTab));
+  }, [activeTab, currentUser, passwordChangeRequired, requestedContractPath, visibleActiveTab]);
 
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
@@ -336,36 +339,11 @@ export default function App() {
 
   // YÊU CẦU: Đăng nhập xong mới được vào trang chủ
   if (!currentUser) {
-    if (unauthView === 'guest-portal') {
-      return (
-        <GuestJobPortalView
-          onOpenTracking={(code, email) => {
-            if (code) setTrackingInitialCode(code);
-            if (email) setTrackingInitialEmail(email);
-            setUnauthView('guest-tracking');
-          }}
-          onGoToLogin={() => setUnauthView('login')}
-        />
-      );
-    }
-
-    if (unauthView === 'guest-tracking') {
-      return (
-        <GuestTrackingView
-          initialCode={trackingInitialCode}
-          initialEmail={trackingInitialEmail}
-          onBack={() => setUnauthView('guest-portal')}
-        />
-      );
-    }
-
     return (
       <LoginView
         onLoginSuccess={handleLoginSuccess}
         departments={departments}
         sessionNotice={sessionNotice}
-        onOpenGuestPortal={() => setUnauthView('guest-portal')}
-        onOpenTracking={() => setUnauthView('guest-tracking')}
       />
     );
   }

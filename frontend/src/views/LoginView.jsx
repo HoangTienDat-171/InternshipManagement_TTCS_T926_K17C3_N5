@@ -44,7 +44,7 @@ function getRequestError(error) {
   return error.message || 'Đã xảy ra lỗi. Vui lòng thử lại.';
 }
 
-export default function LoginView({ onLoginSuccess, sessionNotice, onOpenGuestPortal, onOpenTracking }) {
+export default function LoginView({ onLoginSuccess, sessionNotice }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   
   // Login Form State
@@ -515,41 +515,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice, onOpenGuestPo
           </div>
         )}
 
-        {/* Cổng ứng tuyển Khách vãng lai */}
-        {onOpenGuestPortal && (
-          <div style={{
-            marginTop: '16px',
-            padding: '12px',
-            background: 'linear-gradient(135deg, #eff6ff, #f8fafc)',
-            borderRadius: '10px',
-            border: '1px solid #bfdbfe',
-            textAlign: 'center'
-          }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: '#1e40af', marginBottom: '6px' }}>
-              Ứng viên chưa có tài khoản?
-            </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                style={{ fontSize: '12px', padding: '6px 12px' }}
-                onClick={onOpenGuestPortal}
-              >
-                Xem việc làm & Ứng tuyển
-              </button>
-              {onOpenTracking && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  style={{ fontSize: '12px', padding: '6px 10px' }}
-                  onClick={onOpenTracking}
-                >
-                  Tra cứu hồ sơ
-                </button>
-              )}
-            </div>
-          </div>
-        )}
         </div>
         </section>
 

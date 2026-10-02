@@ -376,30 +376,6 @@ def init_mysql_db():
                 KEY idx_email_attachments_email_id (email_id, disposition),
                 CONSTRAINT fk_email_attachments_outbox FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
-            """CREATE TABLE IF NOT EXISTS HO_SO_UNG_TUYEN_GUEST (
-                ma_ung_tuyen BIGINT AUTO_INCREMENT PRIMARY KEY,
-                ma_tracking VARCHAR(32) NOT NULL UNIQUE,
-                ma_chuong_trinh INT NULL,
-                ho_ten VARCHAR(150) NOT NULL,
-                email VARCHAR(191) NOT NULL,
-                so_dien_thoai VARCHAR(20) NOT NULL,
-                truong_dai_hoc VARCHAR(200) NOT NULL,
-                chuyen_nganh VARCHAR(150) NOT NULL,
-                nam_hoc VARCHAR(50) NOT NULL,
-                thoi_gian_thuc_tap VARCHAR(100) NOT NULL,
-                link_portfolio VARCHAR(500) NULL,
-                duong_dan_cv VARCHAR(500) NOT NULL,
-                ten_file_cv VARCHAR(255) NOT NULL,
-                kich_thuoc_file BIGINT NOT NULL,
-                mime_type VARCHAR(100) NOT NULL,
-                trang_thai VARCHAR(30) NOT NULL DEFAULT 'PENDING',
-                ip_address VARCHAR(50) NULL,
-                ghi_chu_noi_bo TEXT NULL,
-                ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                ngay_cap_nhat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                KEY idx_guest_tracking (ma_tracking, email),
-                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
         ]
         for statement in statements:
             conn.execute(statement)
@@ -871,33 +847,6 @@ def init_db():
     );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_attachments_email_id ON EMAIL_ATTACHMENTS(email_id, disposition);")
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS HO_SO_UNG_TUYEN_GUEST (
-        ma_ung_tuyen INTEGER PRIMARY KEY AUTOINCREMENT,
-        ma_tracking TEXT NOT NULL UNIQUE,
-        ma_chuong_trinh INTEGER,
-        ho_ten TEXT NOT NULL,
-        email TEXT NOT NULL,
-        so_dien_thoai TEXT NOT NULL,
-        truong_dai_hoc TEXT NOT NULL,
-        chuyen_nganh TEXT NOT NULL,
-        nam_hoc TEXT NOT NULL,
-        thoi_gian_thuc_tap TEXT NOT NULL,
-        link_portfolio TEXT,
-        duong_dan_cv TEXT NOT NULL,
-        ten_file_cv TEXT NOT NULL,
-        kich_thuoc_file INTEGER NOT NULL,
-        mime_type TEXT NOT NULL,
-        trang_thai TEXT NOT NULL DEFAULT 'PENDING',
-        ip_address TEXT,
-        ghi_chu_noi_bo TEXT,
-        ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        ngay_cap_nhat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL
-    )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_guest_tracking ON HO_SO_UNG_TUYEN_GUEST(ma_tracking, email)")
 
     # Giai đoạn 3: Cơ chế phòng thủ tầng ứng dụng (Application Layer Defense)
     # 7. Bảng theo dõi số lần đăng nhập sai chống Brute-force & Account Lockout

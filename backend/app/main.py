@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import auth_routes, contract_routes, document_routes, guest_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, task_routes
+from .routes import auth_routes, contract_routes, document_routes, intern_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, task_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -53,7 +53,6 @@ async def validate_api_session(request: Request, call_next):
         path.startswith("/api/")
         and request.method != "OPTIONS"
         and normalized_path not in public_paths
-        and not normalized_path.startswith("/api/guest")
     ):
         authorization = request.headers.get("authorization", "")
         scheme, _, token = authorization.partition(" ")
@@ -108,7 +107,6 @@ app.include_router(mentor_routes.router)
 app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
 app.include_router(metrics_routes.router)
-app.include_router(guest_routes.router)
 app.include_router(task_routes.router)
 
 
