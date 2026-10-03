@@ -12,6 +12,7 @@ import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
+import WeeklyReportsView from './views/WeeklyReportsView';
 import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
@@ -28,12 +29,14 @@ function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
+  if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   return 'interns';
 }
 
 function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'tasks') return '/tasks';
+  if (tab === 'weekly-reports') return '/weekly-reports';
   return '/';
 }
 
@@ -44,6 +47,7 @@ export default function App() {
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
   const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
   const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
+  const [requestedWeeklyReportId, setRequestedWeeklyReportId] = useState(() => window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -72,6 +76,7 @@ export default function App() {
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'weekly-reports' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
@@ -311,15 +316,23 @@ export default function App() {
     const nextPath = pathForTab(tab);
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
     setRequestedTaskId(null);
+    setRequestedWeeklyReportId(null);
     setActiveTab(tab);
   };
 
   const openNotificationReference = (notification) => {
-    if (notification.reference_type !== 'internship_task' || !notification.reference_id) return;
-    const taskId = String(notification.reference_id);
-    window.history.pushState(null, '', `/tasks/${taskId}`);
-    setRequestedTaskId(taskId);
-    setActiveTab('tasks');
+    if (!notification.reference_id) return;
+    if (notification.reference_type === 'internship_task') {
+      const taskId = String(notification.reference_id);
+      window.history.pushState(null, '', `/tasks/${taskId}`);
+      setRequestedTaskId(taskId);
+      setActiveTab('tasks');
+    } else if (notification.reference_type === 'weekly_report') {
+      const reportId = String(notification.reference_id);
+      window.history.pushState(null, '', `/weekly-reports/${reportId}`);
+      setRequestedWeeklyReportId(reportId);
+      setActiveTab('weekly-reports');
+    }
   };
 
   useEffect(() => {
@@ -329,6 +342,7 @@ export default function App() {
         setActiveTab('interns');
       } else {
         setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
+        setRequestedWeeklyReportId(window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
         setActiveTab(tabForPath(window.location.pathname));
       }
     };
@@ -483,6 +497,14 @@ export default function App() {
               onShowToast={showToast}
               requestedTaskId={requestedTaskId}
               onTaskOpened={(taskId) => setRequestedTaskId(String(taskId))}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'weekly-reports' && (
+            <WeeklyReportsView
+              requestedReportId={requestedWeeklyReportId}
+              onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
+              onShowToast={showToast}
             />
           )}
 
