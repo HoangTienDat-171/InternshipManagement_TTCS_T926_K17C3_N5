@@ -13,6 +13,7 @@ import MentorWorkspaceView from './views/MentorWorkspaceView';
 import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
 import WeeklyReportsView from './views/WeeklyReportsView';
+import MentorWeeklyReportsView from './views/MentorWeeklyReportsView';
 import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
@@ -76,7 +77,7 @@ export default function App() {
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
-        || (activeTab === 'weekly-reports' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
@@ -502,6 +503,14 @@ export default function App() {
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'weekly-reports' && (
             <WeeklyReportsView
+              requestedReportId={requestedWeeklyReportId}
+              onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
+              onShowToast={showToast}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'weekly-reports' && (
+            <MentorWeeklyReportsView
               requestedReportId={requestedWeeklyReportId}
               onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
               onShowToast={showToast}

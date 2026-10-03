@@ -62,6 +62,7 @@ export default function Navbar({
   const notificationMeta = (item) => {
     if (item.loai === 'TASK_ASSIGNED') return { label: 'Nhiệm vụ', icon: <Briefcase size={15} /> };
     if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
+    if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };

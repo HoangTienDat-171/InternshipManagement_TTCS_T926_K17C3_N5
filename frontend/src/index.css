@@ -1031,6 +1031,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .weekly-report-file span { overflow: hidden; max-width: 180px; color: inherit !important; text-overflow: ellipsis; white-space: nowrap; }
 .weekly-report-submitted-at { margin: 0; padding: 11px 13px; border-radius: 10px; background: var(--success-bg); color: var(--success-text); font-size: 12px; }
 .weekly-report-modal > footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--border-color); background: var(--surface-card-hover); }
+.weekly-report-review-readonly { display: grid; gap: 10px; padding: 15px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--surface-card-hover); }
+.weekly-report-review-readonly h4, .mentor-report-detail h4 { margin: 0; color: var(--text-main); font-size: 13px; }
+.weekly-report-review-readonly > div { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.weekly-report-review-readonly > div strong { color: var(--text-body); }
+.weekly-report-review-readonly p { margin: 0; color: var(--text-body); line-height: 1.6; white-space: pre-wrap; }
+.weekly-report-review-readonly .weekly-report-no-review { color: var(--text-muted); font-style: italic; }
+.mentor-report-filters { grid-template-columns: repeat(3, minmax(160px, 1fr)) auto; }
+.weekly-report-card-top > strong { overflow: hidden; color: var(--text-main); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.mentor-report-detail > section:not(.weekly-report-attachment, .mentor-report-meta) { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border-color); border-radius: 12px; }
+.mentor-report-detail > section > p { margin: 0; color: var(--text-body); line-height: 1.65; white-space: pre-wrap; }
+.mentor-report-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.mentor-report-meta div { display: grid; gap: 5px; padding: 12px; border-radius: 10px; background: var(--surface-card-hover); }
+.mentor-report-meta span { color: var(--text-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.mentor-report-meta strong { color: var(--text-main); font-size: 12px; }
 
 @media (max-width: 760px) {
   .weekly-reports-header { align-items: stretch; flex-direction: column; }
@@ -1041,6 +1055,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .weekly-report-modal > header, .weekly-report-form, .weekly-report-modal > footer { padding-right: 16px; padding-left: 16px; }
   .weekly-report-modal > footer { flex-wrap: wrap; }
   .weekly-report-modal > footer .btn { flex: 1 1 130px; }
+  .mentor-report-filters, .mentor-report-meta { grid-template-columns: 1fr; }
 }
 
 /* US15 internship tasks */

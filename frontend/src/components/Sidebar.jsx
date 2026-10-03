@@ -27,7 +27,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
     ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch thực tập', icon: <CalendarDays size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...((isMentor || isIntern) ? [{ id: 'tasks', label: isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
-    ...(isIntern ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),
+    ...((isIntern || isMentor) ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),
     ...(canManage ? [
     {
       id: 'interns',

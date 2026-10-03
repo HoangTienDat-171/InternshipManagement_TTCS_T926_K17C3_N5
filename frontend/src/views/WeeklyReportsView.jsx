@@ -242,6 +242,10 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
             {!readOnly && <label className="weekly-report-file"><UploadCloud size={16} /><span>{file?.name || (form.has_attachment ? 'Thay tệp' : 'Chọn tệp')}</span><input type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>}
           </div>
           {readOnly && <p className="weekly-report-submitted-at">Đã nộp lúc {formatDate(form.submitted_at, true)}. Báo cáo được khóa chỉ đọc.</p>}
+          {readOnly && <section className="weekly-report-review-readonly">
+            <h4>Nhận xét từ Mentor</h4>
+            {form.review_id ? <><div><strong>{form.reviewer_name}</strong><span>{formatDate(form.reviewed_at, true)}</span></div><p>{form.review_comment}</p></> : <p className="weekly-report-no-review">Mentor chưa nhận xét báo cáo này.</p>}
+          </section>}
         </div>
         <footer><button type="button" className="btn btn-secondary" onClick={closeForm} disabled={busy}>{readOnly ? 'Đóng' : 'Hủy'}</button>{!readOnly && <><button type="button" className="btn btn-secondary" onClick={saveDraft} disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu nháp'}</button><button type="button" className="btn btn-primary" onClick={() => setConfirmSubmit(true)} disabled={busy || !form.work_content.trim() || !form.results.trim()}>Nộp báo cáo</button></>}</footer>
       </section>
