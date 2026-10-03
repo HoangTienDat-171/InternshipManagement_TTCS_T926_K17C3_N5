@@ -229,6 +229,47 @@ class InternTaskProgressUpdate(BaseModel):
             raise ValueError("Trạng thái COMPLETED yêu cầu tiến độ bằng 100%.")
         return self
 
+
+class WeeklyReportCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    program_id: int = Field(gt=0)
+    week_start: date
+    work_content: str = Field(default="", max_length=10000)
+    results: str = Field(default="", max_length=10000)
+    difficulties: str = Field(default="", max_length=10000)
+
+    @field_validator("work_content", "results", "difficulties")
+    @classmethod
+    def normalize_report_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("week_start")
+    @classmethod
+    def require_monday(cls, value: date) -> date:
+        if value.weekday() != 0:
+            raise ValueError("Ngày bắt đầu tuần phải là thứ Hai.")
+        return value
+
+
+class WeeklyReportUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    work_content: Optional[str] = Field(default=None, max_length=10000)
+    results: Optional[str] = Field(default=None, max_length=10000)
+    difficulties: Optional[str] = Field(default=None, max_length=10000)
+
+    @field_validator("work_content", "results", "difficulties")
+    @classmethod
+    def normalize_optional_report_text(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def require_report_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        return self
+
 class ProgramCreate(BaseModel):
     ma_ct: str = Field(min_length=1, max_length=40)
     ten_ct: str = Field(min_length=1, max_length=200)
