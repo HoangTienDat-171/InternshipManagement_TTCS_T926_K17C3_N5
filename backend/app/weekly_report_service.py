@@ -27,11 +27,18 @@ class WeeklyReportService:
                    r.attachment_mime_type,
                    r.attachment_file_size,
                    CASE WHEN r.attachment_storage_key IS NULL THEN 0 ELSE 1 END AS has_attachment,
+                   review.ma_nhan_xet AS review_id,
+                   review.comment AS review_comment,
+                   review.reviewed_by,
+                   reviewer.ho_ten AS reviewer_name,
+                   review.reviewed_at,
                    r.created_at, r.updated_at,
                    h.ma_nguoi_dung AS intern_user_id
             FROM BAO_CAO_TUAN r
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = r.ma_ho_so
             JOIN CHUONG_TRINH_THUC_TAP p ON p.ma_chuong_trinh = r.ma_chuong_trinh
+            LEFT JOIN NHAN_XET_BAO_CAO_TUAN review ON review.ma_bao_cao = r.ma_bao_cao
+            LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = review.reviewed_by
         """
 
     def _profile(self, user_id: int) -> dict:
@@ -87,6 +94,12 @@ class WeeklyReportService:
         result["has_attachment"] = bool(result["has_attachment"])
         return result
 
+    @staticmethod
+    def _mentor_public(report: dict) -> dict:
+        result = dict(report)
+        result["has_attachment"] = bool(result["has_attachment"])
+        return result
+
     def create(self, intern: dict, data) -> dict:
         profile = self._profile(intern["ma_nguoi_dung"])
         self._approved_program(profile["ma_ho_so"], data.program_id)
@@ -113,7 +126,7 @@ class WeeklyReportService:
             raise
         return self.get(report_id, intern["ma_nguoi_dung"])
 
-    def list(self, user_id: int, report_status: str | None = None, program_id: int | None = None) -> list[dict]:
+    def list_for_intern(self, user_id: int, report_status: str | None = None, program_id: int | None = None) -> list[dict]:
         clauses = ["h.ma_nguoi_dung = ?"]
         params: list = [user_id]
         if report_status:
@@ -196,4 +209,115 @@ class WeeklyReportService:
     def attachment_record(self, report_id: int, user_id: int, *, for_update: bool = False) -> dict:
         report = self._fetch(report_id, for_update=for_update)
         self._ensure_owner(report, user_id)
+        return report
+
+    @staticmethod
+    def _ensure_mentor_access(report: dict, mentor_id: int, db) -> None:
+        assignment = db.execute("""
+            SELECT 1 FROM PHAN_CONG_MENTOR_TTS
+            WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ?
+        """, (mentor_id, report["internship_profile_id"])).fetchone()
+        if not assignment:
+            raise HTTPException(status_code=403, detail="Bạn không được phân công hướng dẫn thực tập sinh của báo cáo này.")
+
+    def list_for_mentor(
+        self,
+        mentor_id: int,
+        *,
+        intern_user_id: int | None = None,
+        program_id: int | None = None,
+        week_start=None,
+        reviewed: bool | None = None,
+    ) -> list[dict]:
+        clauses = [
+            "r.trang_thai = 'SUBMITTED'",
+            "EXISTS (SELECT 1 FROM PHAN_CONG_MENTOR_TTS assignment "
+            "WHERE assignment.ma_nguoi_dung_mentor = ? AND assignment.ma_ho_so = r.ma_ho_so)",
+        ]
+        params: list = [mentor_id]
+        if intern_user_id is not None:
+            clauses.append("h.ma_nguoi_dung = ?")
+            params.append(intern_user_id)
+        if program_id is not None:
+            clauses.append("r.ma_chuong_trinh = ?")
+            params.append(program_id)
+        if week_start is not None:
+            clauses.append("r.week_start = ?")
+            params.append(week_start.isoformat())
+        if reviewed is not None:
+            clauses.append("review.ma_nhan_xet IS NOT NULL" if reviewed else "review.ma_nhan_xet IS NULL")
+        rows = self.db.execute(
+            self._select().replace(
+                "h.ma_nguoi_dung AS intern_user_id",
+                "h.ma_nguoi_dung AS intern_user_id, intern.ho_ten AS intern_name, intern.email AS intern_email",
+            ).replace(
+                "JOIN CHUONG_TRINH_THUC_TAP p ON p.ma_chuong_trinh = r.ma_chuong_trinh",
+                "JOIN CHUONG_TRINH_THUC_TAP p ON p.ma_chuong_trinh = r.ma_chuong_trinh "
+                "JOIN NGUOI_DUNG intern ON intern.ma_nguoi_dung = h.ma_nguoi_dung",
+            ) + " WHERE " + " AND ".join(clauses)
+            + " ORDER BY r.submitted_at DESC, r.ma_bao_cao DESC",
+            tuple(params),
+        ).fetchall()
+        return [self._mentor_public(dict(row)) for row in rows]
+
+    def get_for_mentor(self, report_id: int, mentor_id: int) -> dict:
+        report = self._fetch(report_id)
+        self._ensure_mentor_access(report, mentor_id, self.db)
+        if report["status"] != "SUBMITTED":
+            raise HTTPException(status_code=409, detail="Mentor chỉ có thể xem báo cáo đã nộp.")
+        result = self._mentor_public(report)
+        intern = self.db.execute(
+            "SELECT ho_ten, email FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?",
+            (report["intern_user_id"],),
+        ).fetchone()
+        result["intern_name"] = intern["ho_ten"]
+        result["intern_email"] = intern["email"]
+        return result
+
+    def review(self, report_id: int, mentor: dict, data) -> dict:
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            report = self._fetch(report_id, for_update=True)
+            self._ensure_mentor_access(report, mentor["ma_nguoi_dung"], self.db)
+            if report["status"] != "SUBMITTED":
+                raise HTTPException(status_code=409, detail="Chỉ có thể nhận xét báo cáo đã nộp.")
+            existing = self.db.execute(
+                "SELECT ma_nhan_xet FROM NHAN_XET_BAO_CAO_TUAN WHERE ma_bao_cao = ?",
+                (report_id,),
+            ).fetchone()
+            if existing:
+                self.db.execute("""
+                    UPDATE NHAN_XET_BAO_CAO_TUAN
+                    SET reviewed_by = ?, comment = ?, reviewed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE ma_bao_cao = ?
+                """, (mentor["ma_nguoi_dung"], data.comment, report_id))
+            else:
+                self.db.execute("""
+                    INSERT INTO NHAN_XET_BAO_CAO_TUAN (ma_bao_cao, reviewed_by, comment)
+                    VALUES (?, ?, ?)
+                """, (report_id, mentor["ma_nguoi_dung"], data.comment))
+                create_notification(
+                    self.db,
+                    report["intern_user_id"],
+                    "Mentor đã nhận xét báo cáo tuần",
+                    f"Mentor đã nhận xét báo cáo tuần {report['week_start']} – {report['week_end']} của bạn.",
+                    notification_type="WEEKLY_REPORT_REVIEWED",
+                    reference_type="weekly_report",
+                    reference_id=report_id,
+                )
+            self.db.commit()
+        except sqlite3.IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail="Nhận xét báo cáo đã được cập nhật bởi một yêu cầu khác.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+        return self.get_for_mentor(report_id, mentor["ma_nguoi_dung"])
+
+    def mentor_attachment_record(self, report_id: int, mentor_id: int) -> dict:
+        report = self._fetch(report_id)
+        self._ensure_mentor_access(report, mentor_id, self.db)
+        if report["status"] != "SUBMITTED":
+            raise HTTPException(status_code=409, detail="Mentor chỉ có thể tải tệp của báo cáo đã nộp.")
         return report

@@ -1,5 +1,6 @@
 import re
 import sqlite3
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import FileResponse
 
 from ..database import DB_FILE, get_db
-from ..schemas import WeeklyReportCreate, WeeklyReportUpdate
+from ..schemas import WeeklyReportCreate, WeeklyReportReview, WeeklyReportUpdate
 from ..security import require_role
 from ..weekly_report_service import WeeklyReportService
 from .document_routes import valid_file_content
@@ -43,7 +44,7 @@ def list_weekly_reports(
     db: sqlite3.Connection = Depends(get_db),
 ):
     intern = require_role(request, "ThucTapSinh")
-    return WeeklyReportService(db).list(intern["ma_nguoi_dung"], report_status, program_id)
+    return WeeklyReportService(db).list_for_intern(intern["ma_nguoi_dung"], report_status, program_id)
 
 
 @router.get("/api/interns/me/weekly-reports/{report_id}")
@@ -145,6 +146,64 @@ async def upload_weekly_report_attachment(
 def download_weekly_report_attachment(report_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
     intern = require_role(request, "ThucTapSinh")
     report = WeeklyReportService(db).attachment_record(report_id, intern["ma_nguoi_dung"])
+    if not report["has_attachment"]:
+        raise HTTPException(status_code=404, detail="Báo cáo chưa có tệp đính kèm.")
+    row = db.execute("""
+        SELECT attachment_storage_key, attachment_original_name, attachment_mime_type
+        FROM BAO_CAO_TUAN WHERE ma_bao_cao = ?
+    """, (report_id,)).fetchone()
+    return FileResponse(
+        _attachment_path(row["attachment_storage_key"]),
+        media_type=row["attachment_mime_type"],
+        filename=row["attachment_original_name"],
+        content_disposition_type="attachment",
+    )
+
+
+@router.get("/api/mentor/me/weekly-reports")
+def list_mentor_weekly_reports(
+    request: Request,
+    intern_user_id: int | None = Query(default=None, gt=0),
+    program_id: int | None = Query(default=None, gt=0),
+    week_start: date | None = None,
+    reviewed: bool | None = None,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    mentor = require_role(request, "Mentor")
+    return WeeklyReportService(db).list_for_mentor(
+        mentor["ma_nguoi_dung"],
+        intern_user_id=intern_user_id,
+        program_id=program_id,
+        week_start=week_start,
+        reviewed=reviewed,
+    )
+
+
+@router.get("/api/mentor/weekly-reports/{report_id}")
+def get_mentor_weekly_report(report_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    mentor = require_role(request, "Mentor")
+    return WeeklyReportService(db).get_for_mentor(report_id, mentor["ma_nguoi_dung"])
+
+
+@router.post("/api/mentor/weekly-reports/{report_id}/review")
+def review_weekly_report(
+    report_id: int,
+    data: WeeklyReportReview,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    mentor = require_role(request, "Mentor")
+    return WeeklyReportService(db).review(report_id, mentor, data)
+
+
+@router.get("/api/mentor/weekly-reports/{report_id}/attachment")
+def download_mentor_weekly_report_attachment(
+    report_id: int,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    mentor = require_role(request, "Mentor")
+    report = WeeklyReportService(db).mentor_attachment_record(report_id, mentor["ma_nguoi_dung"])
     if not report["has_attachment"]:
         raise HTTPException(status_code=404, detail="Báo cáo chưa có tệp đính kèm.")
     row = db.execute("""
