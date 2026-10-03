@@ -270,6 +270,20 @@ class WeeklyReportUpdate(BaseModel):
             raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
         return self
 
+
+class WeeklyReportReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    comment: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("comment")
+    @classmethod
+    def normalize_review_comment(cls, value: str) -> str:
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét không được chỉ chứa khoảng trắng.")
+        return comment
+
 class ProgramCreate(BaseModel):
     ma_ct: str = Field(min_length=1, max_length=40)
     ten_ct: str = Field(min_length=1, max_length=200)

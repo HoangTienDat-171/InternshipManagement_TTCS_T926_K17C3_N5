@@ -316,6 +316,19 @@ def init_mysql_db():
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+                ma_nhan_xet BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_bao_cao BIGINT NOT NULL,
+                reviewed_by INT NOT NULL,
+                comment TEXT NOT NULL,
+                reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_nhan_xet_bao_cao (ma_bao_cao),
+                KEY idx_nhan_xet_mentor (reviewed_by, reviewed_at),
+                FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+                FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
                 ma_hop_dong BIGINT AUTO_INCREMENT PRIMARY KEY,
                 ma_ho_so INT NOT NULL,
@@ -689,6 +702,21 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_profile_status ON BAO_CAO_TUAN(ma_ho_so, trang_thai, week_start)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_program ON BAO_CAO_TUAN(ma_chuong_trinh, week_start)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+        ma_nhan_xet INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_bao_cao INTEGER NOT NULL UNIQUE,
+        reviewed_by INTEGER NOT NULL,
+        comment TEXT NOT NULL CHECK(length(comment) BETWEEN 1 AND 10000),
+        reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+        FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhan_xet_mentor ON NHAN_XET_BAO_CAO_TUAN(reviewed_by, reviewed_at)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
