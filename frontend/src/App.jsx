@@ -19,6 +19,7 @@ import { apiFetch } from './utils/api';
 
 const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView'));
 const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
+const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
 
 function clearSavedSession() {
   try {
@@ -36,6 +37,7 @@ function tabForPath(path) {
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   if (path === '/evaluations') return 'evaluations';
   if (path === '/my-evaluations') return 'my-evaluations';
+  if (path === '/work-shifts') return 'work-shifts';
   return 'interns';
 }
 
@@ -45,6 +47,7 @@ function pathForTab(tab) {
   if (tab === 'weekly-reports') return '/weekly-reports';
   if (tab === 'evaluations') return '/evaluations';
   if (tab === 'my-evaluations') return '/my-evaluations';
+  if (tab === 'work-shifts') return '/work-shifts';
   return '/';
 }
 
@@ -81,7 +84,7 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -478,6 +481,12 @@ export default function App() {
               currentUser={currentUser}
               onShowToast={showToast}
             />
+          )}
+
+          {canManageRecords && visibleActiveTab === 'work-shifts' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở cấu hình ca làm việc…</div>}>
+              <WorkShiftManagementView onShowToast={showToast} />
+            </Suspense>
           )}
 
           {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (

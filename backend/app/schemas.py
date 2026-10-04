@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
 
@@ -332,6 +332,87 @@ class InternEvaluationUpdate(BaseModel):
         if not self.model_fields_set:
             raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
         if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Các trường cập nhật không được để trống.")
+        return self
+
+
+WorkShiftScope = Literal["GLOBAL", "PROGRAM"]
+WorkShiftStatus = Literal["ACTIVE", "INACTIVE"]
+
+
+class WorkShiftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    start_time: time
+    end_time: time
+    scope_type: WorkShiftScope
+    program_id: Optional[StrictInt] = Field(default=None, gt=0)
+    effective_from: date
+    effective_to: Optional[date] = None
+    status: WorkShiftStatus = "ACTIVE"
+
+    @field_validator("name")
+    @classmethod
+    def normalize_shift_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("Tên ca làm việc không được để trống.")
+        return name
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def require_local_time(cls, value: time) -> time:
+        if value.tzinfo is not None:
+            raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_shift_window(self):
+        if self.start_time >= self.end_time:
+            raise ValueError("Ca qua đêm không được hỗ trợ; giờ bắt đầu phải trước giờ kết thúc.")
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("Ngày kết thúc hiệu lực phải sau hoặc bằng ngày bắt đầu.")
+        if (self.scope_type == "GLOBAL") != (self.program_id is None):
+            raise ValueError("Ca GLOBAL không gắn chương trình; ca PROGRAM phải chọn chương trình.")
+        return self
+
+
+class WorkShiftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    scope_type: Optional[WorkShiftScope] = None
+    program_id: Optional[StrictInt] = Field(default=None, gt=0)
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
+    status: Optional[WorkShiftStatus] = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_shift_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        name = value.strip()
+        if not name:
+            raise ValueError("Tên ca làm việc không được để trống.")
+        return name
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def require_local_time(cls, value: Optional[time]) -> Optional[time]:
+        if value is not None and value.tzinfo is not None:
+            raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
+        return value
+
+    @model_validator(mode="after")
+    def require_valid_patch(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        nullable_fields = {"program_id", "effective_to"}
+        if any(getattr(self, field) is None and field not in nullable_fields for field in self.model_fields_set):
             raise ValueError("Các trường cập nhật không được để trống.")
         return self
 

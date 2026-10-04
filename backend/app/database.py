@@ -283,6 +283,30 @@ def init_mysql_db():
                 ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                scope_type ENUM('GLOBAL','PROGRAM') NOT NULL,
+                ma_chuong_trinh INT NULL,
+                effective_from DATE NOT NULL,
+                effective_to DATE NULL,
+                status ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+                created_by INT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_ca_lam_viec_time CHECK (start_time < end_time),
+                CONSTRAINT chk_ca_lam_viec_dates CHECK (effective_to IS NULL OR effective_to >= effective_from),
+                CONSTRAINT chk_ca_lam_viec_scope CHECK (
+                    (scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+                    OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)
+                ),
+                KEY idx_ca_lam_viec_filter (status, scope_type, ma_chuong_trinh, effective_from),
+                KEY idx_ca_lam_viec_creator (created_by),
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
                 ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
@@ -765,6 +789,31 @@ def init_db():
         FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
     )
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('GLOBAL', 'PROGRAM')),
+        ma_chuong_trinh INTEGER,
+        effective_from DATE NOT NULL,
+        effective_to DATE,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'INACTIVE')),
+        created_by INTEGER NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(start_time < end_time),
+        CHECK(effective_to IS NULL OR effective_to >= effective_from),
+        CHECK((scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+            OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)),
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_filter ON CA_LAM_VIEC(status, scope_type, ma_chuong_trinh, effective_from)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_creator ON CA_LAM_VIEC(created_by)")
 
     program_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CHUONG_TRINH_THUC_TAP)")}
     if "mo_ta_cong_viec" not in program_columns:

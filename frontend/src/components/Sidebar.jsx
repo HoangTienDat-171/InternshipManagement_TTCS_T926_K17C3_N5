@@ -12,6 +12,7 @@ import {
   UsersRound,
   ClipboardList,
   FileText,
+  Clock3,
   LogOut,
   X
 } from 'lucide-react';
@@ -51,6 +52,11 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       id: 'documents',
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
+    }] : []),
+    ...(canManage ? [{
+      id: 'work-shifts',
+      label: 'Quản lý ca làm việc',
+      icon: <Clock3 size={18} />
     }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{

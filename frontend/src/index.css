@@ -3655,3 +3655,71 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root[data-theme='dark'] .evaluation-score-option.is-selected span { border-color: #746af5; background: #292744; color: #c4c0ff; }
 :root[data-theme='dark'] .evaluation-average { border-color: #454175; background: #24233a; color: #c4c0ff; }
 :root[data-theme='dark'] .evaluation-duplicate-notice { border-color: #80651c; background: #382f19; color: #fcd34d; }
+
+.shift-management-page { --shift-muted: var(--text-muted); }
+.shift-page-heading { align-items: flex-end; }
+.shift-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
+.shift-filter-card { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); align-items: end; gap: 12px; padding: 16px; }
+.shift-filter-card label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.shift-filter-card .form-control, .shift-filter-card .form-select { min-width: 0; min-height: 42px; }
+.shift-list-card { min-width: 0; }
+.shift-list-card .workspace-section-heading { margin-bottom: 16px; }
+.shift-list { display: grid; }
+.shift-list-header, .shift-row { display: grid; grid-template-columns: minmax(170px, 1.15fr) minmax(110px, .7fr) minmax(150px, 1fr) minmax(180px, 1fr) minmax(190px, 1.1fr); align-items: center; gap: 14px; }
+.shift-list-header { padding: 10px 13px; border-radius: 10px 10px 0 0; background: var(--surface-card-hover); color: var(--text-muted); font-size: 10px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.shift-row { min-width: 0; padding: 13px; border-bottom: 1px solid var(--border-color); }
+.shift-row:last-child { border-bottom: 0; }
+.shift-cell { display: grid; align-content: center; gap: 5px; min-width: 0; color: var(--text-main); font-size: 12px; }
+.shift-cell > strong { overflow-wrap: anywhere; font-size: 12px; }
+.shift-cell small { color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.shift-name-cell { grid-template-columns: 34px minmax(0, 1fr); align-items: center; }
+.shift-name-cell > span:last-child { display: grid; gap: 5px; min-width: 0; }
+.shift-name-cell strong { overflow-wrap: anywhere; font-size: 13px; }
+.shift-clock-icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 10px; background: var(--primary-50); color: var(--primary-600); }
+.shift-hours-cell strong { font-size: 14px; white-space: nowrap; }
+.shift-scope { display: inline-flex; width: fit-content; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.shift-scope.is-global { background: var(--info-bg); color: var(--info-text); }
+.shift-scope.is-program { background: var(--primary-50); color: var(--primary-700); }
+.shift-status { display: inline-flex; width: fit-content; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid; border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.shift-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.shift-status.is-active { border-color: var(--success-border); background: var(--success-bg); color: var(--success-text); }
+.shift-status.is-inactive { border-color: var(--border-color); background: var(--surface-card-hover); color: var(--text-muted); }
+.shift-actions-cell { justify-items: start; gap: 8px; }
+.shift-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.shift-row-actions .btn { min-height: 30px; padding: 5px 8px; font-size: 10px; }
+.shift-modal-overlay { z-index: 1180; }
+.shift-form-modal { display: flex; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto; flex-direction: column; border: 1px solid var(--border-color); border-radius: 18px; background: var(--surface-card); box-shadow: 0 24px 70px rgb(15 23 42 / 25%); }
+.shift-form-modal > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 19px 22px; border-bottom: 1px solid var(--border-color); }
+.shift-form-modal > header h3 { margin: 4px 0 0; color: var(--text-main); font-size: 19px; }
+.shift-form-modal > form { display: grid; gap: 14px; padding: 20px 22px 22px; }
+.shift-form-modal .form-label { display: grid; align-items: center; gap: 6px; color: var(--text-body); }
+.shift-form-modal .form-label small { color: var(--text-muted); font-size: 10px; font-weight: 400; }
+.shift-form-modal .form-control, .shift-form-modal .form-select { min-width: 0; min-height: 40px; padding: 9px 11px; background-color: var(--surface-card); }
+.shift-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.shift-form-note { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--info-bg); color: var(--info-text); font-size: 11px; line-height: 1.5; }
+.shift-form-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 4px; }
+.shift-management-page .workspace-empty { min-height: 220px; flex-direction: column; }
+
+:root[data-theme='dark'] .shift-clock-icon,
+:root[data-theme='dark'] .shift-scope.is-program { background: rgb(99 91 255 / 17%); color: #aaa5ff; }
+:root[data-theme='dark'] .shift-list-header { background: var(--surface-card-hover); }
+
+@media (max-width: 1100px) {
+  .shift-list-header { display: none; }
+  .shift-row { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px 18px; padding: 15px 8px; }
+  .shift-actions-cell { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .shift-page-heading { align-items: stretch; }
+  .shift-heading-actions { justify-content: flex-start; }
+  .shift-filter-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .shift-filter-card, .shift-form-grid { grid-template-columns: 1fr; }
+  .shift-row { grid-template-columns: minmax(0, 1fr); gap: 11px; padding: 14px 4px; }
+  .shift-actions-cell { grid-column: auto; align-items: flex-start; flex-direction: column; }
+  .shift-row-actions { width: 100%; }
+  .shift-row-actions .btn { flex: 1; }
+  .shift-form-modal > header { padding: 16px; }
+  .shift-form-modal > form { padding: 16px; }
+}
