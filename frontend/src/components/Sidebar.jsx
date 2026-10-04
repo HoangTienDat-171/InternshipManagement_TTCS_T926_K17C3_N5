@@ -3,6 +3,7 @@ import {
   UserCheck, 
   Calendar, 
   CalendarDays,
+  Award,
   FolderUp, 
   ShieldCheck, 
   Building2,
@@ -10,6 +11,9 @@ import {
   LayoutDashboard,
   UsersRound,
   ClipboardList,
+  FileText,
+  Clock3,
+  ClipboardCheck,
   LogOut,
   X
 } from 'lucide-react';
@@ -24,8 +28,12 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
   const navItems = [
     ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
     ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch thực tập', icon: <CalendarDays size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'intern-attendance', label: 'Chấm công hôm nay', icon: <ClipboardCheck size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...((isMentor || isIntern) ? [{ id: 'tasks', label: isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
+    ...((isIntern || isMentor) ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),
+    ...(isMentor ? [{ id: 'evaluations', label: 'Đánh giá thực tập sinh', icon: <ClipboardList size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'my-evaluations', label: 'Đánh giá của tôi', icon: <Award size={18} /> }] : []),
     ...(canManage ? [
     {
       id: 'interns',
@@ -46,6 +54,11 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       id: 'documents',
       label: 'Quản lý Tài liệu',
       icon: <FolderUp size={18} />
+    }] : []),
+    ...(canManage ? [{
+      id: 'work-shifts',
+      label: 'Quản lý ca làm việc',
+      icon: <Clock3 size={18} />
     }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{

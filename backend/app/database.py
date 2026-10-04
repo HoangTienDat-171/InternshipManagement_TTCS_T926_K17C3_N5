@@ -283,6 +283,51 @@ def init_mysql_db():
                 ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                scope_type ENUM('GLOBAL','PROGRAM') NOT NULL,
+                ma_chuong_trinh INT NULL,
+                effective_from DATE NOT NULL,
+                effective_to DATE NULL,
+                status ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+                created_by INT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_ca_lam_viec_time CHECK (start_time < end_time),
+                CONSTRAINT chk_ca_lam_viec_dates CHECK (effective_to IS NULL OR effective_to >= effective_from),
+                CONSTRAINT chk_ca_lam_viec_scope CHECK (
+                    (scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+                    OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)
+                ),
+                KEY idx_ca_lam_viec_filter (status, scope_type, ma_chuong_trinh, effective_from),
+                KEY idx_ca_lam_viec_creator (created_by),
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CHAM_CONG (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ca_lam_viec_id BIGINT NOT NULL,
+                attendance_date DATE NOT NULL,
+                check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                check_out_at DATETIME NULL,
+                status ENUM('CHECKED_IN','COMPLETED') NOT NULL DEFAULT 'CHECKED_IN',
+                note VARCHAR(1000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_cham_cong_state CHECK (
+                    (status = 'CHECKED_IN' AND check_out_at IS NULL)
+                    OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)
+                ),
+                UNIQUE KEY uq_cham_cong_profile_day_shift (ma_ho_so, attendance_date, ca_lam_viec_id),
+                KEY idx_cham_cong_profile_day (ma_ho_so, attendance_date, id),
+                KEY idx_cham_cong_shift (ca_lam_viec_id),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
                 ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
@@ -292,6 +337,72 @@ def init_mysql_db():
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
+                ma_bao_cao BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                week_start DATE NOT NULL,
+                week_end DATE NOT NULL,
+                work_content TEXT NOT NULL,
+                results TEXT NOT NULL,
+                difficulties TEXT NOT NULL,
+                trang_thai ENUM('DRAFT','SUBMITTED') NOT NULL DEFAULT 'DRAFT',
+                submitted_at DATETIME NULL,
+                attachment_storage_key VARCHAR(80) NULL UNIQUE,
+                attachment_original_name VARCHAR(255) NULL,
+                attachment_mime_type VARCHAR(127) NULL,
+                attachment_file_size BIGINT UNSIGNED NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_bao_cao_tuan_context (ma_ho_so, ma_chuong_trinh, week_start),
+                KEY idx_bao_cao_tuan_profile_status (ma_ho_so, trang_thai, week_start),
+                KEY idx_bao_cao_tuan_program (ma_chuong_trinh, week_start),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+                ma_nhan_xet BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_bao_cao BIGINT NOT NULL,
+                reviewed_by INT NOT NULL,
+                comment TEXT NOT NULL,
+                reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_nhan_xet_bao_cao (ma_bao_cao),
+                KEY idx_nhan_xet_mentor (reviewed_by, reviewed_at),
+                FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+                FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+                ma_danh_gia BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                ma_nguoi_dung_mentor INT NOT NULL,
+                ky_danh_gia ENUM('MIDTERM','FINAL') NOT NULL,
+                professional_skill_score TINYINT NOT NULL,
+                work_quality_score TINYINT NOT NULL,
+                initiative_score TINYINT NOT NULL,
+                communication_teamwork_score TINYINT NOT NULL,
+                attitude_discipline_score TINYINT NOT NULL,
+                overall_comment TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT chk_danh_gia_scores CHECK (
+                    professional_skill_score BETWEEN 1 AND 5
+                    AND work_quality_score BETWEEN 1 AND 5
+                    AND initiative_score BETWEEN 1 AND 5
+                    AND communication_teamwork_score BETWEEN 1 AND 5
+                    AND attitude_discipline_score BETWEEN 1 AND 5
+                ),
+                CONSTRAINT chk_danh_gia_comment CHECK (CHAR_LENGTH(overall_comment) BETWEEN 1 AND 10000),
+                UNIQUE KEY uq_danh_gia_context (ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+                KEY idx_danh_gia_mentor_time (ma_nguoi_dung_mentor, evaluated_at),
+                KEY idx_danh_gia_program_period (ma_chuong_trinh, ky_danh_gia, evaluated_at),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
                 ma_hop_dong BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -642,6 +753,47 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_actor ON LICH_SU_TIEN_DO_CONG_VIEC(updated_by)")
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
+        ma_bao_cao INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        week_start TEXT NOT NULL,
+        week_end TEXT NOT NULL,
+        work_content TEXT NOT NULL DEFAULT '' CHECK(length(work_content) <= 10000),
+        results TEXT NOT NULL DEFAULT '' CHECK(length(results) <= 10000),
+        difficulties TEXT NOT NULL DEFAULT '' CHECK(length(difficulties) <= 10000),
+        trang_thai TEXT NOT NULL DEFAULT 'DRAFT' CHECK(trang_thai IN ('DRAFT', 'SUBMITTED')),
+        submitted_at DATETIME,
+        attachment_storage_key TEXT UNIQUE,
+        attachment_original_name TEXT,
+        attachment_mime_type TEXT,
+        attachment_file_size INTEGER CHECK(attachment_file_size IS NULL OR attachment_file_size > 0),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh, week_start),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_profile_status ON BAO_CAO_TUAN(ma_ho_so, trang_thai, week_start)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_program ON BAO_CAO_TUAN(ma_chuong_trinh, week_start)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+        ma_nhan_xet INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_bao_cao INTEGER NOT NULL UNIQUE,
+        reviewed_by INTEGER NOT NULL,
+        comment TEXT NOT NULL CHECK(length(comment) BETWEEN 1 AND 10000),
+        reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+        FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhan_xet_mentor ON NHAN_XET_BAO_CAO_TUAN(reviewed_by, reviewed_at)")
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
         ma_chuong_trinh INTEGER PRIMARY KEY AUTOINCREMENT,
         ma_ct TEXT NOT NULL UNIQUE,
@@ -658,6 +810,54 @@ def init_db():
         FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
     )
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('GLOBAL', 'PROGRAM')),
+        ma_chuong_trinh INTEGER,
+        effective_from DATE NOT NULL,
+        effective_to DATE,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'INACTIVE')),
+        created_by INTEGER NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(start_time < end_time),
+        CHECK(effective_to IS NULL OR effective_to >= effective_from),
+        CHECK((scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+            OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)),
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_filter ON CA_LAM_VIEC(status, scope_type, ma_chuong_trinh, effective_from)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_creator ON CA_LAM_VIEC(created_by)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CHAM_CONG (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ca_lam_viec_id INTEGER NOT NULL,
+        attendance_date DATE NOT NULL,
+        check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        check_out_at DATETIME,
+        status TEXT NOT NULL DEFAULT 'CHECKED_IN'
+            CHECK(status IN ('CHECKED_IN', 'COMPLETED')),
+        note TEXT CHECK(note IS NULL OR length(note) <= 1000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, attendance_date, ca_lam_viec_id),
+        CHECK((status = 'CHECKED_IN' AND check_out_at IS NULL)
+            OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_profile_day ON CHAM_CONG(ma_ho_so, attendance_date, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_shift ON CHAM_CONG(ca_lam_viec_id)")
 
     program_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CHUONG_TRINH_THUC_TAP)")}
     if "mo_ta_cong_viec" not in program_columns:
@@ -682,6 +882,37 @@ def init_db():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+        ma_danh_gia INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        ky_danh_gia TEXT NOT NULL CHECK(ky_danh_gia IN ('MIDTERM', 'FINAL')),
+        professional_skill_score INTEGER NOT NULL CHECK(professional_skill_score BETWEEN 1 AND 5),
+        work_quality_score INTEGER NOT NULL CHECK(work_quality_score BETWEEN 1 AND 5),
+        initiative_score INTEGER NOT NULL CHECK(initiative_score BETWEEN 1 AND 5),
+        communication_teamwork_score INTEGER NOT NULL CHECK(communication_teamwork_score BETWEEN 1 AND 5),
+        attitude_discipline_score INTEGER NOT NULL CHECK(attitude_discipline_score BETWEEN 1 AND 5),
+        overall_comment TEXT NOT NULL CHECK(length(overall_comment) BETWEEN 1 AND 10000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_mentor_time
+        ON DANH_GIA_THUC_TAP(ma_nguoi_dung_mentor, evaluated_at)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_program_period
+        ON DANH_GIA_THUC_TAP(ma_chuong_trinh, ky_danh_gia, evaluated_at)
     """)
 
     # 6. Bảng Thông Báo

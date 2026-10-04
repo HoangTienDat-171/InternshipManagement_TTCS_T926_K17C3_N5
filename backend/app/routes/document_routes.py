@@ -1,11 +1,12 @@
 import io
+import logging
 import sqlite3
 import zipfile
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ..database import DB_FILE, get_db
 from ..notifications import create_notification
@@ -13,9 +14,12 @@ from ..schemas import DocumentDetail, DocumentReview
 from ..security import require_role
 
 router = APIRouter(prefix="/api/documents", tags=["Internship Documents"])
+logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 15 * 1024 * 1024
+MAX_INTERN_FILE_SIZE = 5 * 1024 * 1024
 UPLOAD_ROOT = Path(DB_FILE).parent / "uploads" / "documents"
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".png"}
+ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".png"}
+INTERN_ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 
 def document_record(row):
@@ -27,6 +31,8 @@ def document_record(row):
 def valid_file_content(extension: str, content: bytes) -> bool:
     if extension == ".pdf":
         return content.startswith(b"%PDF-")
+    if extension == ".doc":
+        return content.startswith(bytes.fromhex("D0CF11E0A1B11AE1"))
     if extension == ".png":
         return content.startswith(b"\x89PNG\r\n\x1a\n")
     if extension == ".docx":
@@ -37,6 +43,13 @@ def valid_file_content(extension: str, content: bytes) -> bool:
         except (OSError, zipfile.BadZipFile):
             return False
     return False
+
+
+def stored_document_path(relative_path: str) -> Path | None:
+    stored_path = PurePosixPath(relative_path)
+    if stored_path.is_absolute() or ".." in stored_path.parts or stored_path.parts[:1] != ("documents",):
+        return None
+    return UPLOAD_ROOT / stored_path.name
 
 
 @router.get("")
@@ -116,12 +129,16 @@ async def upload_document(
 
     original_name = PurePosixPath((file.filename or "").replace("\\", "/")).name
     extension = Path(original_name).suffix.lower()
-    if not original_name or len(original_name) > 255 or extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ tệp PDF, DOCX hoặc PNG có tên hợp lệ.")
+    is_intern = user["vai_tro"] == "ThucTapSinh"
+    allowed_extensions = INTERN_ALLOWED_EXTENSIONS if is_intern else ALLOWED_EXTENSIONS
+    if not original_name or len(original_name) > 255 or extension not in allowed_extensions:
+        allowed_types = "PDF, DOC hoặc DOCX" if is_intern else "PDF, DOC, DOCX hoặc PNG"
+        raise HTTPException(status_code=400, detail=f"Chỉ hỗ trợ tệp {allowed_types} có tên hợp lệ.")
 
-    content = await file.read(MAX_FILE_SIZE + 1)
-    if not content or len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="Tệp phải có dung lượng từ 1 byte đến 15 MB.")
+    max_file_size = MAX_INTERN_FILE_SIZE if is_intern else MAX_FILE_SIZE
+    content = await file.read(max_file_size + 1)
+    if not content or len(content) > max_file_size:
+        raise HTTPException(status_code=400, detail=f"Tệp phải có dung lượng từ 1 byte đến {max_file_size // (1024 * 1024)} MB.")
     if not valid_file_content(extension, content):
         raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
 
@@ -154,6 +171,33 @@ async def upload_document(
         WHERE d.ma_tai_lieu = ?
     """, (cursor.lastrowid,)).fetchone()
     return document_record(row)
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_intern_document(document_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request, "ThucTapSinh")
+    row = db.execute("""
+        SELECT d.duong_dan_file, h.ma_nguoi_dung
+        FROM TAI_LIEU_HO_SO d
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
+        WHERE d.ma_tai_lieu = ?
+    """, (document_id,)).fetchone()
+    if not row or row["ma_nguoi_dung"] != user["ma_nguoi_dung"]:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
+
+    file_path = stored_document_path(row["duong_dan_file"])
+    cursor = db.execute("DELETE FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu = ?", (document_id,))
+    if cursor.rowcount == 0:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
+    db.commit()
+
+    if file_path is not None:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Could not remove stored document after deleting its database record.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{document_id}/review", response_model=DocumentDetail)
@@ -211,10 +255,9 @@ def download_document(document_id: int, request: Request, db: sqlite3.Connection
     """, (user["ma_nguoi_dung"], row["ma_ho_so"])).fetchone():
         raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
 
-    stored_path = PurePosixPath(row["duong_dan_file"])
-    if stored_path.is_absolute() or ".." in stored_path.parts or stored_path.parts[:1] != ("documents",):
+    absolute_path = stored_document_path(row["duong_dan_file"])
+    if absolute_path is None:
         raise HTTPException(status_code=404, detail="Đường dẫn tệp không hợp lệ.")
-    absolute_path = UPLOAD_ROOT / stored_path.name
     if not absolute_path.is_file():
         raise HTTPException(status_code=404, detail="Tệp không còn tồn tại trên máy chủ.")
     filename = row["ten_file"] or absolute_path.name

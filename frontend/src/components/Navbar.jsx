@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({ 
@@ -61,6 +61,8 @@ export default function Navbar({
 
   const notificationMeta = (item) => {
     if (item.loai === 'TASK_ASSIGNED') return { label: 'Nhiệm vụ', icon: <Briefcase size={15} /> };
+    if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
+    if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };
@@ -129,7 +131,7 @@ export default function Navbar({
                   <div className="notification-list">
                     {notifications.map((item) => {
                       const meta = notificationMeta(item);
-                      const navigable = item.reference_type === 'internship_task' && item.reference_id;
+                      const navigable = ['internship_task', 'weekly_report'].includes(item.reference_type) && item.reference_id;
                       return <article key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`}>
                         <button type="button" className="notification-item-main" onClick={() => openNotification(item)}>
                           <span className="notification-type-icon">{meta.icon}</span>

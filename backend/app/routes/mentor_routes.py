@@ -71,7 +71,7 @@ def mentor_intern_detail(profile_id: int, request: Request, db: sqlite3.Connecti
         FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC
     """, (profile_id,)).fetchall()
     programs = db.execute("""
-        SELECT c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
+        SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
                a.trang_thai AS trang_thai_ung_tuyen
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh

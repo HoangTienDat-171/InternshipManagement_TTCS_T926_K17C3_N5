@@ -1,5 +1,5 @@
-from datetime import date
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from datetime import date, time
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
 
 class UserLogin(BaseModel):
@@ -227,6 +227,211 @@ class InternTaskProgressUpdate(BaseModel):
             raise ValueError("Tiến độ 100% phải có trạng thái COMPLETED.")
         if self.status == "COMPLETED" and self.progress_percent != 100:
             raise ValueError("Trạng thái COMPLETED yêu cầu tiến độ bằng 100%.")
+        return self
+
+
+class WeeklyReportCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    program_id: int = Field(gt=0)
+    week_start: date
+    work_content: str = Field(default="", max_length=10000)
+    results: str = Field(default="", max_length=10000)
+    difficulties: str = Field(default="", max_length=10000)
+
+    @field_validator("work_content", "results", "difficulties")
+    @classmethod
+    def normalize_report_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("week_start")
+    @classmethod
+    def require_monday(cls, value: date) -> date:
+        if value.weekday() != 0:
+            raise ValueError("Ngày bắt đầu tuần phải là thứ Hai.")
+        return value
+
+
+class WeeklyReportUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    work_content: Optional[str] = Field(default=None, max_length=10000)
+    results: Optional[str] = Field(default=None, max_length=10000)
+    difficulties: Optional[str] = Field(default=None, max_length=10000)
+
+    @field_validator("work_content", "results", "difficulties")
+    @classmethod
+    def normalize_optional_report_text(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip() if value is not None else None
+
+    @model_validator(mode="after")
+    def require_report_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        return self
+
+
+class WeeklyReportReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    comment: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("comment")
+    @classmethod
+    def normalize_review_comment(cls, value: str) -> str:
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét không được chỉ chứa khoảng trắng.")
+        return comment
+
+
+class InternEvaluationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    internship_profile_id: int = Field(gt=0)
+    program_id: int = Field(gt=0)
+    evaluation_period: Literal["MIDTERM", "FINAL"]
+    professional_skill_score: StrictInt = Field(ge=1, le=5)
+    work_quality_score: StrictInt = Field(ge=1, le=5)
+    initiative_score: StrictInt = Field(ge=1, le=5)
+    communication_teamwork_score: StrictInt = Field(ge=1, le=5)
+    attitude_discipline_score: StrictInt = Field(ge=1, le=5)
+    overall_comment: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("overall_comment")
+    @classmethod
+    def normalize_evaluation_comment(cls, value: str) -> str:
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét tổng kết không được chỉ chứa khoảng trắng.")
+        return comment
+
+
+class InternEvaluationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    professional_skill_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    work_quality_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    initiative_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    communication_teamwork_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    attitude_discipline_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    overall_comment: Optional[str] = Field(default=None, min_length=1, max_length=10000)
+
+    @field_validator("overall_comment")
+    @classmethod
+    def normalize_optional_evaluation_comment(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét tổng kết không được chỉ chứa khoảng trắng.")
+        return comment
+
+    @model_validator(mode="after")
+    def require_evaluation_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Các trường cập nhật không được để trống.")
+        return self
+
+
+class InternAttendanceCheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_attendance_note(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class InternAttendanceCheckOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+WorkShiftScope = Literal["GLOBAL", "PROGRAM"]
+WorkShiftStatus = Literal["ACTIVE", "INACTIVE"]
+
+
+class WorkShiftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    start_time: time
+    end_time: time
+    scope_type: WorkShiftScope
+    program_id: Optional[StrictInt] = Field(default=None, gt=0)
+    effective_from: date
+    effective_to: Optional[date] = None
+    status: WorkShiftStatus = "ACTIVE"
+
+    @field_validator("name")
+    @classmethod
+    def normalize_shift_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("Tên ca làm việc không được để trống.")
+        return name
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def require_local_time(cls, value: time) -> time:
+        if value.tzinfo is not None:
+            raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_shift_window(self):
+        if self.start_time >= self.end_time:
+            raise ValueError("Ca qua đêm không được hỗ trợ; giờ bắt đầu phải trước giờ kết thúc.")
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("Ngày kết thúc hiệu lực phải sau hoặc bằng ngày bắt đầu.")
+        if (self.scope_type == "GLOBAL") != (self.program_id is None):
+            raise ValueError("Ca GLOBAL không gắn chương trình; ca PROGRAM phải chọn chương trình.")
+        return self
+
+
+class WorkShiftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    scope_type: Optional[WorkShiftScope] = None
+    program_id: Optional[StrictInt] = Field(default=None, gt=0)
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
+    status: Optional[WorkShiftStatus] = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_shift_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        name = value.strip()
+        if not name:
+            raise ValueError("Tên ca làm việc không được để trống.")
+        return name
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def require_local_time(cls, value: Optional[time]) -> Optional[time]:
+        if value is not None and value.tzinfo is not None:
+            raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
+        return value
+
+    @model_validator(mode="after")
+    def require_valid_patch(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        nullable_fields = {"program_id", "effective_to"}
+        if any(getattr(self, field) is None and field not in nullable_fields for field in self.model_fields_set):
+            raise ValueError("Các trường cập nhật không được để trống.")
         return self
 
 class ProgramCreate(BaseModel):

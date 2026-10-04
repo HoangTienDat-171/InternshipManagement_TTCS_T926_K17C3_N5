@@ -1,11 +1,36 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, Eye, FileText, GraduationCap, Mail, Phone, UploadCloud, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Building2, CalendarDays, CircleCheck, Clock3, Download, Eye, FileText, FileType2, GraduationCap, Mail, Phone, Trash2, UploadCloud, UserRound, X } from 'lucide-react';
+import ConfirmDialog from '../components/ConfirmDialog';
 import ContractDetailView from './ContractDetailView';
 import CustomSelect from '../components/CustomSelect';
-import { apiFetch, downloadProtectedFile, readJsonResponse } from '../utils/api';
+import { apiFetch, apiUploadWithProgress, downloadProtectedFile, readJsonResponse } from '../utils/api';
 
-const documentStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Cần bổ sung' };
+const documentStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Bị từ chối' };
 const applicationStatus = { ChoDuyet: 'Chờ duyệt', DaDuyet: 'Đã duyệt', TuChoi: 'Từ chối' };
+const MAX_DOCUMENT_FILE_SIZE = 5 * 1024 * 1024;
+const DOCUMENT_ACCEPT = '.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const documentTypeLabels = { CV: 'CV', DonXinThucTap: 'Đơn xin thực tập' };
+
+function documentExtension(fileName = '') {
+  return fileName.split('.').pop()?.toLowerCase() || '';
+}
+
+function validateDocumentFile(file) {
+  const extension = documentExtension(file.name);
+  if (!['pdf', 'doc', 'docx'].includes(extension)) return 'Chỉ nhận tệp PDF, DOC hoặc DOCX.';
+  if (!file.size) return 'Tệp không được để trống.';
+  if (file.size > MAX_DOCUMENT_FILE_SIZE) return 'Dung lượng tệp tối đa là 5 MB.';
+  return '';
+}
+
+function formatDocumentSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const contractStatus = {
   PENDING_CONFIRMATION: { label: 'Chờ xác nhận', tone: 'warning' },
   CONFIRMED: { label: 'Đã xác nhận', tone: 'success' },
@@ -29,8 +54,22 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
   const [previewingContractId, setPreviewingContractId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMessage, setUploadMessage] = useState('');
-  const [documentType, setDocumentType] = useState('CV');
+  const [documentFilter, setDocumentFilter] = useState('all');
+  const [uploadType, setUploadType] = useState('CV');
+  const [documentDialog, setDocumentDialog] = useState(null);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState(null);
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [documentToDelete, setDocumentToDelete] = useState(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState(null);
+  const [documentActionError, setDocumentActionError] = useState('');
   const fileInput = useRef(null);
+  const documentPreviewController = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -78,6 +117,12 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
     if (contractPreviewUrl) URL.revokeObjectURL(contractPreviewUrl);
   }, [contractPreviewUrl]);
 
+  useEffect(() => () => documentPreviewController.current?.abort(), []);
+
+  useEffect(() => () => {
+    if (documentPreviewUrl) URL.revokeObjectURL(documentPreviewUrl);
+  }, [documentPreviewUrl]);
+
   useEffect(() => {
     if (!selectedContractId) void Promise.resolve().then(refresh);
     const updateWorkspace = () => { if (!selectedContractId) void refresh(); };
@@ -88,6 +133,95 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
   const download = async (document) => {
     try { await downloadProtectedFile(document.ma_tai_lieu, document.ten_file); }
     catch (err) { setError(err.message); }
+  };
+
+  const openUploadDialog = () => {
+    setUploadFile(null);
+    setUploadError('');
+    setUploadProgress(0);
+    setDragActive(false);
+    setUploadMessage('');
+    setUploadType(documentFilter === 'all' ? 'CV' : documentFilter);
+    setDocumentDialog('upload');
+  };
+
+  const closeDocumentDialog = useCallback(() => {
+    if (uploading) return;
+    documentPreviewController.current?.abort();
+    documentPreviewController.current = null;
+    setDocumentDialog(null);
+    setDragActive(false);
+    setPreviewDocument(null);
+    setDocumentPreviewUrl('');
+    setPreviewError('');
+    setPreviewLoading(false);
+    setDocumentToDelete(null);
+    setDocumentActionError('');
+  }, [uploading]);
+
+  useEffect(() => {
+    if (!['upload', 'preview'].includes(documentDialog) || uploading) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') closeDocumentDialog();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [closeDocumentDialog, documentDialog, uploading]);
+
+  const chooseUploadFile = (file) => {
+    if (!file) return;
+    const validationError = validateDocumentFile(file);
+    setUploadFile(validationError ? null : file);
+    setUploadError(validationError);
+    setUploadProgress(0);
+  };
+
+  const previewDocumentFile = async (item) => {
+    documentPreviewController.current?.abort();
+    setPreviewDocument(item);
+    setDocumentPreviewUrl('');
+    setPreviewError('');
+    setPreviewLoading(false);
+    setDocumentDialog('preview');
+    const extension = documentExtension(item.ten_file || '');
+    if (!['pdf', 'png'].includes(extension)) return;
+
+    const controller = new AbortController();
+    documentPreviewController.current = controller;
+    setPreviewLoading(true);
+    try {
+      const response = await apiFetch(`/api/documents/${item.ma_tai_lieu}/file`, { signal: controller.signal });
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể xem trước tài liệu.');
+      }
+      setDocumentPreviewUrl(URL.createObjectURL(await response.blob()));
+    } catch (previewError) {
+      if (previewError.name !== 'AbortError') setPreviewError(previewError.message);
+    } finally {
+      if (documentPreviewController.current === controller) setPreviewLoading(false);
+    }
+  };
+
+  const deleteDocument = async () => {
+    if (!documentToDelete) return;
+    setDeletingDocumentId(documentToDelete.ma_tai_lieu);
+    setDocumentActionError('');
+    try {
+      const response = await apiFetch(`/api/documents/${documentToDelete.ma_tai_lieu}`, { method: 'DELETE' });
+      if (!response.ok) {
+        const data = await readJsonResponse(response);
+        throw new Error(data.detail || 'Không thể xóa tài liệu.');
+      }
+      setDocumentDialog(null);
+      setDocumentToDelete(null);
+      setUploadMessage('Đã xóa tài liệu khỏi hồ sơ.');
+      await refresh();
+    } catch (deleteError) {
+      setDocumentActionError(deleteError.message);
+    } finally {
+      setDeletingDocumentId(null);
+    }
   };
 
   const downloadContract = async (contractItem) => {
@@ -110,29 +244,30 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
     }
   };
 
-  const uploadDocument = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    event.target.value = '';
-    const extension = file.name.split('.').pop()?.toLowerCase();
-    if (!['pdf', 'docx', 'png'].includes(extension) || file.size === 0 || file.size > 15 * 1024 * 1024) {
-      setError('Tài liệu phải có định dạng PDF, DOCX hoặc PNG, dung lượng từ 1 byte đến 15 MB.');
+  const uploadDocument = async () => {
+    if (!uploadFile) return;
+    const validationError = validateDocumentFile(uploadFile);
+    if (validationError) {
+      setUploadError(validationError);
       return;
     }
     setUploading(true);
     setError('');
+    setUploadError('');
     setUploadMessage('');
+    setUploadProgress(0);
     try {
       const formData = new FormData();
-      formData.append('loai_tai_lieu', documentType);
-      formData.append('file', file);
-      const response = await apiFetch('/api/documents', { method: 'POST', body: formData });
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể nộp tài liệu.');
-      setUploadMessage(`Đã nộp ${documentType === 'CV' ? 'CV' : 'đơn xin thực tập'} thành công. Hồ sơ đang chờ duyệt.`);
+      formData.append('loai_tai_lieu', uploadType);
+      formData.append('file', uploadFile);
+      const response = await apiUploadWithProgress('/api/documents', formData, setUploadProgress);
+      if (!response.ok) throw new Error(response.data.detail || 'Không thể nộp tài liệu.');
+      setUploadMessage(`Đã nộp ${documentTypeLabels[uploadType]} thành công. Hồ sơ đang chờ duyệt.`);
+      setUploadFile(null);
+      setDocumentDialog(null);
       await refresh();
     } catch (err) {
-      setError(err.message);
+      setUploadError(err.message);
     } finally {
       setUploading(false);
     }
@@ -155,7 +290,9 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
   if (error && !workspace) return <div className="workspace-page"><div className="workspace-error">{error}<button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); refresh(); }}>Thử lại</button></div></div>;
   if (!workspace) return null;
 
-  const { profile, mentor, documents, applications, current_program: currentProgram, progress_percent: progress } = workspace;
+  const { profile, mentor, documents: workspaceDocuments, applications, current_program: currentProgram, progress_percent: progress } = workspace;
+  const documents = Array.isArray(workspaceDocuments) ? workspaceDocuments : [];
+  const visibleDocuments = documents.filter((item) => documentFilter === 'all' || item.loai_tai_lieu === documentFilter);
   const pendingApplications = applications.filter((application) => application.trang_thai_ung_tuyen === 'ChoDuyet').length;
   return <div className="workspace-page">
     <header className="workspace-heading"><div><span className="workspace-eyebrow">KHÔNG GIAN THỰC TẬP</span><h2>Xin chào, {profile.ho_ten || currentUser.ho_ten}</h2><p>Theo dõi người hướng dẫn, hồ sơ và chương trình thực tập của bạn.</p></div><div className="intern-workspace-actions"><button type="button" className="btn btn-secondary" onClick={onNavigatePrograms}><CalendarDays size={15} />Chương trình đang mở<ArrowRight size={14} /></button><button type="button" className="btn btn-secondary" disabled={loading} onClick={() => { setLoading(true); refresh(); }}><Clock3 size={15} />Làm mới</button></div></header>
@@ -172,9 +309,41 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
     </article>
 
     <div className="workspace-lower-grid">
-      <article className="workspace-card"><div className="workspace-section-heading workspace-document-heading"><div><span className="workspace-eyebrow">HỒ SƠ ĐÃ NỘP</span><h3>Tài liệu & CV <small>{documents.length}</small></h3></div><div className="intern-workspace-actions workspace-document-controls"><label className="workspace-document-type"><span>Loại tài liệu</span><CustomSelect className="form-select" aria-label="Loại tài liệu cần nộp" value={documentType} onChange={(event) => setDocumentType(event.target.value)} disabled={uploading}><option value="CV">CV</option><option value="DonXinThucTap">Đơn xin thực tập</option></CustomSelect></label><input ref={fileInput} type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" hidden onChange={uploadDocument} /><button type="button" className="btn btn-primary btn-sm" disabled={uploading} onClick={() => fileInput.current?.click()}><UploadCloud size={15} />{uploading ? 'Đang tải…' : `Nộp ${documentType === 'CV' ? 'CV' : 'đơn'}`}</button></div></div>
-        {uploadMessage && <p role="status" style={{ color: '#059669', fontSize: 12, margin: '0 0 10px' }}>{uploadMessage}</p>}
-        {documents.length ? <div className="workspace-document-list">{documents.map((document) => <div className="workspace-document-row" key={document.ma_tai_lieu}><span className="workspace-file-icon"><FileText size={16} /></span><div><strong>{document.ten_file || document.loai_tai_lieu}</strong><small>{document.loai_tai_lieu} · {document.ngay_tai_len || 'Ngày tải chưa rõ'}</small></div><StatusPill status={document.trang_thai_duyet} /><button type="button" className="workspace-icon-button" title="Tải tài liệu" onClick={() => download(document)}><Download size={15} /></button></div>)}</div> : <div className="workspace-empty"><FileText size={22} /><span>Bạn chưa nộp tài liệu. Chọn loại CV hoặc đơn xin thực tập rồi tải tệp lên tại đây.</span></div>}
+      <article className="workspace-card intern-submitted-documents">
+        <div className="workspace-section-heading intern-documents-heading">
+          <div><span className="workspace-eyebrow">HỒ SƠ ĐÃ NỘP</span><h3>Tài liệu & CV <small>{documents.length}</small></h3></div>
+          <label className="intern-document-filter"><span>Lọc loại tài liệu</span>
+            <CustomSelect className="form-select" aria-label="Lọc tài liệu đã nộp" value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value)}>
+              <option value="all">Tất cả tài liệu</option><option value="CV">CV</option><option value="DonXinThucTap">Đơn xin thực tập</option>
+            </CustomSelect>
+          </label>
+        </div>
+        <button type="button" className="intern-document-upload-trigger" onClick={openUploadDialog}>
+          <span className="intern-document-upload-icon"><UploadCloud size={19} /></span>
+          <span className="intern-document-upload-copy"><strong>Nộp CV</strong><small>PDF, DOC hoặc DOCX · Tối đa 5 MB</small></span>
+          <span className="intern-document-upload-action">Chọn tệp <ArrowRight size={15} /></span>
+        </button>
+        {uploadMessage && <p className="intern-document-feedback is-success" role="status"><CircleCheck size={15} />{uploadMessage}</p>}
+        {visibleDocuments.length ? <div className="intern-document-list">{visibleDocuments.map((item) => {
+          const extension = documentExtension(item.ten_file || '');
+          const extensionLabel = extension ? extension.toUpperCase() : 'FILE';
+          const fileSize = formatDocumentSize(item.kich_thuoc);
+          return <div className="intern-document-row" key={item.ma_tai_lieu}>
+            <span className={`intern-document-file-icon is-${['pdf', 'doc', 'docx', 'png'].includes(extension) ? extension : 'other'}`} aria-label={`Tệp ${extensionLabel}`}>
+              <FileType2 size={18} /><small>{extensionLabel}</small>
+            </span>
+            <div className="intern-document-details">
+              <strong title={item.ten_file || item.loai_tai_lieu}>{item.ten_file || item.loai_tai_lieu}</strong>
+              <small>{documentTypeLabels[item.loai_tai_lieu] || item.loai_tai_lieu} · {item.ngay_tai_len || 'Ngày tải chưa rõ'}{fileSize ? ` · ${fileSize}` : ''}</small>
+            </div>
+            <StatusPill status={item.trang_thai_duyet} />
+            <div className="intern-document-actions">
+              <button type="button" className="intern-document-action" aria-label={`Xem trước ${item.ten_file || 'tài liệu'}`} title="Xem trước" onClick={() => previewDocumentFile(item)}><Eye size={15} /><span>Xem trước</span></button>
+              <button type="button" className="intern-document-action" aria-label={`Tải về ${item.ten_file || 'tài liệu'}`} title="Tải về" onClick={() => download(item)}><Download size={15} /><span>Tải về</span></button>
+              <button type="button" className="intern-document-action is-danger" aria-label={`Xóa ${item.ten_file || 'tài liệu'}`} title="Xóa" onClick={() => { setDocumentToDelete(item); setDocumentActionError(''); setDocumentDialog('delete'); }}><Trash2 size={15} /><span>Xóa</span></button>
+            </div>
+          </div>;
+        })}</div> : <div className="intern-document-empty"><span><FileText size={20} /></span><strong>{documents.length ? 'Không có tài liệu phù hợp bộ lọc.' : 'Bạn chưa nộp tài liệu nào.'}</strong><small>{documents.length ? 'Hãy chọn loại tài liệu khác để xem danh sách.' : 'Chọn Nộp CV để tải hồ sơ PDF, DOC hoặc DOCX lên.'}</small></div>}
       </article>
       <article className="workspace-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">THEO DÕI ĐĂNG KÝ</span><h3>Chương trình đã ứng tuyển <small>{applications.length}</small></h3></div><CircleCheck size={19} /></div>
         {applications.length ? <div className="workspace-application-list">{applications.map((application) => <div className="workspace-application-row" key={application.ma_chuong_trinh}><div><strong>{application.ten_ct}</strong><small>{application.ma_ct} · Nộp {application.ngay_ung_tuyen || '—'}</small></div><StatusPill status={application.trang_thai_ung_tuyen} map={applicationStatus} /></div>)}</div> : <div className="workspace-empty"><CalendarDays size={22} /><span>Bạn chưa ứng tuyển chương trình nào.</span></div>}
@@ -218,5 +387,82 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
         </div> : <div className="workspace-empty"><FileText size={22} /><span>HR chưa tải hợp đồng lên. Hợp đồng sẽ xuất hiện tại đây sau khi được cập nhật.</span></div>}
       {contractError && <p className="contract-error" role="alert">{contractError}</p>}
     </article>
+    {documentDialog === 'upload' && <div className="modal-overlay intern-document-modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && closeDocumentDialog()}>
+      <section className="modal-container intern-document-modal" role="dialog" aria-modal="true" aria-labelledby="intern-document-upload-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header intern-document-modal-header">
+          <div><span className="workspace-eyebrow">HỒ SƠ THỰC TẬP</span><h3 id="intern-document-upload-title">Nộp CV hoặc đơn xin thực tập</h3><p>Chọn loại hồ sơ, sau đó kéo thả hoặc chọn tệp từ thiết bị.</p></div>
+          <button type="button" className="modal-close-btn" aria-label="Đóng hộp thoại" disabled={uploading} onClick={closeDocumentDialog}><X size={18} /></button>
+        </header>
+        <div className="modal-body intern-document-upload-body">
+          <label className="intern-document-upload-type"><span>Loại tài liệu</span>
+            <CustomSelect className="form-select" aria-label="Loại tài liệu cần nộp" value={uploadType} onChange={(event) => setUploadType(event.target.value)} disabled={uploading}>
+              <option value="CV">CV</option><option value="DonXinThucTap">Đơn xin thực tập</option>
+            </CustomSelect>
+          </label>
+          <input ref={fileInput} type="file" accept={DOCUMENT_ACCEPT} hidden onChange={(event) => { chooseUploadFile(event.target.files?.[0]); event.target.value = ''; }} />
+          <div className={`intern-document-dropzone${dragActive ? ' is-dragging' : ''}${uploading ? ' is-disabled' : ''}`}
+            role="button" tabIndex={uploading ? -1 : 0} aria-disabled={uploading}
+            onClick={() => !uploading && fileInput.current?.click()}
+            onKeyDown={(event) => { if (!uploading && ['Enter', ' '].includes(event.key)) { event.preventDefault(); fileInput.current?.click(); } }}
+            onDragEnter={(event) => { event.preventDefault(); if (!uploading) setDragActive(true); }}
+            onDragOver={(event) => { event.preventDefault(); if (!uploading) setDragActive(true); }}
+            onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDragActive(false); }}
+            onDrop={(event) => { event.preventDefault(); setDragActive(false); if (!uploading) chooseUploadFile(event.dataTransfer.files?.[0]); }}>
+            <span className="intern-document-dropzone-icon"><UploadCloud size={25} /></span>
+            <strong>{dragActive ? 'Thả tệp để đính kèm' : uploadFile ? 'Tệp đã sẵn sàng' : 'Kéo thả tệp vào đây'}</strong>
+            <small>hoặc</small>
+            <span className="intern-document-dropzone-action">{uploadFile ? 'Chọn tệp khác' : 'Chọn tệp từ thiết bị'}</span>
+            <small>PDF, DOC, DOCX · tối đa 5 MB</small>
+          </div>
+          {uploadFile && <div className="intern-document-selected-file">
+            <span><FileType2 size={17} /></span><div><strong>{uploadFile.name}</strong><small>{formatDocumentSize(uploadFile.size)}</small></div>
+            <button type="button" aria-label="Bỏ tệp đã chọn" disabled={uploading} onClick={() => { setUploadFile(null); setUploadProgress(0); setUploadError(''); }}><X size={16} /></button>
+          </div>}
+          {uploadError && <p className="intern-document-feedback is-error" role="alert">{uploadError}</p>}
+          {uploading && <div className="intern-document-progress">
+            <div><span>{uploadProgress >= 100 ? 'Đang hoàn tất tải lên…' : 'Đang tải tệp lên…'}</span><strong>{uploadProgress}%</strong></div>
+            <span className="intern-document-progress-track" role="progressbar" aria-label="Tiến độ tải tệp" aria-valuemin="0" aria-valuemax="100" aria-valuenow={uploadProgress}><i style={{ width: `${uploadProgress}%` }} /></span>
+          </div>}
+        </div>
+        <footer className="modal-footer intern-document-modal-footer">
+          <button type="button" className="btn btn-secondary" disabled={uploading} onClick={closeDocumentDialog}>Hủy</button>
+          <button type="button" className="btn btn-primary" disabled={!uploadFile || uploading} aria-busy={uploading} onClick={uploadDocument}>
+            {uploading ? <><span className="contract-spinner" aria-hidden="true" />Đang tải lên…</> : <><UploadCloud size={16} />Nộp {uploadType === 'CV' ? 'CV' : 'đơn'}</>}
+          </button>
+        </footer>
+      </section>
+    </div>}
+
+    {documentDialog === 'preview' && previewDocument && <div className="modal-overlay intern-document-modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && closeDocumentDialog()}>
+      <section className="modal-container intern-document-modal intern-document-preview-modal" role="dialog" aria-modal="true" aria-labelledby="intern-document-preview-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header intern-document-modal-header">
+          <div><span className="workspace-eyebrow">XEM TRƯỚC TÀI LIỆU</span><h3 id="intern-document-preview-title">{previewDocument.ten_file || 'Tài liệu'}</h3><p>{documentTypeLabels[previewDocument.loai_tai_lieu] || previewDocument.loai_tai_lieu}</p></div>
+          <button type="button" className="modal-close-btn" aria-label="Đóng hộp thoại" onClick={closeDocumentDialog}><X size={18} /></button>
+        </header>
+        <div className="modal-body intern-document-preview-body">
+          {previewLoading && <div className="workspace-loading"><span className="contract-spinner" />Đang tải bản xem trước…</div>}
+          {previewError && <p className="intern-document-feedback is-error" role="alert">{previewError}</p>}
+          {!previewLoading && !previewError && documentExtension(previewDocument.ten_file || '') === 'pdf' && documentPreviewUrl && <iframe src={documentPreviewUrl} title={`Xem trước ${previewDocument.ten_file}`} />}
+          {!previewLoading && !previewError && documentExtension(previewDocument.ten_file || '') === 'png' && documentPreviewUrl && <img src={documentPreviewUrl} alt={`Xem trước ${previewDocument.ten_file}`} />}
+          {!previewLoading && !previewError && ['doc', 'docx'].includes(documentExtension(previewDocument.ten_file || '')) && <div className="intern-document-preview-fallback"><span><FileType2 size={26} /></span><strong>Không thể hiển thị trực tiếp định dạng Word trong trình duyệt.</strong><p>Tải tệp xuống để mở bằng Microsoft Word hoặc ứng dụng tương thích.</p></div>}
+        </div>
+        <footer className="modal-footer intern-document-modal-footer">
+          <button type="button" className="btn btn-secondary" onClick={closeDocumentDialog}>Đóng</button>
+          <button type="button" className="btn btn-primary" onClick={() => download(previewDocument)}><Download size={15} />Tải về</button>
+        </footer>
+      </section>
+    </div>}
+
+    <ConfirmDialog
+      open={documentDialog === 'delete' && Boolean(documentToDelete)}
+      title="Xóa tài liệu này?"
+      message={`“${documentToDelete?.ten_file || 'Tài liệu'}” sẽ bị xóa khỏi hồ sơ của bạn và không thể khôi phục.`}
+      confirmLabel="Xóa tài liệu"
+      cancelLabel="Giữ lại"
+      danger
+      busy={deletingDocumentId === documentToDelete?.ma_tai_lieu}
+      onCancel={() => { if (!deletingDocumentId) { setDocumentDialog(null); setDocumentToDelete(null); setDocumentActionError(''); } }}
+      onConfirm={deleteDocument}
+    >{documentActionError && <p className="intern-document-feedback is-error" role="alert">{documentActionError}</p>}</ConfirmDialog>
   </div>;
 }
