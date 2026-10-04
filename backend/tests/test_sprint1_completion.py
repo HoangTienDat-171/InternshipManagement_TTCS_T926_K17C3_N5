@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 PYTHON = BACKEND / ".venv" / "Scripts" / "python.exe"
 PDF = b"%PDF-1.4\nSprint 1 API test\n%%EOF\n"
+DOC = bytes.fromhex("D0CF11E0A1B11AE1") + b"Sprint 1 legacy Word test"
 
 
 def free_port():
@@ -392,12 +393,14 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
 
+        uploaded_documents = {}
         for kind, filename in (("CV", "resume.pdf"), ("DonXinThucTap", "application.pdf")):
             status_code, raw, _ = self.upload(token, filename, kind, PDF, other_profile)
             self.assertEqual(status_code, 201, raw)
             saved = json.loads(raw)
             self.assertEqual((saved["ma_ho_so"], saved["loai_tai_lieu"]), (own_profile, kind))
-        doc_id = saved["ma_tai_lieu"]
+            uploaded_documents[kind] = saved
+        doc_id = uploaded_documents["DonXinThucTap"]["ma_tai_lieu"]
 
         status_code, rows, _ = self.json_request("/api/interns/me/workspace", token=token)
         self.assertEqual(status_code, 200)
@@ -406,6 +409,8 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual((status_code, file_body, headers.get_content_type()), (200, PDF, "application/pdf"))
         another_tts, _ = self.login("lananh.hoang@internship.vn")
         status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=another_tts)
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}", "DELETE", another_tts)
         self.assertEqual(status_code, 404)
 
         tuan_token, _ = self.login("tuan.lm@internship.vn")
@@ -417,8 +422,31 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 400)
         status_code, _, _ = self.upload(tuan_token, "fake.pdf", "CV", b"not a PDF")
         self.assertEqual(status_code, 400)
-        status_code, _, _ = self.upload(tuan_token, "large.pdf", "CV", b"%PDF-" + b"x" * (15 * 1024 * 1024))
+        status_code, raw, _ = self.upload(tuan_token, "resume.doc", "CV", DOC)
+        self.assertEqual(status_code, 201, raw)
+        word_document_id = json.loads(raw)["ma_tai_lieu"]
+        status_code, _, _ = self.upload(tuan_token, "legacy.png", "CV", b"\x89PNG\r\n\x1a\n")
         self.assertEqual(status_code, 400)
+        status_code, _, _ = self.upload(tuan_token, "large.pdf", "CV", b"%PDF-" + b"x" * (5 * 1024 * 1024))
+        self.assertEqual(status_code, 400)
+
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, _, _ = self.request(f"/api/documents/{word_document_id}", "DELETE", admin_token)
+        self.assertEqual(status_code, 403)
+        db = sqlite3.connect(self.db_path)
+        try:
+            stored_path = db.execute(
+                "SELECT duong_dan_file FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu = ?", (doc_id,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        deleted_file = self.db_path.parent / "uploads" / "documents" / Path(stored_path).name
+        self.assertTrue(deleted_file.is_file())
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}", "DELETE", tuan_token)
+        self.assertEqual(status_code, 204)
+        self.assertFalse(deleted_file.exists())
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=tuan_token)
+        self.assertEqual(status_code, 404)
 
     def test_single_session_revokes_rest_and_pushes_logout_for_every_role(self):
         accounts = (

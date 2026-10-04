@@ -18,15 +18,47 @@ export function apiFetch(input, init = {}) {
   return fetch(input, { ...init, headers }).then((response) => {
     if (response.status === 401 && token && !isPublicAuth
       && localStorage.getItem('ims_token') === token) {
-      window.dispatchEvent(new CustomEvent('ims-session-expired', {
-        detail: {
-          token,
-          message: 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.',
-        },
-      }));
+      notifySessionExpired(token);
     }
 
     return response;
+  });
+}
+
+function notifySessionExpired(token) {
+  if (!token || localStorage.getItem('ims_token') !== token) return;
+  window.dispatchEvent(new CustomEvent('ims-session-expired', {
+    detail: {
+      token,
+      message: 'Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác.',
+    },
+  }));
+}
+
+export function apiUploadWithProgress(input, body, onProgress) {
+  const token = localStorage.getItem('ims_token');
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', input);
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+    });
+    request.addEventListener('load', () => {
+      if (request.status === 401) notifySessionExpired(token);
+      let data;
+      try {
+        data = JSON.parse(request.responseText);
+      } catch {
+        data = { detail: request.status >= 200 && request.status < 300
+          ? 'Máy chủ trả về dữ liệu không hợp lệ.'
+          : `Máy chủ gặp lỗi (${request.status}). Vui lòng thử lại.` };
+      }
+      resolve({ ok: request.status >= 200 && request.status < 300, status: request.status, data });
+    });
+    request.addEventListener('error', () => reject(new Error('Không thể kết nối đến máy chủ. Vui lòng thử lại.')));
+    request.addEventListener('abort', () => reject(new Error('Đã hủy tải tệp.')));
+    request.send(body);
   });
 }
 

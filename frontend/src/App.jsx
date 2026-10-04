@@ -357,6 +357,10 @@ export default function App() {
     if (!requestedContractPath) window.history.replaceState(null, '', pathForTab(visibleActiveTab));
   }, [activeTab, currentUser, passwordChangeRequired, requestedContractPath, visibleActiveTab]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId]);
+
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
     setCurrentUser(user);

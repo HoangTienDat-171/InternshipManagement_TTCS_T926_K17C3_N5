@@ -17,9 +17,23 @@ const EMPTY_FORM = {
 
 function mondayFor(date = new Date()) {
   const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
   const day = value.getDay();
   value.setDate(value.getDate() - (day === 0 ? 6 : day - 1));
-  return value.toISOString().slice(0, 10);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
+}
+
+function mondayForDateInput(value) {
+  if (!value) return '';
+  const [year, month, day] = value.split('-').map(Number);
+  return mondayFor(new Date(year, month - 1, day));
+}
+
+function formFromReport(report) {
+  return { ...report, program_id: String(report.program_id), week_start: String(report.week_start).slice(0, 10) };
 }
 
 function formatDate(value, includeTime = false) {
@@ -77,7 +91,7 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
     if (!requestedReportId) return;
     apiFetch(`/api/interns/me/weekly-reports/${requestedReportId}`)
       .then(jsonResponse)
-      .then((report) => setForm({ ...report, program_id: String(report.program_id), week_start: String(report.week_start).slice(0, 10) }))
+      .then((report) => setForm(formFromReport(report)))
       .catch((openError) => setError(openError.message));
   }, [requestedReportId]);
 
@@ -92,7 +106,7 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
   const openReport = (report) => {
     window.history.pushState(null, '', `/weekly-reports/${report.id}`);
     onReportOpened?.(report.id);
-    setForm({ ...report, program_id: String(report.program_id), week_start: String(report.week_start).slice(0, 10) });
+    setForm(formFromReport(report));
     setFile(null);
     setFormError('');
   };
@@ -127,12 +141,15 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
         body: JSON.stringify({ ...payload, program_id: Number(form.program_id), week_start: form.week_start }),
       }).then(jsonResponse);
     }
+    setForm(formFromReport(saved));
     if (file) {
       const upload = new FormData();
       upload.append('file', file);
       saved = await apiFetch(`/api/interns/me/weekly-reports/${saved.id}/attachment`, {
         method: 'POST', body: upload,
       }).then(jsonResponse);
+      setForm(formFromReport(saved));
+      setFile(null);
     }
     return saved;
   };
@@ -142,7 +159,7 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
     setFormError('');
     try {
       const saved = await persistDraft();
-      setForm({ ...saved, program_id: String(saved.program_id), week_start: String(saved.week_start).slice(0, 10) });
+      setForm(formFromReport(saved));
       setFile(null);
       onShowToast('Đã lưu bản nháp báo cáo tuần.');
       await load();
@@ -157,10 +174,11 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
   const submit = async () => {
     setBusy(true);
     setFormError('');
+    let saved;
     try {
-      const saved = await persistDraft();
+      saved = await persistDraft();
       const submitted = await apiFetch(`/api/interns/me/weekly-reports/${saved.id}/submit`, { method: 'POST' }).then(jsonResponse);
-      setForm({ ...submitted, program_id: String(submitted.program_id), week_start: String(submitted.week_start).slice(0, 10) });
+      setForm(formFromReport(submitted));
       setFile(null);
       setConfirmSubmit(false);
       onShowToast('Đã nộp báo cáo tuần thành công.');
@@ -168,6 +186,14 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
     } catch (submitError) {
       setConfirmSubmit(false);
       setFormError(submitError.message);
+      if (saved?.id) {
+        try {
+          const current = await apiFetch(`/api/interns/me/weekly-reports/${saved.id}`).then(jsonResponse);
+          setForm(formFromReport(current));
+        } catch {
+          // Keep the saved draft visible when its status cannot be refreshed.
+        }
+      }
       await load();
     } finally {
       setBusy(false);
@@ -230,7 +256,7 @@ export default function WeeklyReportsView({ requestedReportId, onReportOpened, o
           {formError && <div className="weekly-report-error">{formError}</div>}
           <div className="weekly-report-form-row">
             <label>Chương trình thực tập<span>*</span><CustomSelect value={form.program_id} disabled={Boolean(form.id)} onChange={(event) => setForm({ ...form, program_id: event.target.value })}><option value="">Chọn chương trình</option>{programs.map((program) => <option key={program.id} value={program.id}>{program.name}</option>)}</CustomSelect></label>
-            <label>Tuần báo cáo<span>*</span><input type="date" value={form.week_start} disabled={Boolean(form.id)} onChange={(event) => setForm({ ...form, week_start: event.target.value })} /></label>
+            <label>Tuần báo cáo (bắt đầu thứ Hai)<span>*</span><input type="date" value={form.week_start} disabled={Boolean(form.id)} onChange={(event) => setForm({ ...form, week_start: mondayForDateInput(event.target.value) })} /></label>
           </div>
           {selectedProgram && <small className="weekly-report-program-period">Thời gian chương trình: {formatDate(selectedProgram.start_date)} – {formatDate(selectedProgram.end_date)}</small>}
           <label>Nội dung công việc<span>*</span><textarea rows="5" maxLength="10000" readOnly={readOnly} value={form.work_content} onChange={(event) => setForm({ ...form, work_content: event.target.value })} /></label>
