@@ -105,12 +105,40 @@ export default function MentorEvaluationsView({ onShowToast }) {
   const [internFilter, setInternFilter] = useState('');
   const [programFilter, setProgramFilter] = useState('');
   const [periodFilter, setPeriodFilter] = useState('');
+  const [filterPrograms, setFilterPrograms] = useState([]);
+  const [filterProgramsLoading, setFilterProgramsLoading] = useState(false);
   const [form, setForm] = useState(null);
   const [programs, setPrograms] = useState([]);
   const [programLoading, setProgramLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState(null);
+
+  const loadRegisteredPrograms = useCallback(async (assignedInterns) => {
+    setFilterProgramsLoading(true);
+    try {
+      const details = await Promise.all(assignedInterns.map((intern) => (
+        apiFetch(`/api/mentors/me/interns/${intern.ma_ho_so}`).then(jsonResponse)
+      )));
+      const programsByIntern = [];
+      details.forEach((detail, index) => {
+        (detail.programs || []).forEach((program) => {
+          if (program.ma_chuong_trinh == null) return;
+          programsByIntern.push({
+            id: program.ma_chuong_trinh,
+            name: program.ten_ct,
+            profileId: assignedInterns[index].ma_ho_so,
+          });
+        });
+      });
+      setFilterPrograms(programsByIntern);
+    } catch (programError) {
+      setFilterPrograms([]);
+      setError(programError.message || 'Không thể tải danh sách chương trình TTS đã đăng ký.');
+    } finally {
+      setFilterProgramsLoading(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,14 +148,16 @@ export default function MentorEvaluationsView({ onShowToast }) {
         apiFetch('/api/mentor/me/evaluations').then(jsonResponse),
         apiFetch('/api/mentors/me/workspace').then(jsonResponse),
       ]);
+      const assignedInterns = workspace.interns || [];
       setEvaluations(rows);
-      setInterns(workspace.interns || []);
+      setInterns(assignedInterns);
+      await loadRegisteredPrograms(assignedInterns);
     } catch (loadError) {
       setError(loadError.message || 'Không thể tải dữ liệu đánh giá.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadRegisteredPrograms]);
 
   useEffect(() => {
     const timer = window.setTimeout(load, 0);
@@ -153,9 +183,18 @@ export default function MentorEvaluationsView({ onShowToast }) {
     return () => { active = false; };
   }, [form?.internship_profile_id, form?.id]);
 
-  const programsForFilter = useMemo(() => Array.from(new Map(
-    evaluations.map((item) => [String(item.program_id), { id: item.program_id, name: item.program_name }]),
-  ).values()), [evaluations]);
+  const programsForFilter = useMemo(() => {
+    const visiblePrograms = internFilter
+      ? filterPrograms.filter((program) => String(program.profileId) === internFilter)
+      : filterPrograms;
+    return Array.from(new Map(visiblePrograms.map((program) => [String(program.id), program])).values())
+      .sort((left, right) => left.name.localeCompare(right.name, 'vi'));
+  }, [filterPrograms, internFilter]);
+
+  const selectFilterIntern = (event) => {
+    setInternFilter(event.target.value);
+    setProgramFilter('');
+  };
 
   const filtered = evaluations.filter((item) => (
     (!internFilter || String(item.internship_profile_id) === internFilter)
@@ -262,11 +301,11 @@ export default function MentorEvaluationsView({ onShowToast }) {
     </header>
 
     <section className="workspace-card evaluation-filters" aria-label="Bộ lọc đánh giá">
-      <CustomSelect value={internFilter} onChange={(event) => setInternFilter(event.target.value)}>
+      <CustomSelect value={internFilter} onChange={selectFilterIntern}>
         <option value="">TTS: Tất cả</option>
         {interns.map((intern) => <option key={intern.ma_ho_so} value={intern.ma_ho_so}>{intern.ho_ten}</option>)}
       </CustomSelect>
-      <CustomSelect value={programFilter} onChange={(event) => setProgramFilter(event.target.value)}>
+      <CustomSelect value={programFilter} disabled={filterProgramsLoading} onChange={(event) => setProgramFilter(event.target.value)}>
         <option value="">Chương trình: Tất cả</option>
         {programsForFilter.map((program) => <option key={program.id} value={program.id}>{program.name}</option>)}
       </CustomSelect>
