@@ -329,6 +329,36 @@ def init_mysql_db():
                 FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
                 FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+                ma_danh_gia BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                ma_nguoi_dung_mentor INT NOT NULL,
+                ky_danh_gia ENUM('MIDTERM','FINAL') NOT NULL,
+                professional_skill_score TINYINT NOT NULL,
+                work_quality_score TINYINT NOT NULL,
+                initiative_score TINYINT NOT NULL,
+                communication_teamwork_score TINYINT NOT NULL,
+                attitude_discipline_score TINYINT NOT NULL,
+                overall_comment TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT chk_danh_gia_scores CHECK (
+                    professional_skill_score BETWEEN 1 AND 5
+                    AND work_quality_score BETWEEN 1 AND 5
+                    AND initiative_score BETWEEN 1 AND 5
+                    AND communication_teamwork_score BETWEEN 1 AND 5
+                    AND attitude_discipline_score BETWEEN 1 AND 5
+                ),
+                CONSTRAINT chk_danh_gia_comment CHECK (CHAR_LENGTH(overall_comment) BETWEEN 1 AND 10000),
+                UNIQUE KEY uq_danh_gia_context (ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+                KEY idx_danh_gia_mentor_time (ma_nguoi_dung_mentor, evaluated_at),
+                KEY idx_danh_gia_program_period (ma_chuong_trinh, ky_danh_gia, evaluated_at),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
                 ma_hop_dong BIGINT AUTO_INCREMENT PRIMARY KEY,
                 ma_ho_so INT NOT NULL,
@@ -759,6 +789,37 @@ def init_db():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+        ma_danh_gia INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        ky_danh_gia TEXT NOT NULL CHECK(ky_danh_gia IN ('MIDTERM', 'FINAL')),
+        professional_skill_score INTEGER NOT NULL CHECK(professional_skill_score BETWEEN 1 AND 5),
+        work_quality_score INTEGER NOT NULL CHECK(work_quality_score BETWEEN 1 AND 5),
+        initiative_score INTEGER NOT NULL CHECK(initiative_score BETWEEN 1 AND 5),
+        communication_teamwork_score INTEGER NOT NULL CHECK(communication_teamwork_score BETWEEN 1 AND 5),
+        attitude_discipline_score INTEGER NOT NULL CHECK(attitude_discipline_score BETWEEN 1 AND 5),
+        overall_comment TEXT NOT NULL CHECK(length(overall_comment) BETWEEN 1 AND 10000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_mentor_time
+        ON DANH_GIA_THUC_TAP(ma_nguoi_dung_mentor, evaluated_at)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_program_period
+        ON DANH_GIA_THUC_TAP(ma_chuong_trinh, ky_danh_gia, evaluated_at)
     """)
 
     # 6. Bảng Thông Báo

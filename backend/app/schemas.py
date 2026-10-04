@@ -1,5 +1,5 @@
 from datetime import date
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
 
 class UserLogin(BaseModel):
@@ -283,6 +283,57 @@ class WeeklyReportReview(BaseModel):
         if not comment:
             raise ValueError("Nhận xét không được chỉ chứa khoảng trắng.")
         return comment
+
+
+class InternEvaluationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    internship_profile_id: int = Field(gt=0)
+    program_id: int = Field(gt=0)
+    evaluation_period: Literal["MIDTERM", "FINAL"]
+    professional_skill_score: StrictInt = Field(ge=1, le=5)
+    work_quality_score: StrictInt = Field(ge=1, le=5)
+    initiative_score: StrictInt = Field(ge=1, le=5)
+    communication_teamwork_score: StrictInt = Field(ge=1, le=5)
+    attitude_discipline_score: StrictInt = Field(ge=1, le=5)
+    overall_comment: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("overall_comment")
+    @classmethod
+    def normalize_evaluation_comment(cls, value: str) -> str:
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét tổng kết không được chỉ chứa khoảng trắng.")
+        return comment
+
+
+class InternEvaluationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    professional_skill_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    work_quality_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    initiative_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    communication_teamwork_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    attitude_discipline_score: Optional[StrictInt] = Field(default=None, ge=1, le=5)
+    overall_comment: Optional[str] = Field(default=None, min_length=1, max_length=10000)
+
+    @field_validator("overall_comment")
+    @classmethod
+    def normalize_optional_evaluation_comment(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        comment = value.strip()
+        if not comment:
+            raise ValueError("Nhận xét tổng kết không được chỉ chứa khoảng trắng.")
+        return comment
+
+    @model_validator(mode="after")
+    def require_evaluation_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Cần cung cấp ít nhất một trường để cập nhật.")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Các trường cập nhật không được để trống.")
+        return self
 
 class ProgramCreate(BaseModel):
     ma_ct: str = Field(min_length=1, max_length=40)

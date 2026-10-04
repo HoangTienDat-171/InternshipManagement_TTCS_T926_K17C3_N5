@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import LoginView from './views/LoginView';
@@ -17,6 +17,9 @@ import MentorWeeklyReportsView from './views/MentorWeeklyReportsView';
 import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
+const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView'));
+const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
+
 function clearSavedSession() {
   try {
     localStorage.removeItem('ims_token');
@@ -31,6 +34,8 @@ function tabForPath(path) {
   if (path === '/schedule') return 'intern-schedule';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
+  if (path === '/evaluations') return 'evaluations';
+  if (path === '/my-evaluations') return 'my-evaluations';
   return 'interns';
 }
 
@@ -38,6 +43,8 @@ function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'tasks') return '/tasks';
   if (tab === 'weekly-reports') return '/weekly-reports';
+  if (tab === 'evaluations') return '/evaluations';
+  if (tab === 'my-evaluations') return '/my-evaluations';
   return '/';
 }
 
@@ -78,6 +85,8 @@ export default function App() {
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'evaluations' && currentUser.vai_tro !== 'Mentor')
+        || (activeTab === 'my-evaluations' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
@@ -519,6 +528,18 @@ export default function App() {
               onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
               onShowToast={showToast}
             />
+          )}
+
+          {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'evaluations' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở trang đánh giá…</div>}>
+              <MentorEvaluationsView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'my-evaluations' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở lịch sử đánh giá…</div>}>
+              <InternEvaluationsView />
+            </Suspense>
           )}
 
           {visibleActiveTab === 'profile' && (

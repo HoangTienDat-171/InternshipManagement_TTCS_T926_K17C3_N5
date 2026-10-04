@@ -3,6 +3,7 @@ import {
   UserCheck, 
   Calendar, 
   CalendarDays,
+  Award,
   FolderUp, 
   ShieldCheck, 
   Building2,
@@ -28,6 +29,8 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...((isMentor || isIntern) ? [{ id: 'tasks', label: isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
     ...((isIntern || isMentor) ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),
+    ...(isMentor ? [{ id: 'evaluations', label: 'Đánh giá thực tập sinh', icon: <ClipboardList size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'my-evaluations', label: 'Đánh giá của tôi', icon: <Award size={18} /> }] : []),
     ...(canManage ? [
     {
       id: 'interns',
