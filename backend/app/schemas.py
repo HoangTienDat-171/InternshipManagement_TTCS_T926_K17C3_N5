@@ -336,6 +336,24 @@ class InternEvaluationUpdate(BaseModel):
         return self
 
 
+class InternAttendanceCheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("note")
+    @classmethod
+    def normalize_attendance_note(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class InternAttendanceCheckOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 WorkShiftScope = Literal["GLOBAL", "PROGRAM"]
 WorkShiftStatus = Literal["ACTIVE", "INACTIVE"]
 

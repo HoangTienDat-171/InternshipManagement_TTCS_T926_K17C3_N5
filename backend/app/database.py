@@ -307,6 +307,27 @@ def init_mysql_db():
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
                 FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CHAM_CONG (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ca_lam_viec_id BIGINT NOT NULL,
+                attendance_date DATE NOT NULL,
+                check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                check_out_at DATETIME NULL,
+                status ENUM('CHECKED_IN','COMPLETED') NOT NULL DEFAULT 'CHECKED_IN',
+                note VARCHAR(1000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_cham_cong_state CHECK (
+                    (status = 'CHECKED_IN' AND check_out_at IS NULL)
+                    OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)
+                ),
+                UNIQUE KEY uq_cham_cong_profile_day_shift (ma_ho_so, attendance_date, ca_lam_viec_id),
+                KEY idx_cham_cong_profile_day (ma_ho_so, attendance_date, id),
+                KEY idx_cham_cong_shift (ca_lam_viec_id),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
                 ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
@@ -814,6 +835,29 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_filter ON CA_LAM_VIEC(status, scope_type, ma_chuong_trinh, effective_from)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_creator ON CA_LAM_VIEC(created_by)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CHAM_CONG (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ca_lam_viec_id INTEGER NOT NULL,
+        attendance_date DATE NOT NULL,
+        check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        check_out_at DATETIME,
+        status TEXT NOT NULL DEFAULT 'CHECKED_IN'
+            CHECK(status IN ('CHECKED_IN', 'COMPLETED')),
+        note TEXT CHECK(note IS NULL OR length(note) <= 1000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, attendance_date, ca_lam_viec_id),
+        CHECK((status = 'CHECKED_IN' AND check_out_at IS NULL)
+            OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_profile_day ON CHAM_CONG(ma_ho_so, attendance_date, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_shift ON CHAM_CONG(ca_lam_viec_id)")
 
     program_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CHUONG_TRINH_THUC_TAP)")}
     if "mo_ta_cong_viec" not in program_columns:

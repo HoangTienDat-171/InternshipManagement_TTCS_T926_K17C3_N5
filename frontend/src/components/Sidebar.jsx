@@ -13,6 +13,7 @@ import {
   ClipboardList,
   FileText,
   Clock3,
+  ClipboardCheck,
   LogOut,
   X
 } from 'lucide-react';
@@ -27,6 +28,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
   const navItems = [
     ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
     ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch thực tập', icon: <CalendarDays size={18} /> }] : []),
+    ...(isIntern ? [{ id: 'intern-attendance', label: 'Chấm công hôm nay', icon: <ClipboardCheck size={18} /> }] : []),
     ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
     ...((isMentor || isIntern) ? [{ id: 'tasks', label: isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
     ...((isIntern || isMentor) ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),

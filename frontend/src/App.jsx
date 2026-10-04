@@ -20,6 +20,7 @@ import { apiFetch } from './utils/api';
 const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView'));
 const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
 const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
+const AttendanceView = lazy(() => import('./views/AttendanceView'));
 
 function clearSavedSession() {
   try {
@@ -33,6 +34,7 @@ function clearSavedSession() {
 function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
+  if (path === '/attendance') return 'intern-attendance';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   if (path === '/evaluations') return 'evaluations';
@@ -43,6 +45,7 @@ function tabForPath(path) {
 
 function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
+  if (tab === 'intern-attendance') return '/attendance';
   if (tab === 'tasks') return '/tasks';
   if (tab === 'weekly-reports') return '/weekly-reports';
   if (tab === 'evaluations') return '/evaluations';
@@ -91,6 +94,7 @@ export default function App() {
         || (activeTab === 'evaluations' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'my-evaluations' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'intern-attendance' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
@@ -508,6 +512,12 @@ export default function App() {
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-schedule' && (
             <PersonalScheduleView />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-attendance' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở trang chấm công…</div>}>
+              <AttendanceView onShowToast={showToast} />
+            </Suspense>
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
