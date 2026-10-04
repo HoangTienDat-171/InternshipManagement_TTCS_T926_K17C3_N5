@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, GraduationCap, Users, KeyRound, ChevronDown, Bell, Menu, Moon, Sun } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({ 
@@ -9,7 +9,8 @@ export default function Navbar({
   onToggleSidebar,
   sidebarOpen = false,
   theme = 'light',
-  onToggleTheme
+  onToggleTheme,
+  onOpenNotificationReference
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -50,6 +51,20 @@ export default function Navbar({
     } catch (error) {
       setNotificationsError(error.message || 'Không thể cập nhật thông báo.');
     }
+  };
+
+  const openNotification = async (item) => {
+    if (!item.da_doc) await markNotificationRead(item.ma_thong_bao);
+    if (item.reference_type && item.reference_id) onOpenNotificationReference?.(item);
+    setNotificationsOpen(false);
+  };
+
+  const notificationMeta = (item) => {
+    if (item.loai === 'TASK_ASSIGNED') return { label: 'Nhiệm vụ', icon: <Briefcase size={15} /> };
+    if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
+    if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
+    if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
+    return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };
 
   const formatNotificationDate = (value) => {
@@ -107,19 +122,28 @@ export default function Navbar({
             {notificationsOpen && <>
               <button className="notification-dismiss" aria-label="Đóng thông báo" onClick={() => setNotificationsOpen(false)} />
               <section className="notification-panel" aria-label="Danh sách thông báo">
-                <div className="notification-panel-heading"><strong>Thông báo</strong><button type="button" onClick={loadNotifications}>Làm mới</button></div>
+                <div className="notification-panel-heading">
+                  <div><span className="notification-panel-icon"><BellRing size={18} /></span><div><strong>Thông báo</strong><small>{unreadCount ? `${unreadCount} thông báo chưa đọc` : 'Bạn đã xem tất cả thông báo'}</small></div></div>
+                  <button type="button" className="notification-refresh" onClick={loadNotifications} disabled={notificationsLoading}><RefreshCw size={14} className={notificationsLoading ? 'animate-spin' : ''} />Làm mới</button>
+                </div>
                 {notificationsError && <p className="notification-message notification-error">{notificationsError}</p>}
-                {notificationsLoading && notifications.length === 0 ? <p className="notification-message">Đang tải thông báo…</p> : notifications.length === 0 ? <p className="notification-message">Bạn chưa có thông báo.</p> : (
+                {notificationsLoading && notifications.length === 0 ? <p className="notification-message">Đang tải thông báo…</p> : notifications.length === 0 ? <div className="notification-empty"><span><Inbox size={22} /></span><strong>Chưa có thông báo</strong><small>Các cập nhật mới sẽ xuất hiện tại đây.</small></div> : (
                   <div className="notification-list">
-                    {notifications.map((item) => (
-                      <button type="button" key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`} onClick={() => item.da_doc ? null : markNotificationRead(item.ma_thong_bao)}>
-                        <span className="notification-item-title">{item.tieu_de}</span>
-                        <span>{item.noi_dung}</span>
-                        <small>{formatNotificationDate(item.thoi_gian_gui)}</small>
-                      </button>
-                    ))}
+                    {notifications.map((item) => {
+                      const meta = notificationMeta(item);
+                      const navigable = ['internship_task', 'weekly_report'].includes(item.reference_type) && item.reference_id;
+                      return <article key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`}>
+                        <button type="button" className="notification-item-main" onClick={() => openNotification(item)}>
+                          <span className="notification-type-icon">{meta.icon}</span>
+                          <span className="notification-item-copy"><span className="notification-item-topline"><strong>{item.tieu_de}</strong><em>{meta.label}</em></span><span>{item.noi_dung}</span><small>{formatNotificationDate(item.thoi_gian_gui)}</small></span>
+                          {navigable && <ExternalLink className="notification-reference-icon" size={14} aria-label="Mở chi tiết" />}
+                        </button>
+                        {!item.da_doc && <button type="button" className="notification-read-action" onClick={() => markNotificationRead(item.ma_thong_bao)}><Check size={13} />Đánh dấu đã đọc</button>}
+                      </article>;
+                    })}
                   </div>
                 )}
+                {notifications.length > 0 && <footer className="notification-panel-footer">Hiển thị {notifications.length} thông báo gần nhất</footer>}
               </section>
             </>}
           </div>

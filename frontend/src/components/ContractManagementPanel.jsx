@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Eye, FileText, UploadCloud } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import CustomSelect from './CustomSelect';
 
 const MAX_CONTRACT_SIZE = 15 * 1024 * 1024;
 const contractStatus = {
@@ -157,10 +158,10 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
         </button>
       </div>
 
-      <form className="contract-upload-form" onSubmit={uploadContract}>
+      <form className="contract-upload-form" noValidate onSubmit={uploadContract}>
         <label className="form-group">
           <span className="form-label">Thực tập sinh nhận hợp đồng</span>
-          <select className="form-select" value={selectedProfile} onChange={(event) => setSelectedProfile(event.target.value)} disabled={uploading} required>
+          <CustomSelect name="contract_profile" className="form-select" value={selectedProfile} onChange={(event) => setSelectedProfile(event.target.value)} disabled={uploading} required>
             <option value="">-- Chọn thực tập sinh --</option>
             {approvedInterns.map((intern) => (
               <option key={intern.ma_ho_so} value={intern.ma_ho_so}>
@@ -168,7 +169,7 @@ export default function ContractManagementPanel({ interns, onShowToast }) {
                 {contractsPerProfile[String(intern.ma_ho_so)] ? ` · ${contractsPerProfile[String(intern.ma_ho_so)]} hợp đồng đã gửi` : ''}
               </option>
             ))}
-          </select>
+          </CustomSelect>
         </label>
         <label className="contract-file-picker">
           <FileText size={18} />

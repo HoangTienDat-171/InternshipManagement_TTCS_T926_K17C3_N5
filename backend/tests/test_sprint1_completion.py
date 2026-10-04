@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 PYTHON = BACKEND / ".venv" / "Scripts" / "python.exe"
 PDF = b"%PDF-1.4\nSprint 1 API test\n%%EOF\n"
+DOC = bytes.fromhex("D0CF11E0A1B11AE1") + b"Sprint 1 legacy Word test"
 
 
 def free_port():
@@ -339,12 +340,16 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual((status_code, detail["email"]), (200, f"sprint1.{suffix}@test.invalid"))
         status_code, updated, _ = self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
             "ho_ten": "Sprint 1 CRUD Intern Updated", "email": f"sprint1.{suffix}@test.invalid",
-            "ma_phong_ban": 2, "ma_truong": 2, "chuyen_nganh": "Data Engineering",
-            "trang_thai_xet_duyet": "ChoDuyet", "trang_thai_thuc_tap": "DangThucTap",
+            "so_dien_thoai": "0912345678", "ma_phong_ban": 2,
+            "ma_truong": 2, "chuyen_nganh": "Data Engineering",
+            "trang_thai_thuc_tap": "DangThucTap",
         })
         self.assertEqual(status_code, 200, updated)
         status_code, detail, _ = self.json_request(f"/api/interns/{profile_id}", token=token)
-        self.assertEqual((status_code, detail["chuyen_nganh"], detail["ma_truong"]), (200, "Data Engineering", 2))
+        self.assertEqual(
+            (status_code, detail["so_dien_thoai"], detail["chuyen_nganh"], detail["ma_truong"]),
+            (200, "0912345678", "Data Engineering", 2),
+        )
 
         mentor_email = f"sprint1.mentor.{suffix}@test.invalid"
         status_code, mentor, _ = self.json_request("/api/mentors", "POST", token, {
@@ -388,12 +393,14 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
 
+        uploaded_documents = {}
         for kind, filename in (("CV", "resume.pdf"), ("DonXinThucTap", "application.pdf")):
             status_code, raw, _ = self.upload(token, filename, kind, PDF, other_profile)
             self.assertEqual(status_code, 201, raw)
             saved = json.loads(raw)
             self.assertEqual((saved["ma_ho_so"], saved["loai_tai_lieu"]), (own_profile, kind))
-        doc_id = saved["ma_tai_lieu"]
+            uploaded_documents[kind] = saved
+        doc_id = uploaded_documents["DonXinThucTap"]["ma_tai_lieu"]
 
         status_code, rows, _ = self.json_request("/api/interns/me/workspace", token=token)
         self.assertEqual(status_code, 200)
@@ -402,6 +409,8 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual((status_code, file_body, headers.get_content_type()), (200, PDF, "application/pdf"))
         another_tts, _ = self.login("lananh.hoang@internship.vn")
         status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=another_tts)
+        self.assertEqual(status_code, 404)
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}", "DELETE", another_tts)
         self.assertEqual(status_code, 404)
 
         tuan_token, _ = self.login("tuan.lm@internship.vn")
@@ -413,8 +422,31 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 400)
         status_code, _, _ = self.upload(tuan_token, "fake.pdf", "CV", b"not a PDF")
         self.assertEqual(status_code, 400)
-        status_code, _, _ = self.upload(tuan_token, "large.pdf", "CV", b"%PDF-" + b"x" * (15 * 1024 * 1024))
+        status_code, raw, _ = self.upload(tuan_token, "resume.doc", "CV", DOC)
+        self.assertEqual(status_code, 201, raw)
+        word_document_id = json.loads(raw)["ma_tai_lieu"]
+        status_code, _, _ = self.upload(tuan_token, "legacy.png", "CV", b"\x89PNG\r\n\x1a\n")
         self.assertEqual(status_code, 400)
+        status_code, _, _ = self.upload(tuan_token, "large.pdf", "CV", b"%PDF-" + b"x" * (5 * 1024 * 1024))
+        self.assertEqual(status_code, 400)
+
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, _, _ = self.request(f"/api/documents/{word_document_id}", "DELETE", admin_token)
+        self.assertEqual(status_code, 403)
+        db = sqlite3.connect(self.db_path)
+        try:
+            stored_path = db.execute(
+                "SELECT duong_dan_file FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu = ?", (doc_id,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        deleted_file = self.db_path.parent / "uploads" / "documents" / Path(stored_path).name
+        self.assertTrue(deleted_file.is_file())
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}", "DELETE", tuan_token)
+        self.assertEqual(status_code, 204)
+        self.assertFalse(deleted_file.exists())
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=tuan_token)
+        self.assertEqual(status_code, 404)
 
     def test_single_session_revokes_rest_and_pushes_logout_for_every_role(self):
         accounts = (
@@ -462,6 +494,20 @@ class Sprint1RuntimeTests(unittest.TestCase):
         })
         self.assertEqual(status_code, 403)
 
+        status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=tts_token)
+        self.assertEqual(status_code, 200)
+        profile = workspace["profile"]
+        status_code, _, _ = self.json_request(
+            f"/api/interns/{profile['ma_ho_so']}", "PUT", tts_token,
+            {
+                "ho_ten": profile["ho_ten"], "email": profile["email"],
+                "so_dien_thoai": "0912345678", "ma_phong_ban": None,
+                "ma_truong": profile["ma_truong"], "chuyen_nganh": "Unauthorized",
+                "trang_thai_thuc_tap": "DangThucTap",
+            },
+        )
+        self.assertEqual(status_code, 403)
+
     def test_us08_approval_email_outbox_and_notification_ownership(self):
         admin_token, _ = self.login("admin@internship.vn")
         suffix = str(time.time_ns())
@@ -492,20 +538,13 @@ class Sprint1RuntimeTests(unittest.TestCase):
 
         approved_user_id, approved_profile_id = profiles[approved_email]
         rejected_user_id, rejected_profile_id = profiles[rejected_email]
-        approved_data = {
-            "ho_ten": "US08 Approved", "email": approved_email, "ma_phong_ban": 1,
-            "ma_truong": 1, "chuyen_nganh": "QA", "trang_thai_xet_duyet": "DaDuyet",
-            "trang_thai_thuc_tap": "DangThucTap",
-        }
         status_code, _, _ = self.json_request(
-            f"/api/interns/{approved_profile_id}", "PUT", admin_token, approved_data,
+            f"/api/auth/users/{approved_user_id}/approve", "PUT", admin_token,
         )
         self.assertEqual(status_code, 200)
 
-        rejected_data = {**approved_data, "ho_ten": "US08 Rejected", "email": rejected_email,
-                         "trang_thai_xet_duyet": "TuChoi"}
         status_code, _, _ = self.json_request(
-            f"/api/interns/{rejected_profile_id}", "PUT", admin_token, rejected_data,
+            f"/api/auth/users/{rejected_user_id}/reject", "PUT", admin_token,
         )
         self.assertEqual(status_code, 200)
 
@@ -520,6 +559,19 @@ class Sprint1RuntimeTests(unittest.TestCase):
             rejected_email_status = db.execute(
                 "SELECT status FROM EMAIL_OUTBOX WHERE recipient_email=?", (rejected_email,),
             ).fetchone()[0]
+            db.execute("""
+                INSERT INTO THONG_BAO
+                    (ma_nguoi_dung, tieu_de, noi_dung, kenh, loai, reference_type, reference_id)
+                VALUES (?, 'Old mailbox message', 'Legacy message', 'App',
+                        'mailbox_message', 'internal_message', 'legacy-1')
+            """, (approved_user_id,))
+            # Restore the shared test password after the approval endpoint rotates
+            # real credentials, so ownership checks can authenticate this fixture.
+            db.execute(
+                "UPDATE NGUOI_DUNG SET mat_khau=?, must_change_password=0 WHERE ma_nguoi_dung=?",
+                (password_hash, approved_user_id),
+            )
+            db.commit()
         finally:
             db.close()
         self.assertEqual(rejected_email_status, "PENDING")
@@ -544,6 +596,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual(len(own_notifications), 1)
         self.assertNotIn("email_status", own_notifications[0])
+        self.assertEqual(own_notifications[0]["reference_type"], "intern_profile")
         status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
         self.assertEqual(status_code, 403)
         status_code, _, _ = self.json_request(
@@ -558,7 +611,7 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 404)
 
-    def test_us08_concurrent_profile_reviews_commit_only_one_result(self):
+    def test_intern_profile_update_rejects_approval_fields_and_dedicated_review_works(self):
         admin_token, _ = self.login("admin@internship.vn")
         hr_token, _ = self.login("hr@internship.vn")
         email = f"us08.concurrent.{time.time_ns()}@test.invalid"
@@ -583,19 +636,12 @@ class Sprint1RuntimeTests(unittest.TestCase):
         finally:
             db.close()
 
-        def review(decision, token):
-            return self.json_request(f"/api/interns/{profile_id}", "PUT", token, {
-                "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
-                "ma_truong": 1, "chuyen_nganh": "QA",
-                "trang_thai_xet_duyet": decision, "trang_thai_thuc_tap": "DangThucTap",
-            })
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            outcomes = list(executor.map(
-                lambda values: review(*values),
-                (("DaDuyet", admin_token), ("TuChoi", hr_token)),
-            ))
-        self.assertEqual(sorted(code for code, _, _ in outcomes), [200, 409])
+        status_code, _, _ = self.json_request(f"/api/interns/{profile_id}", "PUT", admin_token, {
+            "ho_ten": "US08 Concurrent", "email": email, "ma_phong_ban": 1,
+            "ma_truong": 1, "chuyen_nganh": "QA",
+            "trang_thai_xet_duyet": "DaDuyet", "trang_thai_thuc_tap": "DangThucTap",
+        })
+        self.assertEqual(status_code, 422)
 
         db = sqlite3.connect(self.db_path)
         try:
@@ -611,8 +657,30 @@ class Sprint1RuntimeTests(unittest.TestCase):
             ).fetchone()[0]
         finally:
             db.close()
-        self.assertIn(final_status, {"DaDuyet", "TuChoi"})
-        self.assertEqual((email_count, notification_count), (1, 1))
+        self.assertEqual(final_status, "ChoDuyet")
+        self.assertEqual((email_count, notification_count), (0, 0))
+
+        status_code, _, _ = self.json_request(
+            f"/api/auth/users/{user_id}/approve", "PUT", hr_token,
+        )
+        self.assertEqual(status_code, 200)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            retry_status = db.execute(
+                "SELECT trang_thai_xet_duyet FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_id,),
+            ).fetchone()[0]
+            retry_email_count = db.execute(
+                "SELECT COUNT(*) FROM EMAIL_OUTBOX WHERE deduplication_key LIKE ?",
+                (f"us08:intern_profile:{profile_id}:%",),
+            ).fetchone()[0]
+            retry_notification_count = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE ma_nguoi_dung=?", (user_id,),
+            ).fetchone()[0]
+        finally:
+            db.close()
+        self.assertEqual(retry_status, "DaDuyet")
+        self.assertEqual((retry_email_count, retry_notification_count), (1, 1))
 
     def test_us08_program_review_is_serialized_and_queues_complete_result_emails(self):
         admin_token, _ = self.login("admin@internship.vn")
@@ -1144,6 +1212,98 @@ class Sprint1RuntimeTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
+
+    def test_us14_personal_schedule_is_session_scoped_and_week_filtered(self):
+        suffix = str(time.time_ns())
+        intern_a = self.create_contract_intern(f"us14-a.{suffix}")
+        intern_b = self.create_contract_intern(f"us14-b.{suffix}")
+        empty_intern = self.create_contract_intern(f"us14-empty.{suffix}")
+        admin_token, admin = self.login("admin@internship.vn")
+        mentor = self.login("mentor@internship.vn")[1]
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            program_a = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US14 Backend Internship', 1, '2026-09-28', '2026-10-04', 2, 'DangMo')
+            """, (f"US14-A-{suffix}",)).lastrowid
+            program_b = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US14 Data Internship', 2, '2026-10-05', '2026-10-11', 2, 'DangMo')
+            """, (f"US14-B-{suffix}",)).lastrowid
+            for program_id, intern in ((program_a, intern_a), (program_b, intern_b)):
+                db.execute("""
+                    INSERT INTO UNG_TUYEN_CHUONG_TRINH
+                        (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet, nguoi_xet_duyet)
+                    VALUES (?, ?, 'DaDuyet', CURRENT_TIMESTAMP, ?)
+                """, (program_id, intern["profile_id"], admin["ma_nguoi_dung"]))
+            db.execute("""
+                INSERT INTO PHAN_CONG_MENTOR_TTS
+                    (ma_nguoi_dung_mentor, ma_ho_so, ma_nguoi_phan_cong)
+                VALUES (?, ?, ?)
+            """, (mentor["ma_nguoi_dung"], intern_a["profile_id"], admin["ma_nguoi_dung"]))
+            db.commit()
+        finally:
+            db.close()
+
+        intern_a_token, _ = self.login(intern_a["email"])
+        intern_b_token, _ = self.login(intern_b["email"])
+        mentor_token, _ = self.login("mentor@internship.vn")
+
+        status_code, _, _ = self.json_request("/api/interns/me/schedule")
+        self.assertEqual(status_code, 401)
+        status_code, _, _ = self.json_request("/api/interns/me/schedule", token=admin_token)
+        self.assertEqual(status_code, 403)
+        status_code, _, _ = self.json_request("/api/interns/me/schedule", token=mentor_token)
+        self.assertEqual(status_code, 403)
+
+        status_code, schedule, _ = self.json_request(
+            f"/api/interns/me/schedule?week_start=2026-09-30&student_id={intern_b['user_id']}&user_id={intern_b['user_id']}",
+            token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200, schedule)
+        self.assertEqual(schedule["week"], {"start_date": "2026-09-28", "end_date": "2026-10-04"})
+        self.assertEqual(len(schedule["events"]), 1)
+        event = schedule["events"][0]
+        self.assertEqual(event["type"], "PROGRAM_PERIOD")
+        self.assertEqual(event["status"], "APPROVED")
+        self.assertEqual((event["program"]["id"], event["program"]["name"]), (program_a, "US14 Backend Internship"))
+        self.assertEqual((event["start_date"], event["end_date"], event["all_day"]), ("2026-09-28", "2026-10-04", True))
+        self.assertEqual(event["mentor"]["name"], mentor["ho_ten"])
+        self.assertNotIn("terms", schedule["filters"])
+        self.assertNotIn("location", event)
+        self.assertNotIn("meeting_url", event)
+        self.assertNotIn("department", event)
+        self.assertNotIn("ma_nguoi_dung", event)
+        self.assertNotIn("ma_ho_so", event)
+
+        status_code, program_schedule, _ = self.json_request(
+            f"/api/interns/me/schedule?week_start=2026-09-28&program_id={program_a}",
+            token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(len(program_schedule["events"]), 1)
+
+        status_code, next_week, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-10-05", token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(next_week["events"], [])
+        status_code, other_schedule, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-10-05", token=intern_b_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(other_schedule["events"][0]["program"]["id"], program_b)
+        self.assertTrue(other_schedule["warning"])
+
+        status_code, empty_schedule, _ = self.json_request(
+            "/api/interns/me/schedule?week_start=2026-09-28", token=self.login(empty_intern["email"])[0],
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(empty_schedule["events"], [])
+        self.assertTrue(empty_schedule["warning"])
 
 if __name__ == "__main__":
     unittest.main()

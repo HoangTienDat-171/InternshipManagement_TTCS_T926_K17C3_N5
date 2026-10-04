@@ -196,26 +196,6 @@ def get_db_connection():
     return conn
 
 
-def _default_email_templates():
-    return [
-        ("MAU_DUYET_HO_SO", "Duyệt hồ sơ", "Hồ sơ thực tập của bạn đã được duyệt",
-         "<p>Xin chào {ten_tts},</p><p>Hồ sơ đăng ký chương trình <strong>{ten_chuong_trinh}</strong> của bạn đã được duyệt.</p>",
-         "KET_QUA_XET_DUYET"),
-        ("MAU_TU_CHOI_HO_SO", "Từ chối hồ sơ", "Kết quả xét duyệt hồ sơ thực tập",
-         "<p>Xin chào {ten_tts},</p><p>Hồ sơ đăng ký chương trình <strong>{ten_chuong_trinh}</strong> hiện chưa đáp ứng yêu cầu.</p>",
-         "KET_QUA_XET_DUYET"),
-        ("MAU_NHAC_BAO_CAO", "Nhắc nộp báo cáo", "Nhắc nộp báo cáo thực tập",
-         "<p>Xin chào {ten_tts},</p><p>Vui lòng hoàn thành báo cáo thực tập trước ngày {ngay_het_han}.</p>",
-         "THONG_BAO_CHUNG"),
-        ("MAU_BO_SUNG_HO_SO", "Bổ sung hồ sơ", "Yêu cầu bổ sung hồ sơ thực tập",
-         "<p>Xin chào {ten_tts},</p><p>Vui lòng kiểm tra và bổ sung các tài liệu còn thiếu trong hồ sơ.</p>",
-         "BO_SUNG_HO_SO"),
-        ("MAU_THONG_BAO_LICH", "Thông báo lịch", "Thông báo lịch thực tập",
-         "<p>Xin chào {ten_tts},</p><p>Lịch thực tập của chương trình {ten_chuong_trinh} bắt đầu từ {ngay_bat_dau} đến {ngay_ket_thuc}.</p>",
-         "THONG_BAO_CHUNG"),
-    ]
-
-
 def has_password_change_column(db) -> bool:
     """Return whether the configured schema supports forced first-login password changes."""
     if DATABASE_BACKEND == "mysql":
@@ -260,6 +240,40 @@ def init_mysql_db():
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
+                ma_nhiem_vu BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_nguoi_dung_mentor INT NOT NULL,
+                tieu_de VARCHAR(200) NOT NULL,
+                noi_dung TEXT NULL,
+                han_hoan_thanh DATE NOT NULL,
+                do_uu_tien ENUM('LOW','MEDIUM','HIGH','URGENT') NOT NULL DEFAULT 'MEDIUM',
+                trang_thai ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL DEFAULT 'TODO',
+                progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                progress_note VARCHAR(2000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_nhiem_vu_mentor (ma_nguoi_dung_mentor, created_at),
+                KEY idx_nhiem_vu_ho_so (ma_ho_so, created_at),
+                KEY idx_nhiem_vu_filters (trang_thai, do_uu_tien, han_hoan_thanh),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS LICH_SU_TIEN_DO_CONG_VIEC (
+                ma_lich_su BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_nhiem_vu BIGINT NOT NULL,
+                updated_by INT NOT NULL,
+                old_progress TINYINT UNSIGNED NOT NULL,
+                new_progress TINYINT UNSIGNED NOT NULL,
+                old_status ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL,
+                new_status ENUM('TODO','IN_PROGRESS','COMPLETED','CANCELLED') NOT NULL,
+                note VARCHAR(2000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_task_progress_history (ma_nhiem_vu, created_at, ma_lich_su),
+                KEY idx_task_progress_actor (updated_by),
+                FOREIGN KEY (ma_nhiem_vu) REFERENCES NHIEM_VU_THUC_TAP(ma_nhiem_vu) ON DELETE RESTRICT,
+                FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
                 ma_chuong_trinh INT AUTO_INCREMENT PRIMARY KEY, ma_ct VARCHAR(40) NOT NULL UNIQUE,
                 ten_ct VARCHAR(200) NOT NULL, ma_phong_ban INT NULL, ngay_bat_dau DATE NULL,
@@ -268,6 +282,51 @@ def init_mysql_db():
                 trang_thai ENUM('DangMo','TamDung','DaDong') NOT NULL DEFAULT 'DangMo',
                 ngay_tao DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                scope_type ENUM('GLOBAL','PROGRAM') NOT NULL,
+                ma_chuong_trinh INT NULL,
+                effective_from DATE NOT NULL,
+                effective_to DATE NULL,
+                status ENUM('ACTIVE','INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+                created_by INT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_ca_lam_viec_time CHECK (start_time < end_time),
+                CONSTRAINT chk_ca_lam_viec_dates CHECK (effective_to IS NULL OR effective_to >= effective_from),
+                CONSTRAINT chk_ca_lam_viec_scope CHECK (
+                    (scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+                    OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)
+                ),
+                KEY idx_ca_lam_viec_filter (status, scope_type, ma_chuong_trinh, effective_from),
+                KEY idx_ca_lam_viec_creator (created_by),
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS CHAM_CONG (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ca_lam_viec_id BIGINT NOT NULL,
+                attendance_date DATE NOT NULL,
+                check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                check_out_at DATETIME NULL,
+                status ENUM('CHECKED_IN','COMPLETED') NOT NULL DEFAULT 'CHECKED_IN',
+                note VARCHAR(1000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_cham_cong_state CHECK (
+                    (status = 'CHECKED_IN' AND check_out_at IS NULL)
+                    OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)
+                ),
+                UNIQUE KEY uq_cham_cong_profile_day_shift (ma_ho_so, attendance_date, ca_lam_viec_id),
+                KEY idx_cham_cong_profile_day (ma_ho_so, attendance_date, id),
+                KEY idx_cham_cong_shift (ca_lam_viec_id),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
@@ -278,6 +337,72 @@ def init_mysql_db():
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
                 FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
+                ma_bao_cao BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                week_start DATE NOT NULL,
+                week_end DATE NOT NULL,
+                work_content TEXT NOT NULL,
+                results TEXT NOT NULL,
+                difficulties TEXT NOT NULL,
+                trang_thai ENUM('DRAFT','SUBMITTED') NOT NULL DEFAULT 'DRAFT',
+                submitted_at DATETIME NULL,
+                attachment_storage_key VARCHAR(80) NULL UNIQUE,
+                attachment_original_name VARCHAR(255) NULL,
+                attachment_mime_type VARCHAR(127) NULL,
+                attachment_file_size BIGINT UNSIGNED NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_bao_cao_tuan_context (ma_ho_so, ma_chuong_trinh, week_start),
+                KEY idx_bao_cao_tuan_profile_status (ma_ho_so, trang_thai, week_start),
+                KEY idx_bao_cao_tuan_program (ma_chuong_trinh, week_start),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+                ma_nhan_xet BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_bao_cao BIGINT NOT NULL,
+                reviewed_by INT NOT NULL,
+                comment TEXT NOT NULL,
+                reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_nhan_xet_bao_cao (ma_bao_cao),
+                KEY idx_nhan_xet_mentor (reviewed_by, reviewed_at),
+                FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+                FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+                ma_danh_gia BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                ma_nguoi_dung_mentor INT NOT NULL,
+                ky_danh_gia ENUM('MIDTERM','FINAL') NOT NULL,
+                professional_skill_score TINYINT NOT NULL,
+                work_quality_score TINYINT NOT NULL,
+                initiative_score TINYINT NOT NULL,
+                communication_teamwork_score TINYINT NOT NULL,
+                attitude_discipline_score TINYINT NOT NULL,
+                overall_comment TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT chk_danh_gia_scores CHECK (
+                    professional_skill_score BETWEEN 1 AND 5
+                    AND work_quality_score BETWEEN 1 AND 5
+                    AND initiative_score BETWEEN 1 AND 5
+                    AND communication_teamwork_score BETWEEN 1 AND 5
+                    AND attitude_discipline_score BETWEEN 1 AND 5
+                ),
+                CONSTRAINT chk_danh_gia_comment CHECK (CHAR_LENGTH(overall_comment) BETWEEN 1 AND 10000),
+                UNIQUE KEY uq_danh_gia_context (ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+                KEY idx_danh_gia_mentor_time (ma_nguoi_dung_mentor, evaluated_at),
+                KEY idx_danh_gia_program_period (ma_chuong_trinh, ky_danh_gia, evaluated_at),
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+                FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS HOP_DONG_THUC_TAP (
                 ma_hop_dong BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -324,57 +449,43 @@ def init_mysql_db():
             """CREATE TABLE IF NOT EXISTS EMAIL_OUTBOX (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 recipient_email VARCHAR(254) NOT NULL, subject VARCHAR(255) NOT NULL,
-                body TEXT NOT NULL, template_type VARCHAR(80) NOT NULL,
+                body TEXT NOT NULL, body_html LONGTEXT NULL,
+                has_attachments TINYINT(1) NOT NULL DEFAULT 0,
+                template_type VARCHAR(80) NOT NULL,
                 reference_type VARCHAR(80), reference_id VARCHAR(100),
                 deduplication_key VARCHAR(190) NOT NULL UNIQUE,
+                dedup_hash VARCHAR(64) NULL,
                 status ENUM('PENDING','PROCESSING','SENT','FAILED','RETRY') NOT NULL DEFAULT 'PENDING',
                 retry_count INT NOT NULL DEFAULT 0, max_retry INT NOT NULL DEFAULT 4,
                 last_error TEXT, next_retry_at DATETIME NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 sent_at DATETIME NULL,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                KEY idx_email_outbox_due (status, next_retry_at, created_at)
+                KEY idx_email_outbox_due (status, next_retry_at, created_at),
+                KEY idx_email_dedup (recipient_email, dedup_hash, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
-            """CREATE TABLE IF NOT EXISTS EMAIL_TEMPLATES (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                template_code VARCHAR(100) NOT NULL UNIQUE,
-                title VARCHAR(255) NOT NULL, subject VARCHAR(255) NOT NULL,
-                body_html TEXT NOT NULL, category VARCHAR(50) NOT NULL,
-                is_active TINYINT(1) NOT NULL DEFAULT 1, created_by INT NULL,
+            """CREATE TABLE IF NOT EXISTS EMAIL_DEDUP_LOCKS (
+                recipient_email VARCHAR(254) NOT NULL,
+                dedup_hash VARCHAR(64) NOT NULL,
+                expires_at DATETIME NOT NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                deleted_at DATETIME NULL,
-                KEY idx_email_templates_active (is_active, category),
-                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+                last_outbox_id BIGINT NULL,
+                PRIMARY KEY (recipient_email, dedup_hash),
+                KEY idx_email_dedup_expires (expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
-            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_THREADS (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY, subject VARCHAR(255) NOT NULL,
-                created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
-            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGES (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY, thread_id BIGINT NOT NULL,
-                sender_id INT NULL, category VARCHAR(50) NOT NULL,
-                subject VARCHAR(255) NOT NULL, content_html TEXT NOT NULL,
-                parent_id BIGINT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                deleted_at DATETIME NULL,
-                KEY idx_internal_messages_thread (thread_id, created_at),
-                KEY idx_internal_messages_sender (sender_id, created_at),
-                FOREIGN KEY (thread_id) REFERENCES INTERNAL_MESSAGE_THREADS(id) ON DELETE RESTRICT,
-                FOREIGN KEY (sender_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
-                FOREIGN KEY (parent_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE SET NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
-            """CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_RECIPIENTS (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY, message_id BIGINT NOT NULL,
-                receiver_id INT NULL, is_read TINYINT(1) NOT NULL DEFAULT 0,
-                read_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_internal_message_receiver (message_id, receiver_id),
-                KEY idx_internal_recipient_inbox (receiver_id, is_read, created_at),
-                KEY idx_internal_recipient_message (message_id),
-                FOREIGN KEY (message_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE RESTRICT,
-                FOREIGN KEY (receiver_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            """CREATE TABLE IF NOT EXISTS EMAIL_ATTACHMENTS (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                email_id BIGINT NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                file_path VARCHAR(500) NOT NULL,
+                mime_type VARCHAR(127) NOT NULL,
+                file_size BIGINT UNSIGNED NOT NULL,
+                disposition ENUM('attachment', 'inline') NOT NULL DEFAULT 'attachment',
+                content_id VARCHAR(100) NULL,
+                checksum_sha256 CHAR(64) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_email_attachments_email_id (email_id, disposition),
+                CONSTRAINT fk_email_attachments_outbox FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
         ]
         for statement in statements:
@@ -404,6 +515,42 @@ def init_mysql_db():
             if name not in notification_column_names:
                 conn.execute(f"ALTER TABLE THONG_BAO ADD COLUMN {name} {definition}")
 
+        user_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NGUOI_DUNG'
+        """).fetchall()
+        user_column_names = {row["COLUMN_NAME"] for row in user_columns}
+        if "must_change_password" not in user_column_names:
+            conn.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER mat_khau")
+
+        outbox_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'EMAIL_OUTBOX'
+        """).fetchall()
+        outbox_column_names = {row["COLUMN_NAME"] for row in outbox_columns}
+        if "body_html" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN body_html LONGTEXT NULL AFTER body")
+        if "has_attachments" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN has_attachments TINYINT(1) NOT NULL DEFAULT 0 AFTER body_html")
+        if "dedup_hash" not in outbox_column_names:
+            conn.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN dedup_hash VARCHAR(64) NULL AFTER deduplication_key")
+
+        task_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NHIEM_VU_THUC_TAP'
+        """).fetchall()
+        task_column_names = {row["COLUMN_NAME"] for row in task_columns}
+        if "progress_percent" not in task_column_names:
+            conn.execute("""
+                ALTER TABLE NHIEM_VU_THUC_TAP
+                ADD COLUMN progress_percent TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER trang_thai
+            """)
+        if "progress_note" not in task_column_names:
+            conn.execute("""
+                ALTER TABLE NHIEM_VU_THUC_TAP
+                ADD COLUMN progress_note VARCHAR(2000) NULL AFTER progress_percent
+            """)
+
         if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
             conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
                 ("Trung tâm Công nghệ Thông tin", "Phát triển phần mềm, giải pháp Web/App, AI và Cloud"),
@@ -430,11 +577,6 @@ def init_mysql_db():
                    CASE WHEN trang_thai = 'ChoDuyet' THEN NULL ELSE 'DangThucTap' END
             FROM NGUOI_DUNG WHERE vai_tro = 'ThucTapSinh'
         """)
-        conn.executemany("""
-            INSERT IGNORE INTO EMAIL_TEMPLATES
-                (template_code, title, subject, body_html, category)
-            VALUES (?, ?, ?, ?, ?)
-        """, _default_email_templates())
         conn.commit()
     except Exception:
         conn.rollback()
@@ -484,6 +626,10 @@ def init_db():
         FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
     );
     """)
+
+    user_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NGUOI_DUNG)")}
+    if "must_change_password" not in user_columns:
+        cursor.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
     # One active opaque session per account. Tokens themselves are never stored.
     cursor.execute("""
@@ -558,6 +704,96 @@ def init_db():
     """)
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
+        ma_nhiem_vu INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        tieu_de TEXT NOT NULL CHECK(length(tieu_de) BETWEEN 1 AND 200),
+        noi_dung TEXT CHECK(noi_dung IS NULL OR length(noi_dung) <= 5000),
+        han_hoan_thanh TEXT NOT NULL,
+        do_uu_tien TEXT NOT NULL DEFAULT 'MEDIUM'
+            CHECK(do_uu_tien IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')),
+        trang_thai TEXT NOT NULL DEFAULT 'TODO'
+            CHECK(trang_thai IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        progress_percent INTEGER NOT NULL DEFAULT 0
+            CHECK(progress_percent BETWEEN 0 AND 100),
+        progress_note TEXT CHECK(progress_note IS NULL OR length(progress_note) <= 2000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_mentor ON NHIEM_VU_THUC_TAP(ma_nguoi_dung_mentor, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_ho_so ON NHIEM_VU_THUC_TAP(ma_ho_so, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhiem_vu_filters ON NHIEM_VU_THUC_TAP(trang_thai, do_uu_tien, han_hoan_thanh)")
+
+    task_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NHIEM_VU_THUC_TAP)")}
+    if "progress_percent" not in task_columns:
+        cursor.execute("ALTER TABLE NHIEM_VU_THUC_TAP ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0 CHECK(progress_percent BETWEEN 0 AND 100)")
+    if "progress_note" not in task_columns:
+        cursor.execute("ALTER TABLE NHIEM_VU_THUC_TAP ADD COLUMN progress_note TEXT CHECK(progress_note IS NULL OR length(progress_note) <= 2000)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_SU_TIEN_DO_CONG_VIEC (
+        ma_lich_su INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_nhiem_vu INTEGER NOT NULL,
+        updated_by INTEGER NOT NULL,
+        old_progress INTEGER NOT NULL CHECK(old_progress BETWEEN 0 AND 100),
+        new_progress INTEGER NOT NULL CHECK(new_progress BETWEEN 0 AND 100),
+        old_status TEXT NOT NULL CHECK(old_status IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        new_status TEXT NOT NULL CHECK(new_status IN ('TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+        note TEXT CHECK(note IS NULL OR length(note) <= 2000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_nhiem_vu) REFERENCES NHIEM_VU_THUC_TAP(ma_nhiem_vu) ON DELETE RESTRICT,
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_history ON LICH_SU_TIEN_DO_CONG_VIEC(ma_nhiem_vu, created_at, ma_lich_su)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_progress_actor ON LICH_SU_TIEN_DO_CONG_VIEC(updated_by)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
+        ma_bao_cao INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        week_start TEXT NOT NULL,
+        week_end TEXT NOT NULL,
+        work_content TEXT NOT NULL DEFAULT '' CHECK(length(work_content) <= 10000),
+        results TEXT NOT NULL DEFAULT '' CHECK(length(results) <= 10000),
+        difficulties TEXT NOT NULL DEFAULT '' CHECK(length(difficulties) <= 10000),
+        trang_thai TEXT NOT NULL DEFAULT 'DRAFT' CHECK(trang_thai IN ('DRAFT', 'SUBMITTED')),
+        submitted_at DATETIME,
+        attachment_storage_key TEXT UNIQUE,
+        attachment_original_name TEXT,
+        attachment_mime_type TEXT,
+        attachment_file_size INTEGER CHECK(attachment_file_size IS NULL OR attachment_file_size > 0),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh, week_start),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_profile_status ON BAO_CAO_TUAN(ma_ho_so, trang_thai, week_start)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bao_cao_tuan_program ON BAO_CAO_TUAN(ma_chuong_trinh, week_start)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS NHAN_XET_BAO_CAO_TUAN (
+        ma_nhan_xet INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_bao_cao INTEGER NOT NULL UNIQUE,
+        reviewed_by INTEGER NOT NULL,
+        comment TEXT NOT NULL CHECK(length(comment) BETWEEN 1 AND 10000),
+        reviewed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ma_bao_cao) REFERENCES BAO_CAO_TUAN(ma_bao_cao) ON DELETE RESTRICT,
+        FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_nhan_xet_mentor ON NHAN_XET_BAO_CAO_TUAN(reviewed_by, reviewed_at)")
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
         ma_chuong_trinh INTEGER PRIMARY KEY AUTOINCREMENT,
         ma_ct TEXT NOT NULL UNIQUE,
@@ -574,6 +810,54 @@ def init_db():
         FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE SET NULL
     )
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CA_LAM_VIEC (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        scope_type TEXT NOT NULL CHECK(scope_type IN ('GLOBAL', 'PROGRAM')),
+        ma_chuong_trinh INTEGER,
+        effective_from DATE NOT NULL,
+        effective_to DATE,
+        status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'INACTIVE')),
+        created_by INTEGER NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(start_time < end_time),
+        CHECK(effective_to IS NULL OR effective_to >= effective_from),
+        CHECK((scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL)
+            OR (scope_type = 'PROGRAM' AND ma_chuong_trinh IS NOT NULL)),
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_filter ON CA_LAM_VIEC(status, scope_type, ma_chuong_trinh, effective_from)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_creator ON CA_LAM_VIEC(created_by)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS CHAM_CONG (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ca_lam_viec_id INTEGER NOT NULL,
+        attendance_date DATE NOT NULL,
+        check_in_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        check_out_at DATETIME,
+        status TEXT NOT NULL DEFAULT 'CHECKED_IN'
+            CHECK(status IN ('CHECKED_IN', 'COMPLETED')),
+        note TEXT CHECK(note IS NULL OR length(note) <= 1000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, attendance_date, ca_lam_viec_id),
+        CHECK((status = 'CHECKED_IN' AND check_out_at IS NULL)
+            OR (status = 'COMPLETED' AND check_out_at IS NOT NULL)),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ca_lam_viec_id) REFERENCES CA_LAM_VIEC(id) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_profile_day ON CHAM_CONG(ma_ho_so, attendance_date, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cham_cong_shift ON CHAM_CONG(ca_lam_viec_id)")
 
     program_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CHUONG_TRINH_THUC_TAP)")}
     if "mo_ta_cong_viec" not in program_columns:
@@ -598,6 +882,37 @@ def init_db():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
+        ma_danh_gia INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER NOT NULL,
+        ky_danh_gia TEXT NOT NULL CHECK(ky_danh_gia IN ('MIDTERM', 'FINAL')),
+        professional_skill_score INTEGER NOT NULL CHECK(professional_skill_score BETWEEN 1 AND 5),
+        work_quality_score INTEGER NOT NULL CHECK(work_quality_score BETWEEN 1 AND 5),
+        initiative_score INTEGER NOT NULL CHECK(initiative_score BETWEEN 1 AND 5),
+        communication_teamwork_score INTEGER NOT NULL CHECK(communication_teamwork_score BETWEEN 1 AND 5),
+        attitude_discipline_score INTEGER NOT NULL CHECK(attitude_discipline_score BETWEEN 1 AND 5),
+        overall_comment TEXT NOT NULL CHECK(length(overall_comment) BETWEEN 1 AND 10000),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        evaluated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh, ky_danh_gia),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_mentor_time
+        ON DANH_GIA_THUC_TAP(ma_nguoi_dung_mentor, evaluated_at)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_danh_gia_program_period
+        ON DANH_GIA_THUC_TAP(ma_chuong_trinh, ky_danh_gia, evaluated_at)
     """)
 
     # 6. Bảng Thông Báo
@@ -723,75 +1038,46 @@ def init_db():
         ON EMAIL_OUTBOX(status, next_retry_at, created_at)
     """)
 
+    outbox_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(EMAIL_OUTBOX)")}
+    if "body_html" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN body_html TEXT")
+    if "has_attachments" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0")
+    if "dedup_hash" not in outbox_columns:
+        cursor.execute("ALTER TABLE EMAIL_OUTBOX ADD COLUMN dedup_hash TEXT")
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS EMAIL_TEMPLATES (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        template_code TEXT NOT NULL UNIQUE,
-        title TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        body_html TEXT NOT NULL,
-        category TEXT NOT NULL,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_by INTEGER,
+        CREATE INDEX IF NOT EXISTS idx_email_dedup
+        ON EMAIL_OUTBOX(recipient_email, dedup_hash, created_at)
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS EMAIL_DEDUP_LOCKS (
+        recipient_email TEXT NOT NULL,
+        dedup_hash TEXT NOT NULL,
+        expires_at DATETIME NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        deleted_at DATETIME,
-        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
-    )
+        last_outbox_id INTEGER,
+        PRIMARY KEY (recipient_email, dedup_hash)
+    );
     """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_dedup_expires ON EMAIL_DEDUP_LOCKS(expires_at);")
+
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_email_templates_active
-        ON EMAIL_TEMPLATES(is_active, category)
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_THREADS (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject TEXT NOT NULL,
-        created_by INTEGER,
+    CREATE TABLE IF NOT EXISTS EMAIL_ATTACHMENTS (
+        id TEXT PRIMARY KEY,
+        email_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL CHECK(file_size > 0 AND file_size <= 10485760),
+        disposition TEXT NOT NULL DEFAULT 'attachment' CHECK(disposition IN ('attachment', 'inline')),
+        content_id TEXT,
+        checksum_sha256 TEXT,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
-    )
+        FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
+    );
     """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGES (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        thread_id INTEGER NOT NULL,
-        sender_id INTEGER,
-        category TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        content_html TEXT NOT NULL,
-        parent_id INTEGER,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        deleted_at DATETIME,
-        FOREIGN KEY (thread_id) REFERENCES INTERNAL_MESSAGE_THREADS(id) ON DELETE RESTRICT,
-        FOREIGN KEY (sender_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
-        FOREIGN KEY (parent_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE SET NULL
-    )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_messages_thread ON INTERNAL_MESSAGES(thread_id, created_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_messages_sender ON INTERNAL_MESSAGES(sender_id, created_at)")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS INTERNAL_MESSAGE_RECIPIENTS (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id INTEGER NOT NULL,
-        receiver_id INTEGER,
-        is_read INTEGER NOT NULL DEFAULT 0,
-        read_at DATETIME,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(message_id, receiver_id),
-        FOREIGN KEY (message_id) REFERENCES INTERNAL_MESSAGES(id) ON DELETE RESTRICT,
-        FOREIGN KEY (receiver_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
-    )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_recipient_inbox ON INTERNAL_MESSAGE_RECIPIENTS(receiver_id, is_read, created_at)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_internal_recipient_message ON INTERNAL_MESSAGE_RECIPIENTS(message_id)")
-    cursor.executemany("""
-        INSERT OR IGNORE INTO EMAIL_TEMPLATES
-            (template_code, title, subject, body_html, category)
-        VALUES (?, ?, ?, ?, ?)
-    """, _default_email_templates())
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_attachments_email_id ON EMAIL_ATTACHMENTS(email_id, disposition);")
 
     # Giai đoạn 3: Cơ chế phòng thủ tầng ứng dụng (Application Layer Defense)
     # 7. Bảng theo dõi số lần đăng nhập sai chống Brute-force & Account Lockout
@@ -933,6 +1219,59 @@ def init_db():
                     (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
                 VALUES (?, ?, ?, ?, ?)
             """, (demo_user[0], university_id, major, approval, internship_status))
+
+    cursor.execute("SELECT COUNT(*) FROM CHUONG_TRINH_THUC_TAP")
+    if not os.getenv("IMS_SQLITE_PATH") and cursor.fetchone()[0] == 0:
+        cursor.executemany("""
+            INSERT INTO CHUONG_TRINH_THUC_TAP
+                (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, mo_ta_cong_viec, yeu_cau, quyen_loi, trang_thai)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DangMo')
+        """, [
+            (
+                "TTS-BE-2026",
+                "Thực tập sinh Backend Developer (Python/FastAPI)",
+                1,
+                "2026-10-15",
+                "2026-12-30",
+                5,
+                "Tham gia phát triển các dịch vụ backend, thiết kế RESTful API và tối ưu hóa truy vấn cơ sở dữ liệu MySQL. Trực tiếp tham gia dự án thực tế cùng các kỹ sư cao cấp.",
+                "Sinh viên năm 3, 4 hoặc mới tốt nghiệp chuyên ngành CNTT/KTPM. Nắm vững lập trình Python, cơ bản về FastAPI/Django/Flask và cơ sở dữ liệu SQL.",
+                "Trợ cấp thực tập hấp dẫn, được cấp máy tính làm việc, hướng dẫn 1-1 bởi Senior Mentor, cơ hội trở thành nhân viên chính thức sau kỳ thực tập."
+            ),
+            (
+                "TTS-FE-2026",
+                "Thực tập sinh Frontend Developer (React/Vite)",
+                1,
+                "2026-10-15",
+                "2026-12-30",
+                4,
+                "Xây dựng giao diện ứng dụng web hiện đại, tối ưu trải nghiệm người dùng (UX/UI) và tương tác với các RESTful API.",
+                "Có kiến thức vững về HTML5, CSS3, JavaScript/TypeScript. Đã từng thực hành với ReactJS, hiểu về state management và responsive web design.",
+                "Được đào tạo bài bản quy trình Agile/Scrum, phụ cấp hàng tháng, môi trường làm việc trẻ trung năng động."
+            ),
+            (
+                "TTS-AI-2026",
+                "Thực tập sinh Trí tuệ Nhân tạo & Khoa học Dữ liệu (AI/Data)",
+                3,
+                "2026-11-01",
+                "2026-12-31",
+                3,
+                "Nghiên cứu ứng dụng các mô hình Machine Learning, LLM và xử lý dữ liệu lớn phục vụ bài toán nội bộ doanh nghiệp.",
+                "Nắm vững toán học/xác suất thống kê, thành thạo Python, pandas, scikit-learn hoặc PyTorch/TensorFlow.",
+                "Làm việc với hạ tầng GPU hiện đại, tài trợ chi phí thi chứng chỉ quốc tế, cơ hội xuất bản báo cáo khoa học."
+            ),
+            (
+                "TTS-SEC-2026",
+                "Thực tập sinh An toàn Thông tin & An ninh mạng",
+                2,
+                "2026-10-20",
+                "2026-12-15",
+                3,
+                "Tham gia đánh giá an toàn ứng dụng, dò quét lỗ hổng bảo mật web/hệ thống và hỗ trợ rà soát tuân thủ tiêu chuẩn an ninh thông tin.",
+                "Có kiến thức về mạng máy tính, hệ điều hành Linux, hiểu biết về OWASP Top 10 và các công cụ pentest cơ bản.",
+                "Hướng dẫn bởi chuyên gia bảo mật hàng đầu, trải nghiệm các kịch bản diễn tập phòng thủ thực chiến."
+            )
+        ])
 
     conn.commit()
     conn.close()

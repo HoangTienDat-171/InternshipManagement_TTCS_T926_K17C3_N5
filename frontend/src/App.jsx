@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import LoginView from './views/LoginView';
@@ -10,9 +10,17 @@ import AccountManagementView from './views/AccountManagementView';
 import AccountProfileView from './views/AccountProfileView';
 import InternWorkspaceView from './views/InternWorkspaceView';
 import MentorWorkspaceView from './views/MentorWorkspaceView';
-import MailboxView from './views/MailboxView';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import PersonalScheduleView from './views/PersonalScheduleView';
+import InternshipTasksView from './views/InternshipTasksView';
+import WeeklyReportsView from './views/WeeklyReportsView';
+import MentorWeeklyReportsView from './views/MentorWeeklyReportsView';
+import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
+
+const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView'));
+const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
+const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
+const AttendanceView = lazy(() => import('./views/AttendanceView'));
 
 function clearSavedSession() {
   try {
@@ -23,14 +31,37 @@ function clearSavedSession() {
   }
 }
 
+function tabForPath(path) {
+  if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
+  if (path === '/schedule') return 'intern-schedule';
+  if (path === '/attendance') return 'intern-attendance';
+  if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
+  if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
+  if (path === '/evaluations') return 'evaluations';
+  if (path === '/my-evaluations') return 'my-evaluations';
+  if (path === '/work-shifts') return 'work-shifts';
+  return 'interns';
+}
+
+function pathForTab(tab) {
+  if (tab === 'intern-schedule') return '/schedule';
+  if (tab === 'intern-attendance') return '/attendance';
+  if (tab === 'tasks') return '/tasks';
+  if (tab === 'weekly-reports') return '/weekly-reports';
+  if (tab === 'evaluations') return '/evaluations';
+  if (tab === 'my-evaluations') return '/my-evaluations';
+  if (tab === 'work-shifts') return '/work-shifts';
+  return '/';
+}
+
 export default function App() {
   const initialContractPath = window.location.pathname.match(/^\/contracts\/(\d+)$/)?.[0];
   const pendingContractPath = new URLSearchParams(window.location.search).get('next')?.match(/^\/contracts\/\d+$/)?.[0];
   const requestedContractPath = initialContractPath || pendingContractPath;
   const requestedContractId = requestedContractPath?.match(/^\/contracts\/(\d+)$/)?.[1] || null;
-  const [activeTab, setActiveTab] = useState(() => requestedContractPath
-    ? 'contract-link'
-    : window.location.pathname === '/mailbox' ? 'mailbox' : 'interns');
+  const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
+  const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
+  const [requestedWeeklyReportId, setRequestedWeeklyReportId] = useState(() => window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -56,8 +87,16 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'evaluations' && currentUser.vai_tro !== 'Mentor')
+        || (activeTab === 'my-evaluations' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'intern-schedule' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'intern-attendance' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
+        || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
       )
         ? personalWorkspace
@@ -291,24 +330,52 @@ export default function App() {
 
   const navigateToTab = (tab) => {
     if (passwordChangeRequired) return;
-    const nextPath = tab === 'mailbox' ? '/mailbox' : '/';
+    const nextPath = pathForTab(tab);
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
+    setRequestedTaskId(null);
+    setRequestedWeeklyReportId(null);
     setActiveTab(tab);
+  };
+
+  const openNotificationReference = (notification) => {
+    if (!notification.reference_id) return;
+    if (notification.reference_type === 'internship_task') {
+      const taskId = String(notification.reference_id);
+      window.history.pushState(null, '', `/tasks/${taskId}`);
+      setRequestedTaskId(taskId);
+      setActiveTab('tasks');
+    } else if (notification.reference_type === 'weekly_report') {
+      const reportId = String(notification.reference_id);
+      window.history.pushState(null, '', `/weekly-reports/${reportId}`);
+      setRequestedWeeklyReportId(reportId);
+      setActiveTab('weekly-reports');
+    }
   };
 
   useEffect(() => {
     const syncTabWithPath = () => {
       if (window.location.pathname === '/mailbox') {
-        setActiveTab('mailbox');
-      } else if (/^\/contracts\/\d+$/.test(window.location.pathname)) {
-        setActiveTab('contract-link');
+        window.history.replaceState(null, '', '/');
+        setActiveTab('interns');
       } else {
-        setActiveTab((current) => current === 'mailbox' || current === 'contract-link' ? 'interns' : current);
+        setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
+        setRequestedWeeklyReportId(window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
+        setActiveTab(tabForPath(window.location.pathname));
       }
     };
+    syncTabWithPath();
     window.addEventListener('popstate', syncTabWithPath);
     return () => window.removeEventListener('popstate', syncTabWithPath);
   }, []);
+
+  useEffect(() => {
+    if (!currentUser || passwordChangeRequired || visibleActiveTab === activeTab) return;
+    if (!requestedContractPath) window.history.replaceState(null, '', pathForTab(visibleActiveTab));
+  }, [activeTab, currentUser, passwordChangeRequired, requestedContractPath, visibleActiveTab]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId]);
 
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
@@ -330,7 +397,7 @@ export default function App() {
   if (passwordChangeRequired) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--app-bg, #f8fafc)' }}>
-        {toast && <div role="status" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: toast.type === 'success' ? '#0f766e' : '#b91c1c', color: 'white', padding: '12px 18px', borderRadius: 10, boxShadow: '0 8px 20px rgba(0,0,0,0.15)' }}>{toast.message}</div>}
+        {toast && <Toast {...toast} onClose={() => setToast(null)} />}
         <header style={{ minHeight: 68, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'var(--surface, #fff)', borderBottom: '1px solid var(--border-color, #e2e8f0)' }}>
           <strong>IMS PORTAL · Đổi mật khẩu lần đầu</strong>
           <button type="button" className="btn btn-secondary" onClick={handleLogout}>Đăng xuất</button>
@@ -353,28 +420,7 @@ export default function App() {
   return (
     <div className={`app-layout${desktopSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
       {/* Toast Notification */}
-      {toast && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          zIndex: 9999,
-          background: toast.type === 'success' ? '#0f766e' : '#b91c1c',
-          color: 'white',
-          padding: '12px 18px',
-          borderRadius: '10px',
-          boxShadow: '0 8px 20px rgba(0,0,0,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '13px',
-          fontWeight: 600,
-          animation: 'modalIn 0.2s ease-out'
-        }}>
-          {toast.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-          <span>{toast.message}</span>
-        </div>
-      )}
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
       {/* Sidebar */}
       <Sidebar 
@@ -406,6 +452,7 @@ export default function App() {
           sidebarOpen={window.innerWidth <= 1000 ? sidebarOpen : !desktopSidebarCollapsed}
           theme={theme}
           onToggleTheme={() => setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')}
+          onOpenNotificationReference={openNotificationReference}
         />
 
         <main className="content-wrapper">
@@ -440,6 +487,12 @@ export default function App() {
             />
           )}
 
+          {canManageRecords && visibleActiveTab === 'work-shifts' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở cấu hình ca làm việc…</div>}>
+              <WorkShiftManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
           {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
             <AccountManagementView
               departments={departments}
@@ -457,8 +510,55 @@ export default function App() {
             />
           )}
 
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-schedule' && (
+            <PersonalScheduleView />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-attendance' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở trang chấm công…</div>}>
+              <AttendanceView onShowToast={showToast} />
+            </Suspense>
+          )}
+
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (
             <MentorWorkspaceView currentUser={currentUser} />
+          )}
+
+          {['Mentor', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'tasks' && (
+            <InternshipTasksView
+              currentUser={currentUser}
+              onShowToast={showToast}
+              requestedTaskId={requestedTaskId}
+              onTaskOpened={(taskId) => setRequestedTaskId(String(taskId))}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'weekly-reports' && (
+            <WeeklyReportsView
+              requestedReportId={requestedWeeklyReportId}
+              onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
+              onShowToast={showToast}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'weekly-reports' && (
+            <MentorWeeklyReportsView
+              requestedReportId={requestedWeeklyReportId}
+              onReportOpened={(reportId) => setRequestedWeeklyReportId(String(reportId))}
+              onShowToast={showToast}
+            />
+          )}
+
+          {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'evaluations' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở trang đánh giá…</div>}>
+              <MentorEvaluationsView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'my-evaluations' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở lịch sử đánh giá…</div>}>
+              <InternEvaluationsView />
+            </Suspense>
           )}
 
           {visibleActiveTab === 'profile' && (
@@ -469,10 +569,6 @@ export default function App() {
               onUserUpdated={handleUserUpdated}
               onShowToast={showToast}
             />
-          )}
-
-          {visibleActiveTab === 'mailbox' && (
-            <MailboxView currentUser={currentUser} onShowToast={showToast} />
           )}
 
         </main>

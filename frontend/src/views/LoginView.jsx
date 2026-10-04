@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight, UploadCloud, FileText } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight, ArrowLeft, KeyRound, UploadCloud, FileText } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
@@ -20,10 +20,18 @@ async function readApiResponse(response) {
   }
 
   if (!response.ok) {
+    const message = typeof data.detail === 'string'
+      ? data.detail
+      : Array.isArray(data.detail)
+        ? data.detail.map((e) => e.msg || e.detail).join('; ')
+        : (data.detail?.message || null);
+    if (message) {
+      throw new Error(message);
+    }
     if (response.status >= 500) {
       throw new Error('Máy chủ đăng nhập không khả dụng. Hãy kiểm tra backend FastAPI tại cổng 8000.');
     }
-    throw new Error(data.detail || 'Không thể xử lý yêu cầu. Vui lòng thử lại.');
+    throw new Error('Không thể xử lý yêu cầu. Vui lòng thử lại.');
   }
 
   return data;
@@ -46,6 +54,12 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Forgot Password State
+  const [isForgotMode, setIsForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSuccessMsg, setForgotSuccessMsg] = useState('');
+
   // Register Form State
   const [regForm, setRegForm] = useState({
     ho_ten: '',
@@ -58,8 +72,16 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg('');
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+      setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ.');
+      return;
+    }
+    if (!password) {
+      setErrorMsg('Vui lòng nhập mật khẩu.');
+      return;
+    }
+    setLoading(true);
 
     try {
       const res = await apiFetch('/api/auth/login', {
@@ -89,9 +111,18 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
-    setRegLoading(true);
     setErrorMsg('');
     setRegSuccessMsg('');
+
+    if (!regForm.ho_ten.trim()) {
+      setErrorMsg('Vui lòng nhập họ và tên.');
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(regForm.email.trim())) {
+      setErrorMsg('Vui lòng nhập email sinh viên hợp lệ.');
+      return;
+    }
+    setRegLoading(true);
 
     if (regForm.so_dien_thoai && !isValidVietnamPhone(regForm.so_dien_thoai)) {
       setErrorMsg('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.');
@@ -118,7 +149,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
       const data = await readApiResponse(res);
 
-      setRegSuccessMsg(data.message || 'Đăng ký thành công. Mật khẩu tạm được gửi qua email; tài khoản sẽ đăng nhập sau khi được duyệt.');
+      setRegSuccessMsg(data.message || 'Đăng ký thành công! Hồ sơ đang chờ xét duyệt. Mật khẩu đăng nhập sẽ được gửi qua email sau khi hồ sơ được duyệt.');
       setEmail(regForm.email);
       setPassword('');
       setRegCv(null);
@@ -136,10 +167,67 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
     setErrorMsg('');
   };
 
-  const toggleAuthMode = () => {
-    setIsRegisterMode((mode) => !mode);
+  const openForgotMode = () => {
+    setIsForgotMode(true);
+    setIsRegisterMode(false);
+    setForgotEmail(email);
     setErrorMsg('');
     setRegSuccessMsg('');
+    setForgotSuccessMsg('');
+  };
+
+  const backToLogin = () => {
+    setIsForgotMode(false);
+    setIsRegisterMode(false);
+    setErrorMsg('');
+    setRegSuccessMsg('');
+    setForgotSuccessMsg('');
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    setForgotLoading(true);
+    setErrorMsg('');
+    setForgotSuccessMsg('');
+
+    const targetEmail = (forgotEmail || email).trim();
+    if (!targetEmail) {
+      setErrorMsg('Vui lòng nhập địa chỉ email.');
+      setForgotLoading(false);
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(targetEmail)) {
+      setErrorMsg('Vui lòng nhập địa chỉ email hợp lệ.');
+      setForgotLoading(false);
+      return;
+    }
+
+    try {
+      const res = await apiFetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ email: targetEmail }),
+      });
+
+      const data = await readApiResponse(res);
+      setForgotSuccessMsg(data.message || 'Mật khẩu tạm thời mới đã được gửi về email của bạn.');
+      setEmail(targetEmail);
+    } catch (err) {
+      setErrorMsg(getRequestError(err));
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const toggleAuthMode = () => {
+    setIsRegisterMode((mode) => !mode);
+    setIsForgotMode(false);
+    setErrorMsg('');
+    setRegSuccessMsg('');
+    setForgotSuccessMsg('');
   };
 
   return (
@@ -166,12 +254,16 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           <div className="auth-brand-name">IMS PORTAL</div>
           <h1>Hệ thống Quản lý Thực tập sinh</h1>
           <p style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>
-            {isRegisterMode ? 'Đăng ký tài khoản Thực tập sinh' : 'Đăng nhập để vào hệ thống làm việc'}
+            {isForgotMode
+              ? 'Khôi phục quyền truy cập vào tài khoản của bạn'
+              : isRegisterMode
+                ? 'Đăng ký tài khoản Thực tập sinh'
+                : 'Đăng nhập để vào hệ thống làm việc'}
           </p>
         </div>
 
         {/* Thông báo lỗi / thành công */}
-        {sessionNotice && (
+        {!isForgotMode && !isRegisterMode && sessionNotice && (
           <div className="alert-banner error auth-alert" role="alert">
             <AlertCircle size={16} style={{ flexShrink: 0 }} />
             <span style={{ fontSize: '13px' }}>{sessionNotice}</span>
@@ -191,9 +283,72 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           </div>
         )}
 
-        {/* Form Đăng nhập */}
-        {!isRegisterMode ? (
-          <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {forgotSuccessMsg && (
+          <div className="alert-banner success auth-alert" role="status">
+            <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: '13px' }}>{forgotSuccessMsg}</span>
+          </div>
+        )}
+
+        {/* Form Đăng nhập & Quên mật khẩu */}
+        {isForgotMode ? (
+          <form noValidate onSubmit={handleForgotSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{
+              background: '#eff6ff',
+              padding: '12px 14px',
+              borderRadius: '10px',
+              border: '1px solid #bfdbfe',
+              fontSize: '13px',
+              color: '#1e40af',
+              lineHeight: 1.5
+            }}>
+              Nhập địa chỉ email của bạn. Hệ thống sẽ tạo mật khẩu tạm thời 8 ký tự và gửi qua email để bạn đăng nhập và đổi mật khẩu mới.
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" style={{ fontSize: '13px' }}>
+                Địa chỉ Email
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="email"
+                  className="form-control"
+                  placeholder="admin@internship.vn"
+                  required
+                  value={forgotEmail || email}
+                  onChange={(e) => {
+                    setForgotEmail(e.target.value);
+                    setEmail(e.target.value);
+                  }}
+                  autoComplete="email"
+                  style={{ paddingRight: '38px' }}
+                />
+                <Mail size={16} color="#94a3b8" style={{ position: 'absolute', right: '12px', top: '12px' }} />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '11px', fontSize: '14px', marginTop: '4px' }}
+              disabled={forgotLoading}
+            >
+              <KeyRound size={15} />
+              <span>{forgotLoading ? 'Đang gửi yêu cầu...' : 'Gửi mật khẩu mới'}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', padding: '10px', fontSize: '13px' }}
+              onClick={backToLogin}
+            >
+              <ArrowLeft size={15} />
+              <span>Quay lại đăng nhập</span>
+            </button>
+          </form>
+        ) : !isRegisterMode ? (
+          <form noValidate onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="form-group">
               <label className="form-label" style={{ fontSize: '13px' }}>
                 Email
@@ -218,6 +373,21 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
                 <label className="form-label" style={{ fontSize: '13px' }}>
                   Mật khẩu
                 </label>
+                <button
+                  type="button"
+                  onClick={openForgotMode}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#4f46d8',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontWeight: 600,
+                  }}
+                >
+                  Quên mật khẩu?
+                </button>
               </div>
               <div style={{ position: 'relative' }}>
                 <input
@@ -262,7 +432,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           </form>
         ) : (
           /* Form Đăng ký tài khoản (Mặc định là Thực tập sinh) */
-          <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <form noValidate onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div className="form-group">
               <label className="form-label" style={{ fontSize: '13px' }}>Họ và tên</label>
               <input
@@ -309,7 +479,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             }} className="auth-account-note">
               <div><strong>Vai trò:</strong> Thực tập sinh (Mặc định)</div>
               <div style={{ marginTop: '2px', color: '#64748b' }}>
-                Mật khẩu tạm được gửi tới email. Sau khi được duyệt và đăng nhập, bạn sẽ đổi mật khẩu trước khi tiếp tục.
+                Hồ sơ sẽ được gửi duyệt. Sau khi được duyệt, mật khẩu đăng nhập sẽ được gửi về email để bạn đăng nhập và đổi mật khẩu mới.
               </div>
             </div>
 
@@ -325,7 +495,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
         )}
 
         {/* Chọn nhanh tài khoản test mẫu */}
-        {!isRegisterMode && (
+        {!isRegisterMode && !isForgotMode && (
           <div className="auth-demo-accounts" style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
             <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, marginBottom: '8px', textAlign: 'center' }}>
               Tài khoản mẫu:
@@ -366,6 +536,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
             </div>
           </div>
         )}
+
         </div>
         </section>
 
@@ -373,27 +544,31 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
           <div className="auth-welcome-brand"><Building2 size={18} /> IMS PORTAL</div>
           <div className="auth-welcome-copy">
             <span className="auth-welcome-kicker">HỆ THỐNG QUẢN LÝ THỰC TẬP</span>
-            <h2>{isRegisterMode ? 'Bắt đầu hành trình của bạn' : 'Chào mừng trở lại!'}</h2>
-            <p>{isRegisterMode
-              ? 'Tạo tài khoản để theo dõi hồ sơ và cập nhật quá trình thực tập của bạn.'
-              : 'Quản lý hồ sơ, chương trình và tiến độ thực tập trên cùng một nền tảng.'}</p>
+            <h2>{isForgotMode ? 'Khôi phục mật khẩu' : isRegisterMode ? 'Bắt đầu hành trình của bạn' : 'Chào mừng trở lại!'}</h2>
+            <p>{isForgotMode
+              ? 'Hệ thống sẽ cấp lại mật khẩu tạm thời 8 ký tự và gửi qua email để bạn đăng nhập an toàn.'
+              : isRegisterMode
+                ? 'Tạo tài khoản để theo dõi hồ sơ và cập nhật quá trình thực tập của bạn.'
+                : 'Quản lý hồ sơ, chương trình và tiến độ thực tập trên cùng một nền tảng.'}</p>
             <div className="auth-feature-list">
-              <span><CheckCircle2 size={17} /> Theo dõi tiến độ rõ ràng</span>
-              <span><CheckCircle2 size={17} /> Cập nhật thông tin tập trung</span>
-              <span><CheckCircle2 size={17} /> Kết nối thực tập sinh và mentor</span>
+              <span><CheckCircle2 size={17} /> Cấp lại mật khẩu an toàn qua email</span>
+              <span><CheckCircle2 size={17} /> Mật khẩu tạm thời rút gọn 8 ký tự</span>
+              <span><CheckCircle2 size={17} /> Đổi mật khẩu ngay sau khi đăng nhập</span>
             </div>
           </div>
           <div className="auth-welcome-action">
-            <p>{isRegisterMode ? 'Đã có tài khoản IMS Portal?' : 'Bạn chưa có tài khoản?'}</p>
-            <button type="button" className="auth-switch-button" onClick={toggleAuthMode}>
-              {isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'} <ArrowRight size={16} />
+            <p>{isForgotMode ? 'Đã nhớ lại mật khẩu?' : isRegisterMode ? 'Đã có tài khoản IMS Portal?' : 'Bạn chưa có tài khoản?'}</p>
+            <button type="button" className="auth-switch-button" onClick={isForgotMode ? backToLogin : toggleAuthMode}>
+              {isForgotMode ? 'Đăng nhập ngay' : isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'} <ArrowRight size={16} />
             </button>
           </div>
         </aside>
       </div>
       <div className="auth-mobile-switch">
-        <span>{isRegisterMode ? 'Đã có tài khoản?' : 'Bạn chưa có tài khoản?'}</span>
-        <button type="button" onClick={toggleAuthMode}>{isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'}</button>
+        <span>{isForgotMode ? 'Đã nhớ lại mật khẩu?' : isRegisterMode ? 'Đã có tài khoản?' : 'Bạn chưa có tài khoản?'}</span>
+        <button type="button" onClick={isForgotMode ? backToLogin : toggleAuthMode}>
+          {isForgotMode ? 'Đăng nhập' : isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'}
+        </button>
       </div>
     </main>
   );

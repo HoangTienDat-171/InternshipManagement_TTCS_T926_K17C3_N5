@@ -65,6 +65,10 @@ class US08OutboxTests(unittest.TestCase):
                 tieu_de TEXT, noi_dung TEXT, kenh TEXT, loai TEXT, reference_type TEXT,
                 reference_id TEXT, da_doc INTEGER DEFAULT 0, thoi_gian_gui DATETIME DEFAULT CURRENT_TIMESTAMP,
                 thoi_gian_doc DATETIME)""")
+            db.execute("""CREATE TABLE EMAIL_DEDUP_LOCKS (
+                recipient_email TEXT NOT NULL, dedup_hash TEXT NOT NULL,
+                expires_at DATETIME NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_outbox_id INTEGER, PRIMARY KEY (recipient_email, dedup_hash))""")
 
     def tearDown(self):
         self.env_patch.stop()
@@ -126,6 +130,18 @@ class US08OutboxTests(unittest.TestCase):
             self.assertTrue(email_outbox.process_one_email())
             self.assertFalse(email_outbox.process_one_email())
         self.assertEqual(len(FakeSMTP.created), 1)
+
+    def test_worker_skips_queued_legacy_mailbox_email(self):
+        self.enqueue()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE EMAIL_OUTBOX SET reference_type='internal_message'")
+
+        FakeSMTP.created.clear()
+        with patch.object(email_outbox.smtplib, "SMTP", FakeSMTP):
+            self.assertFalse(email_outbox.process_one_email())
+
+        self.assertEqual(self.outbox_row()[0], "PENDING")
+        self.assertEqual(FakeSMTP.created, [])
 
     def test_stale_processing_claim_is_retried(self):
         self.enqueue()
