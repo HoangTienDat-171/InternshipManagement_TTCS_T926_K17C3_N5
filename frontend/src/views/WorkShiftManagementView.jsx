@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { Clock3, Edit3, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, Clock3, Edit3, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CustomSelect from '../components/CustomSelect';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
 const emptyForm = {
@@ -35,6 +37,128 @@ function ShiftStatus({ status }) {
   return <span className={`shift-status ${status === 'ACTIVE' ? 'is-active' : 'is-inactive'}`}>
     <i aria-hidden="true" />{status === 'ACTIVE' ? 'Đang áp dụng' : 'Ngừng áp dụng'}
   </span>;
+}
+
+const quickTimes = ['08:00', '08:30', '09:00', '12:00', '13:00', '17:00'];
+
+function ShiftTimePicker({ value, onChange, label, disabled = false }) {
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value || '09:00');
+  const [placement, setPlacement] = useState({ top: 0, left: 0, width: 0, maxHeight: 340 });
+  const [draftHour, draftMinute] = (draft || '09:00').split(':');
+
+  const updatePlacement = useCallback(() => {
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) return;
+    const bounds = trigger.getBoundingClientRect();
+    const width = Math.min(360, window.innerWidth - 24);
+    const panelHeight = Math.min(panel.scrollHeight, 340);
+    const roomBelow = window.innerHeight - bounds.bottom - 12;
+    const roomAbove = bounds.top - 12;
+    const showAbove = roomBelow < panelHeight && roomAbove > roomBelow;
+    const maxHeight = Math.max(220, Math.min(340, showAbove ? roomAbove : roomBelow));
+    setPlacement({
+      top: showAbove
+        ? Math.max(12, bounds.top - Math.min(panelHeight, maxHeight) - 8)
+        : Math.min(bounds.bottom + 8, window.innerHeight - Math.min(panelHeight, maxHeight) - 12),
+      left: Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12)),
+      width,
+      maxHeight,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) {
+      updatePlacement();
+      panelRef.current?.querySelector('.shift-time-options button.is-selected')?.focus();
+    }
+  }, [open, updatePlacement]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeIfOutside = (event) => {
+      if (!triggerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeIfOutside, true);
+    document.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('resize', updatePlacement);
+    window.addEventListener('scroll', updatePlacement, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeIfOutside, true);
+      document.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('resize', updatePlacement);
+      window.removeEventListener('scroll', updatePlacement, true);
+    };
+  }, [open, updatePlacement]);
+
+  const applyTime = (nextValue) => {
+    onChange?.({ target: { value: nextValue } });
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const panel = open && createPortal(
+    <section
+      ref={panelRef}
+      className="shift-time-popover"
+      role="dialog"
+      aria-label={`Chọn ${label.toLowerCase()}`}
+      style={{ ...placement, width: placement.width || 'min(360px, calc(100vw - 24px))', visibility: placement.width ? 'visible' : 'hidden' }}
+    >
+      <div className="shift-time-popover-heading"><strong>Chọn giờ 24 giờ</strong><span>{draftHour}:{draftMinute}</span></div>
+      <div className="shift-time-columns">
+        <div className="shift-time-column"><span>Giờ</span><div className="shift-time-options" role="group" aria-label="Giờ">
+          {Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0')).map((hour) => (
+            <button key={hour} type="button" className={draftHour === hour ? 'is-selected' : ''} aria-pressed={draftHour === hour} onClick={() => setDraft(`${hour}:${draftMinute}`)}>{hour}</button>
+          ))}
+        </div></div>
+        <div className="shift-time-column"><span>Phút</span><div className="shift-time-options" role="group" aria-label="Phút">
+          {Array.from({ length: 60 }, (_, minute) => String(minute).padStart(2, '0')).map((minute) => (
+            <button key={minute} type="button" className={draftMinute === minute ? 'is-selected' : ''} aria-pressed={draftMinute === minute} onClick={() => setDraft(`${draftHour}:${minute}`)}>{minute}</button>
+          ))}
+        </div></div>
+      </div>
+      <div className="shift-time-quick"><span>Mốc nhanh</span>{quickTimes.map((time) => (
+        <button type="button" key={time} onClick={() => applyTime(time)}>{time}</button>
+      ))}</div>
+      <footer className="shift-time-actions">
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setOpen(false); triggerRef.current?.focus(); }}>Hủy</button>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => applyTime(`${draftHour}:${draftMinute}`)}>Chọn giờ</button>
+      </footer>
+    </section>,
+    document.body,
+  );
+
+  return <>
+    <button
+      ref={triggerRef}
+      type="button"
+      className={`form-control shift-time-trigger${open ? ' is-open' : ''}`}
+      disabled={disabled}
+      aria-label={`${label}: ${value || 'Chưa chọn'}`}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      onClick={() => {
+        if (open) setOpen(false);
+        else {
+          setDraft(value || '09:00');
+          setOpen(true);
+        }
+      }}
+    >
+      <Clock3 size={17} aria-hidden="true" /><span>{value || 'Chọn giờ'}</span><ChevronDown className={`shift-time-chevron${open ? ' is-open' : ''}`} size={16} aria-hidden="true" />
+    </button>
+    {panel}
+  </>;
 }
 
 export default function WorkShiftManagementView({ onShowToast }) {
@@ -181,6 +305,8 @@ export default function WorkShiftManagementView({ onShowToast }) {
     }
   };
 
+  const selectedProgram = programs.find((program) => String(program.ma_chuong_trinh) === String(form.program_id));
+
   return <section className="workspace-page shift-management-page">
     <header className="workspace-heading shift-page-heading">
       <div><span className="workspace-eyebrow">CẤU HÌNH NHÂN SỰ · US23</span><h2>Quản lý ca làm việc</h2><p>Thiết lập khung giờ và thời gian áp dụng cho toàn hệ thống hoặc từng chương trình.</p></div>
@@ -206,7 +332,7 @@ export default function WorkShiftManagementView({ onShowToast }) {
         {shifts.map((shift) => <article className="shift-row" key={shift.id}>
           <div className="shift-cell shift-name-cell" data-label="Ca làm việc"><span className="shift-clock-icon"><Clock3 size={17} /></span><span><strong>{shift.name}</strong><small>Mã ca #{shift.id}</small></span></div>
           <div className="shift-cell shift-hours-cell" data-label="Khung giờ"><strong>{shift.start_time.slice(0, 5)} – {shift.end_time.slice(0, 5)}</strong><small>Giờ địa phương</small></div>
-          <div className="shift-cell" data-label="Phạm vi"><span className={`shift-scope ${shift.scope_type === 'GLOBAL' ? 'is-global' : 'is-program'}`}><ShieldCheck size={13} />{shift.scope_type === 'GLOBAL' ? 'Toàn hệ thống' : 'Chương trình'}</span><small>{shift.scope_type === 'PROGRAM' ? shift.program_name || `Chương trình #${shift.program_id}` : 'Áp dụng mặc định'}</small></div>
+          <div className="shift-cell" data-label="Phạm vi"><span className={`shift-scope ${shift.scope_type === 'GLOBAL' ? 'is-global' : 'is-program'}`}><ShieldCheck size={13} />{shift.scope_type === 'GLOBAL' ? 'Toàn hệ thống' : 'Riêng chương trình'}</span>{shift.scope_type === 'PROGRAM' ? <><strong className="shift-program-name">{shift.program_name || `Chương trình #${shift.program_id}`}</strong><small>{shift.program_code ? `Mã ${shift.program_code} · Ưu tiên trước ca mặc định` : 'Ưu tiên trước ca mặc định'}</small></> : <small>Áp dụng mặc định khi chưa có ca riêng</small>}</div>
           <div className="shift-cell" data-label="Thời gian hiệu lực"><strong>{formatDate(shift.effective_from)} – {formatDate(shift.effective_to)}</strong><small>{shift.effective_to ? 'Khoảng ngày bao gồm cả hai đầu' : 'Không đặt ngày kết thúc'}</small></div>
           <div className="shift-cell shift-actions-cell" data-label="Trạng thái & thao tác"><ShiftStatus status={shift.status} /><div className="shift-row-actions"><button type="button" className="btn btn-secondary btn-sm" onClick={() => startEdit(shift)}><Edit3 size={14} />Chỉnh sửa</button>{shift.status === 'ACTIVE' && <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeactivateTarget(shift)}>Ngừng áp dụng</button>}</div></div>
         </article>)}
@@ -220,18 +346,18 @@ export default function WorkShiftManagementView({ onShowToast }) {
           <div className="shift-form-body">
             <label className="form-label"><span className="shift-field-label">Tên ca <span className="required">*</span></span><input className="form-control" required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ví dụ: Ca hành chính" /></label>
             <div className="shift-form-grid">
-              <label className="form-label"><span className="shift-field-label">Giờ bắt đầu <span className="required">*</span></span><input className="form-control" type="time" lang="en-GB" step="60" required value={form.start_time} onChange={(event) => setForm({ ...form, start_time: event.target.value })} /></label>
-              <label className="form-label"><span className="shift-field-label">Giờ kết thúc <span className="required">*</span></span><input className="form-control" type="time" lang="en-GB" step="60" required value={form.end_time} onChange={(event) => setForm({ ...form, end_time: event.target.value })} /></label>
+              <label className="form-label"><span className="shift-field-label">Giờ bắt đầu <span className="required">*</span></span><ShiftTimePicker label="Giờ bắt đầu" value={form.start_time} onChange={(event) => setForm({ ...form, start_time: event.target.value })} /></label>
+              <label className="form-label"><span className="shift-field-label">Giờ kết thúc <span className="required">*</span></span><ShiftTimePicker label="Giờ kết thúc" value={form.end_time} onChange={(event) => setForm({ ...form, end_time: event.target.value })} /></label>
             </div>
             <div className="shift-form-grid">
-              <label className="form-label"><span className="shift-field-label">Phạm vi <span className="required">*</span></span><select className="form-select" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value, program_id: event.target.value === 'PROGRAM' ? form.program_id : '' })}><option value="GLOBAL">Toàn hệ thống</option><option value="PROGRAM">Theo chương trình</option></select></label>
-              <label className="form-label"><span className="shift-field-label">Chương trình {form.scope_type === 'PROGRAM' && <span className="required">*</span>}</span><select className="form-select" required={form.scope_type === 'PROGRAM'} disabled={form.scope_type !== 'PROGRAM' || Boolean(programError)} value={form.program_id} onChange={(event) => setForm({ ...form, program_id: event.target.value })}><option value="">Chọn chương trình</option>{programs.map((program) => <option key={program.ma_chuong_trinh} value={program.ma_chuong_trinh}>{program.ten_ct}</option>)}</select></label>
+              <label className="form-label"><span className="shift-field-label">Phạm vi <span className="required">*</span></span><CustomSelect className="form-select shift-modal-select" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value, program_id: event.target.value === 'PROGRAM' ? form.program_id : '' })}><option value="GLOBAL">Toàn hệ thống</option><option value="PROGRAM">Theo chương trình</option></CustomSelect></label>
+              <label className="form-label"><span className="shift-field-label">Chương trình {form.scope_type === 'PROGRAM' && <span className="required">*</span>}</span><CustomSelect className="form-select shift-modal-select" required={form.scope_type === 'PROGRAM'} disabled={form.scope_type !== 'PROGRAM' || Boolean(programError)} value={form.program_id} onChange={(event) => setForm({ ...form, program_id: event.target.value })}><option value="">Chọn chương trình</option>{programs.map((program) => <option key={program.ma_chuong_trinh} value={program.ma_chuong_trinh}>{program.ten_ct} · {program.ma_ct}</option>)}</CustomSelect><small className="shift-program-helper">{form.scope_type === 'PROGRAM' ? selectedProgram ? `Ca này chỉ áp dụng cho ${selectedProgram.ten_ct} (${selectedProgram.ma_ct}) và được ưu tiên hơn ca mặc định.` : 'Ca sẽ chỉ áp dụng cho chương trình được chọn.' : 'Ca mặc định; chương trình có ca riêng sẽ ưu tiên dùng ca riêng.'}</small></label>
             </div>
             <div className="shift-form-grid shift-date-grid">
               <label className="form-label"><span className="shift-field-label">Hiệu lực từ <span className="required">*</span></span><input className="form-control" type="date" required max={form.effective_to || undefined} value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /><small className="shift-field-helper shift-field-helper-placeholder" aria-hidden="true">Khoảng ngày áp dụng</small></label>
               <label className="form-label"><span className="shift-field-label">Hiệu lực đến</span><input className="form-control" type="date" min={form.effective_from || undefined} value={form.effective_to} onChange={(event) => setForm({ ...form, effective_to: event.target.value })} /><small className="shift-field-helper">Để trống nếu chưa xác định ngày kết thúc.</small></label>
             </div>
-            {editingShift && <label className="form-label"><span className="shift-field-label">Trạng thái</span><select className="form-select" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="ACTIVE">Đang áp dụng</option><option value="INACTIVE">Ngừng áp dụng</option></select></label>}
+            {editingShift && <label className="form-label"><span className="shift-field-label">Trạng thái</span><CustomSelect className="form-select shift-modal-select" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="ACTIVE">Đang áp dụng</option><option value="INACTIVE">Ngừng áp dụng</option></CustomSelect></label>}
             <p className="shift-form-note">Ca qua đêm chưa được hỗ trợ. Các khoảng giờ tiếp giáp nhau (ví dụ 08:00–12:00 và 12:00–17:00) vẫn hợp lệ.</p>
             {formError && <div className="evaluation-form-error" role="alert">{formError}</div>}
           </div>
