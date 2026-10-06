@@ -11,7 +11,6 @@ const emptyForm = {
   program_id: '',
   effective_from: '',
   effective_to: '',
-  status: 'ACTIVE',
 };
 
 function formatDate(value) {
@@ -119,13 +118,30 @@ export default function WorkShiftManagementView({ onShowToast }) {
 
   const saveShift = async (event) => {
     event.preventDefault();
-    setSaving(true);
     setFormError('');
+    if (!form.name.trim()) {
+      setFormError('Vui lòng nhập tên ca làm việc.');
+      return;
+    }
+    if (form.end_time <= form.start_time) {
+      setFormError('Giờ kết thúc phải sau giờ bắt đầu; hệ thống chưa hỗ trợ ca qua đêm.');
+      return;
+    }
+    if (form.effective_to && form.effective_to < form.effective_from) {
+      setFormError('Hiệu lực đến phải bằng hoặc sau ngày bắt đầu.');
+      return;
+    }
+    if (form.scope_type === 'PROGRAM' && !form.program_id) {
+      setFormError('Vui lòng chọn chương trình thực tập.');
+      return;
+    }
+    setSaving(true);
     const payload = {
       ...form,
       name: form.name.trim(),
       program_id: form.scope_type === 'PROGRAM' ? Number(form.program_id) : null,
       effective_to: form.effective_to || null,
+      status: editingShift ? form.status : 'ACTIVE',
     };
     try {
       const response = await apiFetch(editingShift ? `/api/work-shifts/${editingShift.id}` : '/api/work-shifts', {
@@ -201,22 +217,24 @@ export default function WorkShiftManagementView({ onShowToast }) {
       <section className="shift-form-modal" role="dialog" aria-modal="true" aria-labelledby="shift-form-title">
         <header><div><span className="workspace-eyebrow">CẤU HÌNH CA</span><h3 id="shift-form-title">{editingShift ? 'Chỉnh sửa ca làm việc' : 'Tạo ca làm việc'}</h3></div><button type="button" className="modal-close-btn" aria-label="Đóng" disabled={saving} onClick={() => setFormOpen(false)}><X size={18} /></button></header>
         <form onSubmit={saveShift}>
-          <label className="form-label">Tên ca <span className="required">*</span><input className="form-control" required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ví dụ: Ca hành chính" /></label>
-          <div className="shift-form-grid">
-            <label className="form-label">Giờ bắt đầu <span className="required">*</span><input className="form-control" type="time" required value={form.start_time} onChange={(event) => setForm({ ...form, start_time: event.target.value })} /></label>
-            <label className="form-label">Giờ kết thúc <span className="required">*</span><input className="form-control" type="time" required value={form.end_time} onChange={(event) => setForm({ ...form, end_time: event.target.value })} /></label>
+          <div className="shift-form-body">
+            <label className="form-label"><span className="shift-field-label">Tên ca <span className="required">*</span></span><input className="form-control" required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ví dụ: Ca hành chính" /></label>
+            <div className="shift-form-grid">
+              <label className="form-label"><span className="shift-field-label">Giờ bắt đầu <span className="required">*</span></span><input className="form-control" type="time" lang="en-GB" step="60" required value={form.start_time} onChange={(event) => setForm({ ...form, start_time: event.target.value })} /></label>
+              <label className="form-label"><span className="shift-field-label">Giờ kết thúc <span className="required">*</span></span><input className="form-control" type="time" lang="en-GB" step="60" required value={form.end_time} onChange={(event) => setForm({ ...form, end_time: event.target.value })} /></label>
+            </div>
+            <div className="shift-form-grid">
+              <label className="form-label"><span className="shift-field-label">Phạm vi <span className="required">*</span></span><select className="form-select" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value, program_id: event.target.value === 'PROGRAM' ? form.program_id : '' })}><option value="GLOBAL">Toàn hệ thống</option><option value="PROGRAM">Theo chương trình</option></select></label>
+              <label className="form-label"><span className="shift-field-label">Chương trình {form.scope_type === 'PROGRAM' && <span className="required">*</span>}</span><select className="form-select" required={form.scope_type === 'PROGRAM'} disabled={form.scope_type !== 'PROGRAM' || Boolean(programError)} value={form.program_id} onChange={(event) => setForm({ ...form, program_id: event.target.value })}><option value="">Chọn chương trình</option>{programs.map((program) => <option key={program.ma_chuong_trinh} value={program.ma_chuong_trinh}>{program.ten_ct}</option>)}</select></label>
+            </div>
+            <div className="shift-form-grid shift-date-grid">
+              <label className="form-label"><span className="shift-field-label">Hiệu lực từ <span className="required">*</span></span><input className="form-control" type="date" required max={form.effective_to || undefined} value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /><small className="shift-field-helper shift-field-helper-placeholder" aria-hidden="true">Khoảng ngày áp dụng</small></label>
+              <label className="form-label"><span className="shift-field-label">Hiệu lực đến</span><input className="form-control" type="date" min={form.effective_from || undefined} value={form.effective_to} onChange={(event) => setForm({ ...form, effective_to: event.target.value })} /><small className="shift-field-helper">Để trống nếu chưa xác định ngày kết thúc.</small></label>
+            </div>
+            {editingShift && <label className="form-label"><span className="shift-field-label">Trạng thái</span><select className="form-select" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="ACTIVE">Đang áp dụng</option><option value="INACTIVE">Ngừng áp dụng</option></select></label>}
+            <p className="shift-form-note">Ca qua đêm chưa được hỗ trợ. Các khoảng giờ tiếp giáp nhau (ví dụ 08:00–12:00 và 12:00–17:00) vẫn hợp lệ.</p>
+            {formError && <div className="evaluation-form-error" role="alert">{formError}</div>}
           </div>
-          <div className="shift-form-grid">
-            <label className="form-label">Phạm vi <span className="required">*</span><select className="form-select" value={form.scope_type} onChange={(event) => setForm({ ...form, scope_type: event.target.value, program_id: event.target.value === 'PROGRAM' ? form.program_id : '' })}><option value="GLOBAL">Toàn hệ thống</option><option value="PROGRAM">Theo chương trình</option></select></label>
-            <label className="form-label">Chương trình {form.scope_type === 'PROGRAM' && <span className="required">*</span>}<select className="form-select" required={form.scope_type === 'PROGRAM'} disabled={form.scope_type !== 'PROGRAM' || Boolean(programError)} value={form.program_id} onChange={(event) => setForm({ ...form, program_id: event.target.value })}><option value="">Chọn chương trình</option>{programs.map((program) => <option key={program.ma_chuong_trinh} value={program.ma_chuong_trinh}>{program.ten_ct}</option>)}</select></label>
-          </div>
-          <div className="shift-form-grid">
-            <label className="form-label">Hiệu lực từ <span className="required">*</span><input className="form-control" type="date" required value={form.effective_from} onChange={(event) => setForm({ ...form, effective_from: event.target.value })} /></label>
-            <label className="form-label">Hiệu lực đến<input className="form-control" type="date" value={form.effective_to} onChange={(event) => setForm({ ...form, effective_to: event.target.value })} /><small>Để trống nếu chưa xác định ngày kết thúc.</small></label>
-          </div>
-          <label className="form-label">Trạng thái<select className="form-select" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="ACTIVE">Đang áp dụng</option><option value="INACTIVE">Ngừng áp dụng</option></select></label>
-          <p className="shift-form-note">Ca qua đêm không được hỗ trợ. Các khoảng giờ tiếp giáp nhau (ví dụ 08:00–12:00 và 12:00–17:00) vẫn hợp lệ.</p>
-          {formError && <div className="evaluation-form-error" role="alert">{formError}</div>}
           <footer className="shift-form-actions"><button type="button" className="btn btn-secondary" disabled={saving} onClick={() => setFormOpen(false)}>Hủy</button><button type="submit" className="btn btn-primary" disabled={saving || (form.scope_type === 'PROGRAM' && !programs.length)}>{saving ? 'Đang lưu…' : editingShift ? 'Lưu thay đổi' : 'Tạo ca'}</button></footer>
         </form>
       </section>
