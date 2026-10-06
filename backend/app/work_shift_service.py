@@ -88,6 +88,7 @@ class WorkShiftService:
         rows = self.db.execute(f"""
             SELECT s.id, s.name, s.start_time, s.end_time, s.scope_type,
                    s.ma_chuong_trinh AS program_id, p.ten_ct AS program_name,
+                   p.ma_ct AS program_code,
                    s.effective_from, s.effective_to, s.status, s.created_by,
                    s.created_at, s.updated_at
             FROM CA_LAM_VIEC s
@@ -101,6 +102,7 @@ class WorkShiftService:
         row = self.db.execute("""
             SELECT s.id, s.name, s.start_time, s.end_time, s.scope_type,
                    s.ma_chuong_trinh AS program_id, p.ten_ct AS program_name,
+                   p.ma_ct AS program_code,
                    s.effective_from, s.effective_to, s.status, s.created_by,
                    s.created_at, s.updated_at
             FROM CA_LAM_VIEC s

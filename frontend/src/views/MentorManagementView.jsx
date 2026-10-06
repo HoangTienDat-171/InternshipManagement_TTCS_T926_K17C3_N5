@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { UserPlus, Mail, Phone, RefreshCw, Users, Pencil, X, UserRoundPlus, Trash2 } from 'lucide-react';
+import { UserPlus, Mail, Phone, RefreshCw, Users, Pencil, X, UserRoundPlus, Trash2, ShieldCheck } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
 import TablePagination from '../components/TablePagination';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch, readJsonResponse } from '../utils/api';
@@ -14,9 +15,11 @@ export default function MentorManagementView({ departments, onShowToast, current
   const [editingMentor, setEditingMentor] = useState(null);
   const [assignmentMentor, setAssignmentMentor] = useState(null);
   const [assignedMentor, setAssignedMentor] = useState(null);
+  const [pendingUnassignment, setPendingUnassignment] = useState(null);
   const [unassignedInterns, setUnassignedInterns] = useState([]);
   const [assignedInterns, setAssignedInterns] = useState([]);
   const [selectedInternIds, setSelectedInternIds] = useState([]);
+  const [removingProfileId, setRemovingProfileId] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [profileForm, setProfileForm] = useState({ chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: '3' });
 
@@ -217,16 +220,22 @@ export default function MentorManagementView({ departments, onShowToast, current
     }
   };
 
-  const removeAssignment = async (profileId) => {
+  const removeAssignment = async () => {
+    const profileId = pendingUnassignment?.ma_ho_so;
+    if (!profileId || !assignedMentor) return;
+    setRemovingProfileId(profileId);
     try {
       const response = await apiFetch(`/api/mentors/${assignedMentor.ma_nguoi_dung}/interns/${profileId}`, { method: 'DELETE' });
-      const data = await response.json();
+      const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể gỡ phân công.');
       onShowToast(data.message);
+      setPendingUnassignment(null);
       await openAssignedInterns(assignedMentor);
       await refreshMentors();
     } catch (error) {
       onShowToast(error.message, 'error');
+    } finally {
+      setRemovingProfileId(null);
     }
   };
 
@@ -438,10 +447,10 @@ export default function MentorManagementView({ departments, onShowToast, current
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openAssignedInterns(m)} title="Xem TTS đang quản lý">
                         <Users size={14} /><span>Danh sách</span>
                       </button>
+                      {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-primary btn-sm" onClick={() => openAssignmentPicker(m)} disabled={(m.so_tts_dang_huong_dan || 0) >= (m.so_tts_toi_da ?? 3)} title="Phân công TTS">
+                        <UserRoundPlus size={14} /><span>Phân công</span>
+                      </button>}
                       {currentUser?.vai_tro === 'Admin' && <>
-                        <button type="button" className="btn btn-primary btn-sm" onClick={() => openAssignmentPicker(m)} disabled={(m.so_tts_dang_huong_dan || 0) >= (m.so_tts_toi_da ?? 3)} title="Phân công TTS">
-                          <UserRoundPlus size={14} /><span>Phân công</span>
-                        </button>
                         <button type="button" className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(m)} title="Cập nhật kinh nghiệm và sức chứa">
                           <Pencil size={14} /><span>Sửa</span>
                         </button>
@@ -541,13 +550,33 @@ export default function MentorManagementView({ departments, onShowToast, current
             {modalLoading ? <p>Đang tải danh sách...</p> : assignedInterns.length === 0 ? <p>Mentor chưa được phân công thực tập sinh nào.</p> : <div className="mentor-intern-list">
               {assignedInterns.map((intern) => <div className="mentor-intern-item" key={intern.ma_ho_so}>
                 <div><strong>{intern.ho_ten}</strong><div className="text-muted">{intern.email} · {intern.ten_truong || 'Chưa có trường'} · {intern.chuyen_nganh || 'Chưa có chuyên ngành'}</div></div>
-                {currentUser?.vai_tro === 'Admin' && <button type="button" className="btn btn-danger btn-sm" onClick={() => removeAssignment(intern.ma_ho_so)} title="Gỡ phân công"><Trash2 size={14} /></button>}
+                {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
               </div>)}
             </div>}
           </div>
           <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => setAssignedMentor(null)}>Đóng</button></div>
         </div>
       </div>}
+
+      <ConfirmDialog
+        open={Boolean(pendingUnassignment)}
+        title="Gỡ phân công Mentor?"
+        message={pendingUnassignment && assignedMentor
+          ? `Bạn sắp gỡ ${pendingUnassignment.ho_ten} khỏi danh sách hướng dẫn của ${assignedMentor.ho_ten}.`
+          : ''}
+        confirmLabel="Gỡ phân công"
+        cancelLabel="Giữ phân công"
+        danger
+        className="mentor-unassign-confirm"
+        busy={removingProfileId !== null}
+        onCancel={() => setPendingUnassignment(null)}
+        onConfirm={removeAssignment}
+      >
+        <div className="mentor-unassign-note">
+          <ShieldCheck size={17} aria-hidden="true" />
+          <span>Chỉ gỡ liên kết phân công. Hồ sơ TTS và dữ liệu liên quan vẫn được giữ nguyên.</span>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

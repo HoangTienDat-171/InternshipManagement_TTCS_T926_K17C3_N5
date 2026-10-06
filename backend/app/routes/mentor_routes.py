@@ -207,7 +207,7 @@ def assign_intern(
     background_tasks: BackgroundTasks,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    admin = require_role(request, "Admin")
+    actor = require_role(request, "Admin", "HR")
     try:
         db.execute("BEGIN IMMEDIATE")
         mentor = db.execute("""
@@ -240,7 +240,7 @@ def assign_intern(
             INSERT INTO PHAN_CONG_MENTOR_TTS
                 (ma_nguoi_dung_mentor, ma_ho_so, ma_nguoi_phan_cong)
             VALUES (?, ?, ?)
-        """, (mentor_id, profile_id, admin["ma_nguoi_dung"]))
+        """, (mentor_id, profile_id, actor["ma_nguoi_dung"]))
         db.commit()
     except HTTPException:
         db.rollback()
@@ -259,7 +259,7 @@ def assign_interns_batch(
     background_tasks: BackgroundTasks,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    admin = require_role(request, "Admin")
+    actor = require_role(request, "Admin", "HR")
     if len(set(data.ma_ho_so_list)) != len(data.ma_ho_so_list):
         raise HTTPException(status_code=400, detail="Danh sách có thực tập sinh bị lặp.")
     try:
@@ -293,7 +293,7 @@ def assign_interns_batch(
             db.execute("""
                 INSERT INTO PHAN_CONG_MENTOR_TTS (ma_nguoi_dung_mentor,ma_ho_so,ma_nguoi_phan_cong)
                 VALUES (?,?,?)
-            """, (mentor_id, profile_id, admin["ma_nguoi_dung"]))
+            """, (mentor_id, profile_id, actor["ma_nguoi_dung"]))
         db.commit()
     except HTTPException:
         db.rollback()
@@ -313,18 +313,32 @@ def unassign_intern(
     background_tasks: BackgroundTasks,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    require_role(request, "Admin")
-    intern = db.execute("SELECT ma_nguoi_dung FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_id,)).fetchone()
-    cursor = db.execute(
-        "DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ?",
-        (mentor_id, profile_id),
-    )
-    if not cursor.rowcount:
-        raise HTTPException(status_code=404, detail="Không tìm thấy phân công này.")
-    db.commit()
+    require_role(request, "Admin", "HR")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        assignment = db.execute("""
+            SELECT h.ma_nguoi_dung
+            FROM PHAN_CONG_MENTOR_TTS a
+            JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
+            WHERE a.ma_nguoi_dung_mentor = ? AND a.ma_ho_so = ?
+        """, (mentor_id, profile_id)).fetchone()
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phân công này.")
+        cursor = db.execute(
+            "DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ?",
+            (mentor_id, profile_id),
+        )
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phân công này.")
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
     background_tasks.add_task(publish_workspace_updated, mentor_id)
-    if intern:
-        background_tasks.add_task(publish_workspace_updated, intern["ma_nguoi_dung"])
+    background_tasks.add_task(publish_workspace_updated, assignment["ma_nguoi_dung"])
     return {"message": "Đã gỡ phân công thực tập sinh."}
 
 

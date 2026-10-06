@@ -151,8 +151,14 @@ class WorkShiftTests(unittest.TestCase):
     def test_list_filters_status_scope_program_and_effective_date(self):
         global_shift = self.create()
         program_shift = self.create(name="Program shift", scope_type="PROGRAM", program_id=self.program_ids[0])
+        program_code = self.db.execute(
+            "SELECT ma_ct FROM CHUONG_TRINH_THUC_TAP WHERE ma_chuong_trinh = ?",
+            (self.program_ids[0],),
+        ).fetchone()[0]
         self.service.update_shift(global_shift["id"], {"status": "INACTIVE"})
-        self.assertEqual([row["id"] for row in self.service.list_shifts(status="ACTIVE", scope_type="PROGRAM", program_id=self.program_ids[0])], [program_shift["id"]])
+        program_rows = self.service.list_shifts(status="ACTIVE", scope_type="PROGRAM", program_id=self.program_ids[0])
+        self.assertEqual([row["id"] for row in program_rows], [program_shift["id"]])
+        self.assertEqual(program_rows[0]["program_code"], program_code)
         self.assertEqual(self.service.list_shifts(effective_date=date(2026, 12, 1)), [])
 
     def test_route_enforces_hr_admin_and_records_authenticated_creator(self):
