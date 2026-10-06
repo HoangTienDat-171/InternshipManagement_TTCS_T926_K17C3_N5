@@ -611,6 +611,54 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 404)
 
+    def test_admin_status_approval_queues_temporary_credentials_email(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        email = f"status.approval.{time.time_ns()}@test.invalid"
+        db = sqlite3.connect(self.db_path)
+        try:
+            password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='admin@internship.vn'",
+            ).fetchone()[0]
+            cursor = db.execute("""
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                VALUES (1, 'Status Approval Test', ?, ?, 'ThucTapSinh', 'ChoDuyet')
+            """, (email, password_hash))
+            user_id = cursor.lastrowid
+            db.execute("""
+                INSERT INTO HO_SO_THUC_TAP
+                    (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet)
+                VALUES (?, 1, 'QA', 'ChoDuyet')
+            """, (user_id,))
+            db.commit()
+        finally:
+            db.close()
+
+        status_code, raw_response, _ = self.request(
+            f"/api/auth/users/{user_id}/status", "PUT", admin_token,
+            json.dumps({"trang_thai": "HoatDong"}).encode("utf-8"),
+            "application/json",
+        )
+        response = raw_response.decode("utf-8", errors="replace")
+        self.assertEqual(status_code, 200, response)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            account_status = db.execute(
+                "SELECT trang_thai, must_change_password FROM NGUOI_DUNG WHERE ma_nguoi_dung=?",
+                (user_id,),
+            ).fetchone()
+            email_row = db.execute(
+                "SELECT recipient_email, status, template_type, body FROM EMAIL_OUTBOX WHERE recipient_email=?",
+                (email,),
+            ).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(account_status, ("HoatDong", 1))
+        self.assertIsNotNone(email_row)
+        self.assertEqual(email_row[:3], (email, "PENDING", "temporary_credentials"))
+        self.assertIn(email, email_row[3])
+
     def test_intern_profile_update_rejects_approval_fields_and_dedicated_review_works(self):
         admin_token, _ = self.login("admin@internship.vn")
         hr_token, _ = self.login("hr@internship.vn")

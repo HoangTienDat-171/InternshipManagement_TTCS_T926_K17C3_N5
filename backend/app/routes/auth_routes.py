@@ -715,7 +715,7 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
         raise HTTPException(status_code=400, detail="Trạng thái không hợp lệ")
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("SELECT ma_nguoi_dung, ho_ten, email, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
