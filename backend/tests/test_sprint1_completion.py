@@ -233,6 +233,37 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual((response["totalItems"], response["totalPages"], response["page"], response["items"]), (0, 0, 1, []))
 
+    def test_registration_duplicate_phone_returns_conflict_instead_of_server_error(self):
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("""
+                CREATE TRIGGER reject_duplicate_registration_phone
+                BEFORE INSERT ON NGUOI_DUNG
+                WHEN NEW.so_dien_thoai = '0920000000'
+                BEGIN
+                    SELECT RAISE(ABORT, 'UNIQUE constraint failed: NGUOI_DUNG.so_dien_thoai');
+                END
+            """)
+
+        boundary = "----RegistrationDuplicatePhoneBoundary"
+        form_fields = {
+            "ho_ten": "Duplicate Phone Regression",
+            "email": "duplicate.phone.regression@test.invalid",
+            "so_dien_thoai": "0920000000",
+        }
+        body = b"".join(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode("utf-8")
+            for name, value in form_fields.items()
+        ) + f"--{boundary}--\r\n".encode("ascii")
+        status_code, raw, _ = self.request(
+            "/api/auth/register-with-cv",
+            method="POST",
+            body=body,
+            content_type=f"multipart/form-data; boundary={boundary}",
+        )
+        response = json.loads(raw)
+        self.assertEqual(status_code, 409, response)
+        self.assertIn("detail", response)
+
     def test_all_management_tables_paginate_and_preserve_legacy_list_responses(self):
         token, _ = self.login("admin@internship.vn")
         db = sqlite3.connect(self.db_path)
@@ -494,6 +525,104 @@ class Sprint1RuntimeTests(unittest.TestCase):
         })
         self.assertEqual(status_code, 403)
 
+        program = {
+            "ma_ct": f"HR-{int(time.time())}", "ten_ct": "HR-created test program",
+            "ma_phong_ban": 1, "ngay_bat_dau": "2026-10-01", "ngay_ket_thuc": "2026-12-31",
+            "chi_tieu": 2, "mo_ta_cong_viec": "API regression", "yeu_cau": "Test requirements",
+        }
+        hr_token, _ = self.login("hr@internship.vn")
+        status_code, created, _ = self.json_request("/api/programs", "POST", hr_token, program)
+        self.assertEqual(status_code, 201, created)
+        status_code, denied, _ = self.json_request("/api/programs", "POST", tts_token, {
+            **program, "ma_ct": f"DENIED-{int(time.time())}",
+        })
+        self.assertEqual(status_code, 403, denied)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            admin_password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='admin@internship.vn'",
+            ).fetchone()[0]
+            mentor_cursor = db.execute("""
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                VALUES (1, 'HR Assignment Mentor', 'hr.assignment.mentor@test.invalid', ?, 'Mentor', 'HoatDong')
+            """, (admin_password_hash,))
+            mentor_id = mentor_cursor.lastrowid
+            db.execute("""
+                INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, so_tts_toi_da)
+                VALUES (?, 'Regression QA', 3)
+            """, (mentor_id,))
+            profile_ids = [row[0] for row in db.execute("""
+                SELECT ma_ho_so FROM HO_SO_THUC_TAP
+                WHERE ma_nguoi_dung IN (
+                    SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email LIKE 'pagination.case%'
+                )
+                ORDER BY ma_ho_so LIMIT 2
+            """).fetchall()]
+            hr_user_id = db.execute(
+                "SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email='hr@internship.vn'",
+            ).fetchone()[0]
+            db.commit()
+        finally:
+            db.close()
+
+        self.assertEqual(len(profile_ids), 2)
+        status_code, denied_assignment, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/assignments/batch", "POST", tts_token,
+            {"ma_ho_so_list": [profile_ids[0]]},
+        )
+        self.assertEqual(status_code, 403, denied_assignment)
+        status_code, assigned, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/interns/{profile_ids[0]}", "POST", hr_token,
+        )
+        self.assertEqual(status_code, 201, assigned)
+        status_code, assigned_batch, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/assignments/batch", "POST", hr_token,
+            {"ma_ho_so_list": [profile_ids[1]]},
+        )
+        self.assertEqual(status_code, 201, assigned_batch)
+        db = sqlite3.connect(self.db_path)
+        try:
+            assigning_user_ids = [row[0] for row in db.execute("""
+                SELECT ma_nguoi_phan_cong FROM PHAN_CONG_MENTOR_TTS
+                WHERE ma_nguoi_dung_mentor=? ORDER BY ma_ho_so
+            """, (mentor_id,)).fetchall()]
+        finally:
+            db.close()
+        self.assertEqual(assigning_user_ids, [hr_user_id, hr_user_id])
+
+        status_code, denied_unassignment, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/interns/{profile_ids[0]}", "DELETE", tts_token,
+        )
+        self.assertEqual(status_code, 403, denied_unassignment)
+        status_code, unassigned, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/interns/{profile_ids[0]}", "DELETE", hr_token,
+        )
+        self.assertEqual(status_code, 200, unassigned)
+        status_code, repeated_unassignment, _ = self.json_request(
+            f"/api/mentors/{mentor_id}/interns/{profile_ids[0]}", "DELETE", hr_token,
+        )
+        self.assertEqual(status_code, 404, repeated_unassignment)
+        status_code, available_interns, _ = self.json_request(
+            "/api/mentors/unassigned-interns", token=hr_token,
+        )
+        self.assertEqual(status_code, 200, available_interns)
+        self.assertIn(profile_ids[0], [intern["ma_ho_so"] for intern in available_interns])
+        db = sqlite3.connect(self.db_path)
+        try:
+            remaining_assignments = db.execute(
+                "SELECT ma_ho_so FROM PHAN_CONG_MENTOR_TTS WHERE ma_nguoi_dung_mentor=?",
+                (mentor_id,),
+            ).fetchall()
+            unassigned_profile_still_exists = db.execute(
+                "SELECT 1 FROM HO_SO_THUC_TAP WHERE ma_ho_so=?", (profile_ids[0],),
+            ).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(remaining_assignments, [(profile_ids[1],)])
+        self.assertIsNotNone(unassigned_profile_still_exists)
+
         status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=tts_token)
         self.assertEqual(status_code, 200)
         profile = workspace["profile"]
@@ -610,6 +739,54 @@ class Sprint1RuntimeTests(unittest.TestCase):
             f"/api/notifications/{rejected_notification}/read", "PUT", approved_token,
         )
         self.assertEqual(status_code, 404)
+
+    def test_admin_status_approval_queues_temporary_credentials_email(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        email = f"status.approval.{time.time_ns()}@test.invalid"
+        db = sqlite3.connect(self.db_path)
+        try:
+            password_hash = db.execute(
+                "SELECT mat_khau FROM NGUOI_DUNG WHERE email='admin@internship.vn'",
+            ).fetchone()[0]
+            cursor = db.execute("""
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                VALUES (1, 'Status Approval Test', ?, ?, 'ThucTapSinh', 'ChoDuyet')
+            """, (email, password_hash))
+            user_id = cursor.lastrowid
+            db.execute("""
+                INSERT INTO HO_SO_THUC_TAP
+                    (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet)
+                VALUES (?, 1, 'QA', 'ChoDuyet')
+            """, (user_id,))
+            db.commit()
+        finally:
+            db.close()
+
+        status_code, raw_response, _ = self.request(
+            f"/api/auth/users/{user_id}/status", "PUT", admin_token,
+            json.dumps({"trang_thai": "HoatDong"}).encode("utf-8"),
+            "application/json",
+        )
+        response = raw_response.decode("utf-8", errors="replace")
+        self.assertEqual(status_code, 200, response)
+
+        db = sqlite3.connect(self.db_path)
+        try:
+            account_status = db.execute(
+                "SELECT trang_thai, must_change_password FROM NGUOI_DUNG WHERE ma_nguoi_dung=?",
+                (user_id,),
+            ).fetchone()
+            email_row = db.execute(
+                "SELECT recipient_email, status, template_type, body FROM EMAIL_OUTBOX WHERE recipient_email=?",
+                (email,),
+            ).fetchone()
+        finally:
+            db.close()
+        self.assertEqual(account_status, ("HoatDong", 1))
+        self.assertIsNotNone(email_row)
+        self.assertEqual(email_row[:3], (email, "PENDING", "temporary_credentials"))
+        self.assertIn(email, email_row[3])
 
     def test_intern_profile_update_rejects_approval_fields_and_dedicated_review_works(self):
         admin_token, _ = self.login("admin@internship.vn")

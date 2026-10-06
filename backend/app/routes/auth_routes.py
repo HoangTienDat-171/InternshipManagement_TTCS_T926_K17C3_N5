@@ -283,6 +283,22 @@ async def register_user_with_cv(
             "trang_thai": "ChoDuyet",
             "cv_da_nop": cv_content is not None,
         }
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        if absolute_path is not None:
+            absolute_path.unlink(missing_ok=True)
+        error_text = str(exc).lower()
+        if "so_dien_thoai" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Số điện thoại đã được đăng ký trong hệ thống.",
+            ) from exc
+        if "email" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email đã được đăng ký trong hệ thống.",
+            ) from exc
+        raise
     except Exception:
         db.rollback()
         if absolute_path is not None:
@@ -715,7 +731,7 @@ def update_user_status(id: int, data: UserStatusUpdate, request: Request, backgr
         raise HTTPException(status_code=400, detail="Trạng thái không hợp lệ")
 
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung, ho_ten, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("SELECT ma_nguoi_dung, ho_ten, email, vai_tro, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?", (id,))
     user = cursor.fetchone()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")

@@ -56,6 +56,7 @@ function formatDate(value) {
 
 export default function ProgramManagementView({ departments, onShowToast, currentUser }) {
   const isAdmin = currentUser?.vai_tro === 'Admin';
+  const canCreateProgram = ['Admin', 'HR'].includes(currentUser?.vai_tro);
   const isManager = ['Admin', 'HR'].includes(currentUser?.vai_tro);
   const isIntern = currentUser?.vai_tro === 'ThucTapSinh';
 
@@ -343,7 +344,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
           <h2>{isIntern ? 'Chương trình thực tập đang mở' : 'Chương trình Thực tập'}</h2>
           <p>{isIntern ? 'Khám phá và đăng ký các chương trình phù hợp với hồ sơ của bạn' : 'Thiết lập các đợt thực tập và quản lý danh sách ứng viên'}</p>
         </div>
-        {isAdmin && (
+        {canCreateProgram && (
           <button type="button" className="btn btn-primary" onClick={showForm ? resetForm : openCreateForm}>
             {showForm ? <X size={16} /> : <PlusCircle size={16} />}
             <span>{showForm ? 'Đóng biểu mẫu' : 'Tạo chương trình'}</span>
@@ -353,7 +354,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
 
       {isManager && <DashboardMetrics section="programs" />}
 
-      {isAdmin && showForm && (
+      {canCreateProgram && showForm && (!editingProgram || isAdmin) && (
         <div className="card program-form-card">
           <div className="card-header">
             <div className="card-title-box"><h2>{editingProgram ? 'Chỉnh sửa chương trình' : 'Tạo mới chương trình thực tập'}</h2></div>

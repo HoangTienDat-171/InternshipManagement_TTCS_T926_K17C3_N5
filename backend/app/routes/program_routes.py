@@ -149,7 +149,7 @@ def list_programs(
 
 @router.post("", response_model=dict[str, Any], status_code=status.HTTP_201_CREATED)
 def create_program(data: ProgramCreate, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    require_role(request, "Admin")
+    require_role(request, "Admin", "HR")
     values = validated_program_values(data)
     try:
         cursor = db.execute("""
