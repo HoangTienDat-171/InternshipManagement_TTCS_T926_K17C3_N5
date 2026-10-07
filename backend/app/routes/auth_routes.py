@@ -30,6 +30,27 @@ DUMMY_BCRYPT_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lew.nOQ2/y4g7e1x
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 5
 
+
+def _raise_duplicate_registration(db: sqlite3.Connection, email: str, phone: Optional[str] = None):
+    if db.execute("SELECT 1 FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,)).fetchone():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email đã được đăng ký trong hệ thống.",
+        )
+    if phone and db.execute("SELECT 1 FROM NGUOI_DUNG WHERE so_dien_thoai = ?", (phone,)).fetchone():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Số điện thoại đã được đăng ký trong hệ thống.",
+        )
+
+
+def _raise_registration_integrity_conflict(exc: sqlite3.IntegrityError):
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Email hoặc số điện thoại đã được đăng ký trong hệ thống.",
+    ) from exc
+
+
 def check_account_lockout(email: str, db: sqlite3.Connection):
     """Giai đoạn 3: Kiểm tra khóa tài khoản chống Brute-force"""
     cursor = db.cursor()
@@ -100,12 +121,7 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
 
     email = data.email.strip().lower()
     cursor = db.cursor()
-    cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (email,))
-    if cursor.fetchone():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email đã được đăng ký trong hệ thống!"
-        )
+    _raise_duplicate_registration(db, email, data.so_dien_thoai)
 
     # Mặc định là Thực tập sinh
     user_role = 'ThucTapSinh'
@@ -115,19 +131,22 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     temporary_password = create_temporary_password()
     hashed_pw = hash_password(temporary_password)
 
-    cursor.execute("""
-        INSERT INTO NGUOI_DUNG
-            (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-    """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
-    
-    new_user_id = cursor.lastrowid
+    try:
+        cursor.execute("""
+            INSERT INTO NGUOI_DUNG
+                (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+        """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
+        new_user_id = cursor.lastrowid
 
-    # Tạo hồ sơ thực tập sinh ban đầu ở trạng thái chờ duyệt
-    cursor.execute("""
-        INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-        VALUES (?, ?, 'ChoDuyet', NULL)
-    """, (new_user_id, "Chưa cập nhật"))
+        # Tạo hồ sơ thực tập sinh ban đầu ở trạng thái chờ duyệt
+        cursor.execute("""
+            INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+            VALUES (?, ?, 'ChoDuyet', NULL)
+        """, (new_user_id, "Chưa cập nhật"))
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        _raise_registration_integrity_conflict(exc)
 
     client_ip = request.client.host if request.client else "127.0.0.1"
     cursor.execute("""
@@ -207,8 +226,7 @@ async def register_user_with_cv(
                 raise HTTPException(status_code=400, detail="Nội dung CV không khớp định dạng tệp.")
 
         cursor = db.cursor()
-        if cursor.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE LOWER(email) = ?", (clean_email,)).fetchone():
-            raise HTTPException(status_code=400, detail="Email đã được đăng ký trong hệ thống!")
+        _raise_duplicate_registration(db, clean_email, so_dien_thoai)
 
         temporary_password = create_temporary_password()
         cursor.execute("""
@@ -287,18 +305,7 @@ async def register_user_with_cv(
         db.rollback()
         if absolute_path is not None:
             absolute_path.unlink(missing_ok=True)
-        error_text = str(exc).lower()
-        if "so_dien_thoai" in error_text:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Số điện thoại đã được đăng ký trong hệ thống.",
-            ) from exc
-        if "email" in error_text:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Email đã được đăng ký trong hệ thống.",
-            ) from exc
-        raise
+        _raise_registration_integrity_conflict(exc)
     except Exception:
         db.rollback()
         if absolute_path is not None:
