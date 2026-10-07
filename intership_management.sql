@@ -59,7 +59,13 @@ CREATE TABLE IF NOT EXISTS TAI_LIEU_HO_SO (
     kich_thuoc BIGINT UNSIGNED,
     trang_thai_duyet ENUM('ChoDuyet', 'DaDuyet', 'TuChoi') DEFAULT 'ChoDuyet',
     ngay_tai_len DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE
+    reviewed_by INT NULL,
+    review_reason TEXT NULL,
+    reviewed_at DATETIME NULL,
+    KEY idx_tai_lieu_reviewed_by (reviewed_by),
+    FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+    CONSTRAINT fk_tai_lieu_reviewed_by FOREIGN KEY (reviewed_by)
+        REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
 );
 
 -- 6. Bảng Thông Báo (Gửi mail/app về kết quả xét duyệt)

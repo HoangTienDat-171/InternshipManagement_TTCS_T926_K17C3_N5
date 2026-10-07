@@ -500,6 +500,25 @@ def init_mysql_db():
             conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN ten_file VARCHAR(255) NULL")
         if "kich_thuoc" not in column_names:
             conn.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN kich_thuoc BIGINT UNSIGNED NULL")
+        for name, definition in (
+            ("reviewed_by", "INT NULL"),
+            ("review_reason", "TEXT NULL"),
+            ("reviewed_at", "DATETIME NULL"),
+        ):
+            if name not in column_names:
+                conn.execute(f"ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN {name} {definition}")
+        review_fk = conn.execute("""
+            SELECT 1 FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'TAI_LIEU_HO_SO'
+              AND COLUMN_NAME = 'reviewed_by' AND REFERENCED_TABLE_NAME = 'NGUOI_DUNG'
+            LIMIT 1
+        """).fetchone()
+        if not review_fk:
+            conn.execute("""
+                ALTER TABLE TAI_LIEU_HO_SO
+                ADD CONSTRAINT fk_tai_lieu_reviewed_by
+                FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            """)
 
         notification_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -665,7 +684,11 @@ def init_db():
         duong_dan_file TEXT NOT NULL,
         trang_thai_duyet TEXT DEFAULT 'ChoDuyet' CHECK(trang_thai_duyet IN ('ChoDuyet', 'DaDuyet', 'TuChoi')),
         ngay_tai_len DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE
+        reviewed_by INTEGER,
+        review_reason TEXT,
+        reviewed_at DATETIME,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+        FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     );
     """)
 
@@ -675,6 +698,14 @@ def init_db():
         cursor.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN ten_file TEXT")
     if "kich_thuoc" not in document_columns:
         cursor.execute("ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN kich_thuoc INTEGER")
+    for name, definition in (
+        ("reviewed_by", "INTEGER"),
+        ("review_reason", "TEXT"),
+        ("reviewed_at", "DATETIME"),
+    ):
+        if name not in document_columns:
+            cursor.execute(f"ALTER TABLE TAI_LIEU_HO_SO ADD COLUMN {name} {definition}")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tai_lieu_reviewed_by ON TAI_LIEU_HO_SO(reviewed_by)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (

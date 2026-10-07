@@ -51,9 +51,12 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         WHERE a.ma_ho_so=? AND u.vai_tro='Mentor'
     """, (profile["ma_ho_so"],)).fetchone()
     documents = db.execute("""
-        SELECT ma_tai_lieu, ma_ho_so, ten_file, loai_tai_lieu, kich_thuoc,
-               ngay_tai_len, trang_thai_duyet
-        FROM TAI_LIEU_HO_SO WHERE ma_ho_so=? ORDER BY ngay_tai_len DESC, ma_tai_lieu DESC
+        SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.loai_tai_lieu, d.kich_thuoc,
+               d.ngay_tai_len, d.trang_thai_duyet, d.reviewed_by,
+               reviewer.ho_ten AS reviewer_name, d.reviewed_at, d.review_reason
+        FROM TAI_LIEU_HO_SO d
+        LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung=d.reviewed_by
+        WHERE d.ma_ho_so=? ORDER BY d.ngay_tai_len DESC, d.ma_tai_lieu DESC
     """, (profile["ma_ho_so"],)).fetchall()
     applications = db.execute("""
         SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
