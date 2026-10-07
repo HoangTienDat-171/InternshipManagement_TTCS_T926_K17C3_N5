@@ -588,7 +588,9 @@ def init_mysql_db():
         old_uq = conn.execute("""
             SELECT INDEX_NAME FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHAN_CONG_MENTOR_TTS'
-              AND COLUMN_NAME = 'ma_ho_so' AND NON_UNIQUE = 0 AND INDEX_NAME != 'PRIMARY'
+              AND NON_UNIQUE = 0 AND INDEX_NAME != 'PRIMARY'
+            GROUP BY INDEX_NAME
+            HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME) = 'ma_ho_so'
             LIMIT 1
         """).fetchone()
         if old_uq:

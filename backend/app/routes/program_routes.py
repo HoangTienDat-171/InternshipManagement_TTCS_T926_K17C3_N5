@@ -205,7 +205,7 @@ def update_program(
 
 @router.post("/{program_id}/close", response_model=dict[str, Any])
 def close_program(program_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    require_role(request, "Admin")
+    require_role(request, "Admin", "HR")
     program = get_program(db, program_id)
     if program["trang_thai"] == "DaDong":
         return {"message": "Chương trình đã được đóng trước đó."}
@@ -444,6 +444,11 @@ def review_program_application(
         raise HTTPException(status_code=400, detail="Đơn ứng tuyển này đã được xử lý trước đó.")
 
     if data.trang_thai == "DaDuyet":
+        if program["trang_thai"] == "DaDong":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chương trình đã đóng, không thể duyệt đơn ứng tuyển.",
+            )
         approved_count = db.execute("""
             SELECT COUNT(*) FROM UNG_TUYEN_CHUONG_TRINH
             WHERE ma_chuong_trinh = ? AND trang_thai = 'DaDuyet'

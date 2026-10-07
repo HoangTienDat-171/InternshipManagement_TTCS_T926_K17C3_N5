@@ -92,7 +92,12 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
 
     active_prog = get_intern_active_program(db, profile["ma_ho_so"])
     current_program = active_prog if active_prog else next(
-        (app for app in applications if app["trang_thai_ung_tuyen"] == "DaDuyet"), None
+        (
+            app for app in applications
+            if app["trang_thai_ung_tuyen"] == "DaDuyet"
+            and app["timeline_status"] != "HISTORICAL"
+        ),
+        None,
     )
 
     progress = None

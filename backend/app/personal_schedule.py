@@ -20,7 +20,7 @@ class PersonalScheduleService:
         week_start: date | None = None,
         program_id: int | None = None,
     ) -> dict:
-        """Return approved program periods and their currently assigned Mentor."""
+        """Return approved, open program periods and any currently assigned Mentor."""
         first_day = week_start or date.today()
         first_day -= timedelta(days=first_day.weekday())
         last_day = first_day + timedelta(days=6)
@@ -43,6 +43,7 @@ class PersonalScheduleService:
             LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung=assignment.ma_nguoi_dung_mentor
                 AND mentor.vai_tro='Mentor'
             WHERE h.ma_nguoi_dung=? AND h.trang_thai_xet_duyet='DaDuyet'
+              AND COALESCE(c.trang_thai, '') <> 'DaDong'
               AND (? IS NULL OR c.ma_chuong_trinh=?)
             ORDER BY c.ngay_bat_dau, c.ten_ct, a.ma_ung_tuyen
         """, (intern_user_id, program_id, program_id)).fetchall()
@@ -85,5 +86,5 @@ class PersonalScheduleService:
             "filters": {"programs": list(programs.values())},
             "has_program": has_program,
             "has_mentor": has_mentor,
-            "warning": not has_program or missing_mentor,
+            "mentor_assignment_pending": has_program and missing_mentor,
         }

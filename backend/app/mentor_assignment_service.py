@@ -67,12 +67,14 @@ def check_program_overlap(
     c_start = parse_date_value(cand["ngay_bat_dau"])
     c_end = parse_date_value(cand["ngay_ket_thuc"])
 
-    # Lấy các chương trình khác mà TTS này đã được duyệt
+    # Chỉ chương trình chưa đóng mới được tính là cam kết đang hoạt động.
+    # Đơn và phân công của chương trình đóng vẫn được giữ lại để tra cứu lịch sử.
     approved_programs = db.execute("""
         SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
         WHERE a.ma_ho_so = ? AND a.trang_thai = 'DaDuyet' AND a.ma_chuong_trinh != ?
+          AND c.trang_thai <> 'DaDong'
     """, (profile_id, candidate_program_id)).fetchall()
 
     for row in approved_programs:
