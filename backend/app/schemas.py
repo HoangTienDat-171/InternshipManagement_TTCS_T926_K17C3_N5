@@ -481,7 +481,10 @@ class ProgramApplicationDetail(BaseModel):
     ngay_xet_duyet: Optional[str] = None
 
 class DocumentReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     trang_thai_duyet: Literal["DaDuyet", "TuChoi"]
+    review_reason: Optional[str] = Field(default=None, max_length=2000)
 
 class ContractRejectRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
@@ -495,3 +498,7 @@ class DocumentDetail(BaseModel):
     ngay_tai_len: Optional[str] = None
     trang_thai_duyet: str
     thuc_tap_sinh: str
+    reviewed_by: Optional[int] = None
+    reviewer_name: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    review_reason: Optional[str] = None

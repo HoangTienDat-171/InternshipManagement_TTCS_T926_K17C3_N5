@@ -1437,6 +1437,12 @@ body { background: var(--bg-app); }
 .document-data-table { min-width: 1040px; }
 .document-data-table th,
 .document-data-table td { padding: 13px 14px; }
+.document-review-metadata { display: grid; gap: 3px; max-width: 260px; margin-top: 6px; color: var(--text-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.document-review-reason-field { display: grid; gap: 7px; margin-top: 14px; color: var(--text-body); font-size: 12px; font-weight: 700; }
+.document-review-reason-field strong { color: var(--danger-text); }
+.document-review-reason-field textarea { width: 100%; min-height: 100px; resize: vertical; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--surface-card); color: var(--text-main); font: inherit; font-weight: 400; }
+.document-review-reason-field textarea:focus { border-color: var(--primary-500); outline: 3px solid rgb(99 102 241 / 14%); }
+.document-review-error { margin: 10px 0 0; color: var(--danger-text); font-size: 12px; line-height: 1.5; }
 
 /* Mentor list: stable column proportions for long departments and expertise. */
 .mentor-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
@@ -2406,6 +2412,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .intern-document-details { display: grid; min-width: 0; gap: 4px; }
 .intern-document-details strong { overflow: hidden; color: var(--text-main); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .intern-document-details small { overflow-wrap: anywhere; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.intern-document-details .intern-document-review-reason { color: var(--danger-text); }
 .intern-document-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; }
 .intern-document-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-body); font: inherit; font-size: 10px; font-weight: 650; white-space: nowrap; cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease; }
 .intern-document-action:hover { border-color: #b9b4ff; background: #f5f4ff; color: #4f46e5; }

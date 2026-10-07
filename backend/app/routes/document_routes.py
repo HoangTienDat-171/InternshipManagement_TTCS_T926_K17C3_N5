@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 
+from .. import database as database_module
 from ..database import DB_FILE, get_db
 from ..notifications import create_notification
 from ..schemas import DocumentDetail, DocumentReview
@@ -24,7 +25,8 @@ INTERN_ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 def document_record(row):
     record = dict(row)
-    record["ten_file"] = record["ten_file"] or Path(record["duong_dan_file"]).name
+    storage_path = record.pop("duong_dan_file", None)
+    record["ten_file"] = record["ten_file"] or Path(storage_path or "").name
     return record
 
 
@@ -64,6 +66,7 @@ def list_documents(
         FROM TAI_LIEU_HO_SO d
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = d.reviewed_by
         WHERE u.vai_tro = 'ThucTapSinh'
     """
     if page is not None or page_size is not None:
@@ -80,7 +83,9 @@ def list_documents(
     rows = db.execute("""
         SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.duong_dan_file,
                d.kich_thuoc, d.loai_tai_lieu, d.ngay_tai_len,
-               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh
+               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh,
+               d.reviewed_by, reviewer.ho_ten AS reviewer_name,
+               d.reviewed_at, d.review_reason
     """ + base_query + """
         ORDER BY d.ngay_tai_len DESC, d.ma_tai_lieu DESC
     """ + paging_clause, paging_params).fetchall()
@@ -165,9 +170,12 @@ async def upload_document(
     row = db.execute("""
         SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.duong_dan_file,
                d.kich_thuoc, d.loai_tai_lieu, d.ngay_tai_len,
-               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh
+               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh,
+               d.reviewed_by, reviewer.ho_ten AS reviewer_name,
+               d.reviewed_at, d.review_reason
         FROM TAI_LIEU_HO_SO d JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = d.reviewed_by
         WHERE d.ma_tai_lieu = ?
     """, (cursor.lastrowid,)).fetchone()
     return document_record(row)
@@ -202,34 +210,61 @@ def delete_intern_document(document_id: int, request: Request, db: sqlite3.Conne
 
 @router.put("/{document_id}/review", response_model=DocumentDetail)
 def review_document(document_id: int, data: DocumentReview, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    require_role(request, "Admin", "HR")
-    document = db.execute("""
-        SELECT d.trang_thai_duyet, u.ma_nguoi_dung, u.ho_ten
-        FROM TAI_LIEU_HO_SO d
-        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
-        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
-        WHERE d.ma_tai_lieu = ? AND u.vai_tro = 'ThucTapSinh'
-    """, (document_id,)).fetchone()
-    if not document:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
-    cursor = db.execute("""
-        UPDATE TAI_LIEU_HO_SO SET trang_thai_duyet = ? WHERE ma_tai_lieu = ?
-    """, (data.trang_thai_duyet, document_id))
-    if cursor.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
-    if document["trang_thai_duyet"] != data.trang_thai_duyet:
+    actor = require_role(request, "Admin", "HR")
+    review_reason = (data.review_reason or "").strip() or None
+    if data.trang_thai_duyet == "TuChoi" and review_reason is None:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập lý do từ chối tài liệu.")
+
+    is_mysql = database_module.DATABASE_BACKEND == "mysql"
+    lock_clause = " FOR UPDATE" if is_mysql else ""
+    try:
+        db.execute("START TRANSACTION" if is_mysql else "BEGIN IMMEDIATE")
+        document = db.execute("""
+            SELECT d.trang_thai_duyet, u.ma_nguoi_dung, u.ho_ten
+            FROM TAI_LIEU_HO_SO d
+            JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
+            JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+            WHERE d.ma_tai_lieu = ? AND u.vai_tro = 'ThucTapSinh'
+        """ + lock_clause, (document_id,)).fetchone()
+        if not document:
+            raise HTTPException(status_code=404, detail="Không tìm thấy tài liệu.")
+        if document["trang_thai_duyet"] != "ChoDuyet":
+            raise HTTPException(status_code=409, detail="Tài liệu đã được xử lý trước đó.")
+
+        cursor = db.execute("""
+            UPDATE TAI_LIEU_HO_SO
+            SET trang_thai_duyet = ?, reviewed_by = ?, review_reason = ?, reviewed_at = CURRENT_TIMESTAMP
+            WHERE ma_tai_lieu = ? AND trang_thai_duyet = 'ChoDuyet'
+        """, (data.trang_thai_duyet, actor["ma_nguoi_dung"], review_reason, document_id))
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Tài liệu đã được xử lý trước đó.")
+
         title, message = {
             "DaDuyet": ("Tài liệu đã được duyệt", f"Tài liệu {document['ho_ten']} gửi lên đã được duyệt."),
             "TuChoi": ("Tài liệu bị từ chối", f"Tài liệu {document['ho_ten']} gửi lên đã bị từ chối."),
         }[data.trang_thai_duyet]
-        create_notification(db, document["ma_nguoi_dung"], title, message)
-    db.commit()
+        create_notification(
+            db, document["ma_nguoi_dung"], title, message,
+            notification_type="document_reviewed",
+            reference_type="document", reference_id=document_id,
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
     row = db.execute("""
         SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.duong_dan_file,
                d.kich_thuoc, d.loai_tai_lieu, d.ngay_tai_len,
-               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh
+               d.trang_thai_duyet, u.ho_ten AS thuc_tap_sinh,
+               d.reviewed_by, reviewer.ho_ten AS reviewer_name,
+               d.reviewed_at, d.review_reason
         FROM TAI_LIEU_HO_SO d JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = d.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = d.reviewed_by
         WHERE d.ma_tai_lieu = ?
     """, (document_id,)).fetchone()
     return document_record(row)

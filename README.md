@@ -90,6 +90,8 @@ Thay cả hai giá trị `your-address@gmail.com` bằng cùng địa chỉ Gmai
 
 `SMTP_HOST` là máy chủ SMTP của Gmail; địa chỉ Gmail cá nhân được dùng làm tài khoản xác thực và địa chỉ người gửi. `IMS_COMPANY_NAME` và `IMS_PORTAL_URL` được dùng trong email kết quả ứng tuyển; nếu bỏ trống, công ty hiển thị là `IMS Portal` và email hướng dẫn mở địa chỉ portal đã được cung cấp. Với MySQL hiện có, rà soát và áp dụng `migrations/20260930_us08_email_notifications.sql` để đặt giới hạn bốn lần thử cho cả mặc định lẫn hàng đợi cũ; áp dụng `migrations/20260930_temporary_passwords.sql` trước khi tạo tài khoản để thêm cột đổi mật khẩu. Backend không tự chạy các migration này.
 
+US05 bổ sung reviewer, lý do và thời điểm duyệt vào `TAI_LIEU_HO_SO` đang có. Với MySQL hiện có, có thể áp dụng `migrations/20261007_us05_document_review.sql`; script an toàn khi chạy lại và giữ metadata của tài liệu cũ ở trạng thái `NULL`. `init_db()` cũng bổ sung các cột và khóa ngoại còn thiếu theo cơ chế schema update hiện tại.
+
 Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, mất kết nối, hết retry, deduplication, rollback và hai worker claim đồng thời mà không gọi SMTP thật. Migration MySQL nằm ở `migrations/20260930_us08_email_notifications.sql`; `init_db()` cũng tạo/cập nhật các bảng US08 theo cơ chế khởi động hiện tại.
 
 ## Các tính năng và cập nhật mới

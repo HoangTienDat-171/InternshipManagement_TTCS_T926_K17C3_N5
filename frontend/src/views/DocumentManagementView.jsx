@@ -3,6 +3,7 @@ import { FolderUp, FileText, UploadCloud, Eye, Check, XCircle, RefreshCw } from 
 import { apiFetch, readJsonResponse } from '../utils/api';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
+import ConfirmDialog from '../components/ConfirmDialog';
 import ContractManagementPanel from '../components/ContractManagementPanel';
 
 const typeLabels = {
@@ -33,6 +34,9 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [pendingReview, setPendingReview] = useState(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState('');
 
   const requestDocuments = useCallback(async (requestedPage, requestedPageSize, signal) => {
     const params = new URLSearchParams({ page: String(requestedPage), pageSize: String(requestedPageSize) });
@@ -140,19 +144,38 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
     }
   };
 
-  const reviewDocument = async (item, reviewStatus) => {
+  const openReviewDialog = (item, reviewStatus) => {
+    setReviewError('');
+    setPendingReview({ item, reviewStatus, review_reason: '' });
+  };
+
+  const reviewDocument = async () => {
+    if (!pendingReview || reviewing) return;
+    const reason = pendingReview.review_reason.trim();
+    if (pendingReview.reviewStatus === 'TuChoi' && !reason) {
+      setReviewError('Vui lòng nhập lý do từ chối tài liệu.');
+      return;
+    }
+
+    setReviewing(true);
+    setReviewError('');
     try {
-      const response = await apiFetch(`/api/documents/${item.ma_tai_lieu}/review`, {
+      const payload = { trang_thai_duyet: pendingReview.reviewStatus };
+      if (pendingReview.reviewStatus === 'TuChoi') payload.review_reason = reason;
+      const response = await apiFetch(`/api/documents/${pendingReview.item.ma_tai_lieu}/review`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trang_thai_duyet: reviewStatus }),
+        body: JSON.stringify(payload),
       });
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể cập nhật trạng thái tài liệu.');
-      onShowToast(reviewStatus === 'DaDuyet' ? 'Đã duyệt tài liệu.' : 'Đã từ chối tài liệu.');
-      setDocuments((previous) => previous.map((documentItem) => documentItem.ma_tai_lieu === item.ma_tai_lieu ? data : documentItem));
+      onShowToast(pendingReview.reviewStatus === 'DaDuyet' ? 'Đã duyệt tài liệu.' : 'Đã từ chối tài liệu.');
+      setDocuments((previous) => previous.map((documentItem) => documentItem.ma_tai_lieu === pendingReview.item.ma_tai_lieu ? data : documentItem));
+      setPendingReview(null);
     } catch (error) {
-      onShowToast(error.message, 'error');
+      setReviewError(error.message);
+    } finally {
+      setReviewing(false);
     }
   };
 
@@ -256,7 +279,7 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
           <table className="data-table document-data-table">
             <thead><tr>
               <th>Tên tệp</th><th>Thực tập sinh</th><th>Phân loại</th><th>Dung lượng</th>
-              <th>Thời gian tải lên</th><th>Trạng thái</th><th style={{ textAlign: 'right' }}>Thao tác</th>
+              <th>Thời gian tải lên</th><th>Trạng thái / xử lý</th><th style={{ textAlign: 'right' }}>Thao tác</th>
             </tr></thead>
             <tbody>
               {loading ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px' }}>Đang tải dữ liệu...</td></tr>
@@ -268,12 +291,19 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
                     <td><span className="badge badge-info">{typeLabels[item.loai_tai_lieu] || item.loai_tai_lieu}</span></td>
                     <td style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{formatSize(item.kich_thuoc)}</td>
                     <td style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{formatDate(item.ngay_tai_len)}</td>
-                    <td>{statusBadge(item.trang_thai_duyet)}</td>
+                    <td>
+                      {statusBadge(item.trang_thai_duyet)}
+                      {item.trang_thai_duyet !== 'ChoDuyet' && <div className="document-review-metadata">
+                        <span>Người xử lý: {item.reviewer_name || 'Chưa có thông tin người duyệt được lưu'}</span>
+                        <span>Thời gian: {formatDate(item.reviewed_at)}</span>
+                        {item.review_reason && <span>Lý do: {item.review_reason}</span>}
+                      </div>}
+                    </td>
                     <td style={{ textAlign: 'right' }}><div style={{ display: 'inline-flex', gap: '6px' }}>
                       <button type="button" className="btn btn-secondary btn-sm" title="Xem tài liệu" onClick={() => openDocument(item)}><Eye size={13} /><span>Xem</span></button>
                       {item.trang_thai_duyet === 'ChoDuyet' && <>
-                        <button type="button" className="btn btn-primary btn-sm" title="Duyệt tài liệu" onClick={() => reviewDocument(item, 'DaDuyet')}><Check size={13} /><span>Duyệt</span></button>
-                        <button type="button" className="btn btn-danger btn-sm" title="Từ chối tài liệu" onClick={() => reviewDocument(item, 'TuChoi')}><XCircle size={13} /><span>Từ chối</span></button>
+                        <button type="button" className="btn btn-primary btn-sm" title="Duyệt tài liệu" onClick={() => openReviewDialog(item, 'DaDuyet')}><Check size={13} /><span>Duyệt</span></button>
+                        <button type="button" className="btn btn-danger btn-sm" title="Từ chối tài liệu" onClick={() => openReviewDialog(item, 'TuChoi')}><XCircle size={13} /><span>Từ chối</span></button>
                       </>}
                     </div></td>
                   </tr>)}
@@ -291,6 +321,33 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
           onPageSizeChange={(size) => { setLoading(true); setPage(1); setPageSize(size); }}
         />
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingReview)}
+        title={pendingReview?.reviewStatus === 'DaDuyet' ? 'Xác nhận duyệt tài liệu' : 'Xác nhận từ chối tài liệu'}
+        message={pendingReview ? `Thực tập sinh: ${pendingReview.item.thuc_tap_sinh} · ${typeLabels[pendingReview.item.loai_tai_lieu] || pendingReview.item.loai_tai_lieu} · ${pendingReview.item.ten_file}` : ''}
+        confirmLabel={pendingReview?.reviewStatus === 'DaDuyet' ? 'Xác nhận duyệt' : 'Xác nhận từ chối'}
+        danger={pendingReview?.reviewStatus === 'TuChoi'}
+        busy={reviewing}
+        confirmDisabled={pendingReview?.reviewStatus === 'TuChoi' && !pendingReview.review_reason.trim()}
+        onCancel={() => { if (!reviewing) { setPendingReview(null); setReviewError(''); } }}
+        onConfirm={reviewDocument}
+        className="document-review-confirm"
+      >
+        {pendingReview?.reviewStatus === 'TuChoi' && <label className="document-review-reason-field" htmlFor="document-review-reason">
+          <span>Lý do từ chối <strong>*</strong></span>
+          <textarea
+            id="document-review-reason"
+            rows="4"
+            maxLength={2000}
+            value={pendingReview.review_reason}
+            onChange={(event) => setPendingReview((current) => ({ ...current, review_reason: event.target.value }))}
+            placeholder="Nhập lý do để thực tập sinh biết cần bổ sung hoặc chỉnh sửa gì."
+            disabled={reviewing}
+          />
+          <small>Vui lòng nhập nội dung cụ thể; khoảng trắng sẽ không được chấp nhận.</small>
+        </label>}
+        {reviewError && <p className="document-review-error" role="alert">{reviewError}</p>}
+      </ConfirmDialog>
     </div>
   );
 }
