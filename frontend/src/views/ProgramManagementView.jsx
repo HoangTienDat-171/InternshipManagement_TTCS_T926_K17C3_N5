@@ -253,6 +253,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
 
   const handleApply = async (event) => {
     event.preventDefault();
+    if (submitting) return;
     if (!applicationProgram || (!useApprovedProfile && !applicationCv)) {
       onShowToast('Vui lòng chọn hồ sơ đã duyệt hoặc đính kèm CV.', 'error');
       return;

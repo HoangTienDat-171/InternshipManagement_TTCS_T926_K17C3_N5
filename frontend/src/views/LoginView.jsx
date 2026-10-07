@@ -111,6 +111,7 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
+    if (regLoading) return;
     setErrorMsg('');
     setRegSuccessMsg('');
 
