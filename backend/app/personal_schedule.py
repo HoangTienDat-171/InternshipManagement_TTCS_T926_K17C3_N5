@@ -39,6 +39,7 @@ class PersonalScheduleService:
                 AND a.trang_thai='DaDuyet'
             JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
             LEFT JOIN PHAN_CONG_MENTOR_TTS assignment ON assignment.ma_ho_so=h.ma_ho_so
+                AND (assignment.ma_chuong_trinh=c.ma_chuong_trinh OR (assignment.ma_chuong_trinh IS NULL AND assignment.ma_ho_so=h.ma_ho_so))
             LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung=assignment.ma_nguoi_dung_mentor
                 AND mentor.vai_tro='Mentor'
             WHERE h.ma_nguoi_dung=? AND h.trang_thai_xet_duyet='DaDuyet'

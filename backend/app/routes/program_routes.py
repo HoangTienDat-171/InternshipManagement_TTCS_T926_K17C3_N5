@@ -5,19 +5,25 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 
 from ..database import get_db
 from .. import database as database_module
 from .document_routes import MAX_FILE_SIZE, UPLOAD_ROOT, valid_file_content
+from ..mentor_assignment_service import (
+    assign_mentor_canonical,
+    check_program_overlap,
+    unassign_mentor_canonical,
+)
 from ..notifications import create_notification
 from ..schemas import (
     ProgramApplicationDetail,
     ProgramApplicationReview,
     ProgramCreate,
     ProgramDetail,
+    ProgramMentorAssignment,
 )
-from ..security import require_role
+from ..security import publish_workspace_updated, require_role
 
 router = APIRouter(prefix="/api/programs", tags=["Internship Programs"])
 
@@ -375,11 +381,18 @@ def list_program_applications(
         SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, a.ma_ho_so,
                u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                t.ten_truong, h.chuyen_nganh, a.trang_thai,
-               a.ngay_ung_tuyen, a.ngay_xet_duyet
+               a.ngay_ung_tuyen, a.ngay_xet_duyet,
+               p.ma_nguoi_dung_mentor,
+               m.ho_ten AS ten_mentor,
+               m.email AS email_mentor,
+               p.ngay_phan_cong
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
+        LEFT JOIN PHAN_CONG_MENTOR_TTS p ON p.ma_ho_so = a.ma_ho_so
+             AND (p.ma_chuong_trinh = a.ma_chuong_trinh OR (p.ma_chuong_trinh IS NULL AND p.ma_ho_so = a.ma_ho_so))
+        LEFT JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = p.ma_nguoi_dung_mentor AND m.vai_tro = 'Mentor'
         WHERE a.ma_chuong_trinh = ? AND u.vai_tro = 'ThucTapSinh'
         ORDER BY CASE a.trang_thai WHEN 'ChoDuyet' THEN 0 WHEN 'DaDuyet' THEN 1 ELSE 2 END,
                  a.ngay_ung_tuyen DESC, a.ma_ung_tuyen DESC
@@ -422,6 +435,11 @@ def review_program_application(
     """, (application_id, program_id)).fetchone()
     if not application:
         raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển.")
+    if database_module.DATABASE_BACKEND == "mysql":
+        db.execute(
+            "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_ho_so = ? FOR UPDATE",
+            (application["ma_ho_so"],),
+        ).fetchone()
     if application["trang_thai"] != "ChoDuyet":
         raise HTTPException(status_code=400, detail="Đơn ứng tuyển này đã được xử lý trước đó.")
 
@@ -432,6 +450,14 @@ def review_program_application(
         """, (program_id,)).fetchone()[0]
         if approved_count >= program["chi_tieu"]:
             raise HTTPException(status_code=400, detail="Chương trình đã đủ chỉ tiêu được duyệt.")
+
+        # Business Rule 4, 5, 7: Kiểm tra overlap với các chương trình đã duyệt khác của TTS này
+        conflict = check_program_overlap(db, application["ma_ho_so"], program_id)
+        if conflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Thực tập sinh đã được duyệt tham gia chương trình '{conflict['ten_ct']}' có thời gian trùng lặp. Không thể duyệt đồng thời hai chương trình bị overlap.",
+            )
 
     cursor = db.execute("""
         UPDATE UNG_TUYEN_CHUONG_TRINH
@@ -528,3 +554,87 @@ def program_detail(program_id: int, request: Request, db: sqlite3.Connection = D
         """, (program_id, user["ma_nguoi_dung"])).fetchone()
         program["trang_thai_ung_tuyen"] = application["trang_thai"] if application else None
     return program
+
+
+@router.post("/{program_id}/applications/{application_id}/assign-mentor", response_model=dict[str, Any])
+def assign_mentor_to_application(
+    program_id: int,
+    application_id: int,
+    data: ProgramMentorAssignment,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    actor = require_role(request, "Admin", "HR")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        app = db.execute("""
+            SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, a.ma_ho_so, a.trang_thai
+            FROM UNG_TUYEN_CHUONG_TRINH a
+            WHERE a.ma_ung_tuyen = ? AND a.ma_chuong_trinh = ?
+        """, (application_id, program_id)).fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển trong chương trình này.")
+        if app["trang_thai"] != "DaDuyet":
+            raise HTTPException(status_code=400, detail="Chỉ có thể phân công Mentor cho ứng viên đã được duyệt.")
+
+        res = assign_mentor_canonical(
+            db,
+            mentor_id=data.mentor_id,
+            profile_id=app["ma_ho_so"],
+            program_id=program_id,
+            application_id=application_id,
+            assigned_by=actor["ma_nguoi_dung"],
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    background_tasks.add_task(publish_workspace_updated, data.mentor_id)
+    background_tasks.add_task(publish_workspace_updated, res["intern_user_id"])
+    return res
+
+
+@router.delete("/{program_id}/applications/{application_id}/unassign-mentor", response_model=dict[str, Any])
+def unassign_mentor_from_application(
+    program_id: int,
+    application_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    require_role(request, "Admin", "HR")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        app = db.execute("""
+            SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, a.ma_ho_so, p.ma_nguoi_dung_mentor
+            FROM UNG_TUYEN_CHUONG_TRINH a
+            JOIN PHAN_CONG_MENTOR_TTS p ON p.ma_ho_so = a.ma_ho_so
+                 AND (p.ma_chuong_trinh = a.ma_chuong_trinh OR (p.ma_chuong_trinh IS NULL AND p.ma_ho_so = a.ma_ho_so))
+            WHERE a.ma_ung_tuyen = ? AND a.ma_chuong_trinh = ?
+        """, (application_id, program_id)).fetchone()
+        if not app:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phân công Mentor cho đơn ứng tuyển này.")
+
+        mentor_id = app["ma_nguoi_dung_mentor"]
+        res = unassign_mentor_canonical(
+            db,
+            mentor_id=mentor_id,
+            profile_id=app["ma_ho_so"],
+            program_id=program_id,
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    background_tasks.add_task(publish_workspace_updated, mentor_id)
+    background_tasks.add_task(publish_workspace_updated, res["intern_user_id"])
+    return res
