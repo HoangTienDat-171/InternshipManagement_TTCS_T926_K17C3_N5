@@ -335,6 +335,7 @@ export default function InternWorkspaceView({ currentUser, onNavigatePrograms, r
             <div className="intern-document-details">
               <strong title={item.ten_file || item.loai_tai_lieu}>{item.ten_file || item.loai_tai_lieu}</strong>
               <small>{documentTypeLabels[item.loai_tai_lieu] || item.loai_tai_lieu} · {item.ngay_tai_len || 'Ngày tải chưa rõ'}{fileSize ? ` · ${fileSize}` : ''}</small>
+              {item.trang_thai_duyet === 'TuChoi' && <small className="intern-document-review-reason"><strong>Lý do từ chối:</strong> {item.review_reason || 'Chưa có lý do được lưu cho tài liệu cũ.'}</small>}
             </div>
             <StatusPill status={item.trang_thai_duyet} />
             <div className="intern-document-actions">
