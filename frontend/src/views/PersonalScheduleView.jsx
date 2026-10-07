@@ -56,7 +56,7 @@ function ScheduleEvent({ event, compact = false }) {
     <strong>{event.title}</strong>
     <span className="personal-schedule-event-meta">
       <span className="personal-schedule-state is-approved">Đã duyệt</span>
-      {event.mentor && <span><UserRound size={12} />{event.mentor.name}</span>}
+      <span><UserRound size={12} />{event.mentor?.name || 'Chưa phân công Mentor'}</span>
     </span>
   </article>;
 }
@@ -114,7 +114,7 @@ export default function PersonalScheduleView() {
       <div>
         <span className="workspace-eyebrow">KHÔNG GIAN THỰC TẬP</span>
         <h2>Lịch thực tập cá nhân</h2>
-        <p>Lịch hiển thị khoảng ngày chương trình đã được duyệt và Mentor được phân công; hiện chưa có dữ liệu về ca hoặc giờ làm việc.</p>
+        <p>Lịch hiển thị các chương trình đã duyệt và chưa đóng; Mentor sẽ hiện khi được phân công. Hiện chưa có dữ liệu về ca hoặc giờ làm việc.</p>
       </div>
       <button type="button" className="btn btn-secondary" disabled={loading} onClick={retry}>
         <RefreshCw size={15} />Làm mới
@@ -138,8 +138,8 @@ export default function PersonalScheduleView() {
       </div>
     </section>
 
-    {!loading && !error && schedule?.warning && <div className="personal-schedule-warning" role="status">
-      <AlertTriangle size={17} /><span>Bạn chưa có chương trình được duyệt hoặc chưa được phân công Mentor. Vui lòng liên hệ Quản trị viên.</span>
+    {!loading && !error && schedule?.mentor_assignment_pending && <div className="personal-schedule-warning" role="status">
+      <AlertTriangle size={17} /><span>Bạn chưa được phân công Mentor; bạn vẫn xem được lịch của chương trình đã duyệt.</span>
     </div>}
     {error && <div className="workspace-error personal-schedule-error" role="alert">
         <span>{error}</span><button type="button" className="btn btn-secondary btn-sm" onClick={retry}>Thử lại</button>
@@ -170,7 +170,7 @@ export default function PersonalScheduleView() {
     </section>}
 
     {!loading && !error && schedule && !schedule.has_program && <div className="personal-schedule-no-program" role="status">
-      <CalendarDays size={16} />Hồ sơ của bạn chưa có chương trình thực tập được duyệt.
+      <CalendarDays size={16} />Bạn chưa có chương trình thực tập đang mở được duyệt.
     </div>}
   </div>;
 }

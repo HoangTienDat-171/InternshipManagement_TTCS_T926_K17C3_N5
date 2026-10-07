@@ -509,7 +509,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                           <button type="button" className="btn btn-secondary btn-sm" title="Xem chi tiết" onClick={() => setDetailProgram(program)}><Eye size={13} /><span>Chi tiết</span></button>
                           {isManager && <button type="button" className="btn btn-secondary btn-sm" title="Danh sách ứng viên" onClick={() => loadApplicants(program)}><Users size={13} /><span>Ứng viên</span></button>}
                           {isAdmin && <button type="button" className="btn btn-outline-primary btn-sm" title="Chỉnh sửa" onClick={() => openEditForm(program)}><Pencil size={13} /><span>Sửa</span></button>}
-                          {isAdmin && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
+                          {isManager && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
                           {isIntern && (!program.trang_thai_ung_tuyen
                             ? <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={() => openApplication(program)}><Send size={13} /><span>Ứng tuyển</span></button>
                             : program.trang_thai_ung_tuyen === 'DaDuyet' ? null : <button type="button" className="btn btn-secondary btn-sm" disabled><Check size={13} /><span>{program.trang_thai_ung_tuyen === 'ChoDuyet' ? 'Chờ duyệt' : 'Đã từ chối'}</span></button>)}
@@ -576,7 +576,8 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                       <td><StatusBadge status={application.trang_thai} /></td>
                       <td>{application.ten_mentor ? <div><strong>{application.ten_mentor}</strong><br /><small>{application.email_mentor}</small></div> : <span style={{ color: 'var(--text-muted)' }}>Chưa phân công</span>}</td>
                       {isManager && <td>{application.trang_thai === 'ChoDuyet' ? <div className="program-row-actions">
-                        <button type="button" className="btn btn-primary btn-sm" disabled={reviewSubmitting} onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>
+                        {applicantProgram.trang_thai === 'DaDong' && <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Chương trình đã đóng</span>}
+                        {applicantProgram.trang_thai !== 'DaDong' && <button type="button" className="btn btn-primary btn-sm" disabled={reviewSubmitting} onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>}
                         <button type="button" className="btn btn-danger btn-sm" disabled={reviewSubmitting} onClick={() => { setPendingReject(application); setRejectReason(''); }}><XCircle size={13} />Từ chối</button>
                       </div> : <div className="program-row-actions">
                         {application.trang_thai === 'DaDuyet' && (
