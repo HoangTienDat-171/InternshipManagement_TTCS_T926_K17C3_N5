@@ -132,12 +132,22 @@ class InternAssignmentCandidate(BaseModel):
     so_dien_thoai: Optional[str] = None
     ten_truong: Optional[str] = None
     chuyen_nganh: Optional[str] = None
+    ma_chuong_trinh: Optional[int] = None
+    ten_ct: Optional[str] = None
+    ma_ct: Optional[str] = None
+    ma_ung_tuyen: Optional[int] = None
+    timeline_status: Optional[str] = None
 
 class MentorAssignmentDetail(InternAssignmentCandidate):
     ngay_phan_cong: Optional[str] = None
+    ma_phan_cong: Optional[int] = None
 
 class MentorBatchAssignment(BaseModel):
     ma_ho_so_list: List[int] = Field(min_length=1, max_length=50)
+    ma_chuong_trinh: Optional[int] = None
+
+class ProgramMentorAssignment(BaseModel):
+    mentor_id: int = Field(gt=0)
 
 
 TaskPriority = Literal["LOW", "MEDIUM", "HIGH", "URGENT"]

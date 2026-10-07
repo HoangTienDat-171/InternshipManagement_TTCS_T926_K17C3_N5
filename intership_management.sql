@@ -113,19 +113,6 @@ CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (
     FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE
 );
 
--- Mỗi hồ sơ TTS chỉ có một Mentor đang hướng dẫn tại một thời điểm.
-CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
-    ma_phan_cong INT AUTO_INCREMENT PRIMARY KEY,
-    ma_nguoi_dung_mentor INT NOT NULL,
-    ma_ho_so INT NOT NULL UNIQUE,
-    ma_nguoi_phan_cong INT NULL,
-    ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    KEY idx_phan_cong_mentor (ma_nguoi_dung_mentor),
-    FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
-    FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-    FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
-);
-
 -- Chương trình thực tập và thông tin tuyển dụng.
 CREATE TABLE IF NOT EXISTS CHUONG_TRINH_THUC_TAP (
     ma_chuong_trinh INT AUTO_INCREMENT PRIMARY KEY,
@@ -157,6 +144,26 @@ CREATE TABLE IF NOT EXISTS UNG_TUYEN_CHUONG_TRINH (
     FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
     FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
     FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+);
+
+-- Phân công Mentor cho Thực tập sinh gắn với chương trình / đơn ứng tuyển.
+CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
+    ma_phan_cong INT AUTO_INCREMENT PRIMARY KEY,
+    ma_nguoi_dung_mentor INT NOT NULL,
+    ma_ho_so INT NOT NULL,
+    ma_chuong_trinh INT NULL,
+    ma_ung_tuyen INT NULL,
+    ma_nguoi_phan_cong INT NULL,
+    ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_phan_cong_mentor (ma_nguoi_dung_mentor),
+    KEY idx_phan_cong_ho_so (ma_ho_so),
+    KEY idx_phan_cong_chuong_trinh (ma_chuong_trinh),
+    UNIQUE KEY uq_phan_cong_ho_so_ct (ma_ho_so, ma_chuong_trinh),
+    FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
+    FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+    FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL,
+    FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE SET NULL,
+    FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
 );
 
 -- Tài khoản demo dùng chung mật khẩu 123456 (bcrypt).
