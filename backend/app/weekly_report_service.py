@@ -188,8 +188,9 @@ class WeeklyReportService:
             if cursor.rowcount != 1:
                 raise HTTPException(status_code=409, detail="Báo cáo tuần đã được nộp trước đó.")
             mentors = self.db.execute("""
-                SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so = ?
-            """, (report["internship_profile_id"],)).fetchall()
+                SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS
+                WHERE ma_ho_so = ? AND (ma_chuong_trinh = ? OR ma_chuong_trinh IS NULL)
+            """, (report["internship_profile_id"], report.get("program_id"))).fetchall()
             for mentor in mentors:
                 create_notification(
                     self.db,
@@ -216,7 +217,8 @@ class WeeklyReportService:
         assignment = db.execute("""
             SELECT 1 FROM PHAN_CONG_MENTOR_TTS
             WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ?
-        """, (mentor_id, report["internship_profile_id"])).fetchone()
+              AND (ma_chuong_trinh = ? OR ma_chuong_trinh IS NULL)
+        """, (mentor_id, report["internship_profile_id"], report.get("program_id"))).fetchone()
         if not assignment:
             raise HTTPException(status_code=403, detail="Bạn không được phân công hướng dẫn thực tập sinh của báo cáo này.")
 
@@ -232,7 +234,8 @@ class WeeklyReportService:
         clauses = [
             "r.trang_thai = 'SUBMITTED'",
             "EXISTS (SELECT 1 FROM PHAN_CONG_MENTOR_TTS assignment "
-            "WHERE assignment.ma_nguoi_dung_mentor = ? AND assignment.ma_ho_so = r.ma_ho_so)",
+            "WHERE assignment.ma_nguoi_dung_mentor = ? AND assignment.ma_ho_so = r.ma_ho_so "
+            "AND (assignment.ma_chuong_trinh = r.ma_chuong_trinh OR assignment.ma_chuong_trinh IS NULL))",
         ]
         params: list = [mentor_id]
         if intern_user_id is not None:

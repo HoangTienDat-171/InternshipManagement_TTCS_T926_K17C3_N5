@@ -42,14 +42,25 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
     if not profile:
         raise HTTPException(status_code=404, detail="Tài khoản chưa có hồ sơ thực tập sinh.")
 
-    mentor = db.execute("""
-        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem
-        FROM PHAN_CONG_MENTOR_TTS a JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=a.ma_nguoi_dung_mentor
-        LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
-        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
-        WHERE a.ma_ho_so=? AND u.vai_tro='Mentor'
-    """, (profile["ma_ho_so"],)).fetchone()
+    from ..mentor_assignment_service import (
+        get_intern_active_assignment,
+        get_intern_active_program,
+        get_timeline_status,
+    )
+
+    active_assignment = get_intern_active_assignment(db, profile["ma_ho_so"])
+    mentor = None
+    if active_assignment:
+        mentor_row = db.execute("""
+            SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+                   p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem
+            FROM NGUOI_DUNG u
+            LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
+            LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
+            WHERE u.ma_nguoi_dung=? AND u.vai_tro='Mentor'
+        """, (active_assignment["ma_nguoi_dung"],)).fetchone()
+        mentor = dict(mentor_row) if mentor_row else None
+
     documents = db.execute("""
         SELECT d.ma_tai_lieu, d.ma_ho_so, d.ten_file, d.loai_tai_lieu, d.kich_thuoc,
                d.ngay_tai_len, d.trang_thai_duyet, d.reviewed_by,
@@ -58,25 +69,49 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung=d.reviewed_by
         WHERE d.ma_ho_so=? ORDER BY d.ngay_tai_len DESC, d.ma_tai_lieu DESC
     """, (profile["ma_ho_so"],)).fetchall()
-    applications = db.execute("""
-        SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
-               a.trang_thai AS trang_thai_ung_tuyen, a.ngay_ung_tuyen
+
+    raw_apps = db.execute("""
+        SELECT c.ma_chuong_trinh, c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
+               a.trang_thai AS trang_thai_ung_tuyen, a.ngay_ung_tuyen,
+               m.ma_nguoi_dung AS mentor_id, m.ho_ten AS mentor_name, m.email AS mentor_email
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
+        LEFT JOIN PHAN_CONG_MENTOR_TTS p ON p.ma_ho_so = a.ma_ho_so
+             AND (p.ma_chuong_trinh = a.ma_chuong_trinh OR (p.ma_chuong_trinh IS NULL AND p.ma_ho_so = a.ma_ho_so))
+        LEFT JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = p.ma_nguoi_dung_mentor AND m.vai_tro = 'Mentor'
         WHERE a.ma_ho_so=? ORDER BY a.ngay_ung_tuyen DESC
     """, (profile["ma_ho_so"],)).fetchall()
-    current_program = next((dict(row) for row in applications if row["trang_thai_ung_tuyen"] == "DaDuyet"), None)
+
+    applications = []
+    for app in raw_apps:
+        item = dict(app)
+        item["timeline_status"] = get_timeline_status(
+            app["ngay_bat_dau"], app["ngay_ket_thuc"], app["trang_thai_ct"]
+        )
+        applications.append(item)
+
+    active_prog = get_intern_active_program(db, profile["ma_ho_so"])
+    current_program = active_prog if active_prog else next(
+        (
+            app for app in applications
+            if app["trang_thai_ung_tuyen"] == "DaDuyet"
+            and app["timeline_status"] != "HISTORICAL"
+        ),
+        None,
+    )
+
     progress = None
-    if current_program and current_program["ngay_bat_dau"] and current_program["ngay_ket_thuc"]:
+    if current_program and current_program.get("ngay_bat_dau") and current_program.get("ngay_ket_thuc"):
         start = date.fromisoformat(str(current_program["ngay_bat_dau"])[:10])
         end = date.fromisoformat(str(current_program["ngay_ket_thuc"])[:10])
         total_days = max(1, (end - start).days)
         elapsed_days = min(total_days, max(0, (date.today() - start).days))
         progress = round(elapsed_days * 100 / total_days)
+
     return {
-        "profile": dict(profile), "mentor": dict(mentor) if mentor else None,
+        "profile": dict(profile), "mentor": mentor,
         "documents": [dict(row) for row in documents],
-        "applications": [dict(row) for row in applications],
+        "applications": applications,
         "current_program": current_program, "progress_percent": progress,
     }
 

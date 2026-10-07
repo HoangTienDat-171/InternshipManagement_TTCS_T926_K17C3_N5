@@ -233,11 +233,17 @@ def init_mysql_db():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
                 ma_phan_cong INT AUTO_INCREMENT PRIMARY KEY,
-                ma_nguoi_dung_mentor INT NOT NULL, ma_ho_so INT NOT NULL UNIQUE,
+                ma_nguoi_dung_mentor INT NOT NULL, ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NULL, ma_ung_tuyen INT NULL,
                 ma_nguoi_phan_cong INT NULL, ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 KEY idx_phan_cong_mentor (ma_nguoi_dung_mentor),
+                KEY idx_phan_cong_ho_so (ma_ho_so),
+                KEY idx_phan_cong_chuong_trinh (ma_chuong_trinh),
+                UNIQUE KEY uq_phan_cong_ho_so_ct (ma_ho_so, ma_chuong_trinh),
                 FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL,
+                FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE SET NULL,
                 FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
@@ -570,6 +576,26 @@ def init_mysql_db():
                 ADD COLUMN progress_note VARCHAR(2000) NULL AFTER progress_percent
             """)
 
+        phan_cong_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHAN_CONG_MENTOR_TTS'
+        """).fetchall()
+        phan_cong_column_names = {row["COLUMN_NAME"] for row in phan_cong_columns}
+        if "ma_chuong_trinh" not in phan_cong_column_names:
+            conn.execute("ALTER TABLE PHAN_CONG_MENTOR_TTS ADD COLUMN ma_chuong_trinh INT NULL AFTER ma_ho_so")
+        if "ma_ung_tuyen" not in phan_cong_column_names:
+            conn.execute("ALTER TABLE PHAN_CONG_MENTOR_TTS ADD COLUMN ma_ung_tuyen INT NULL AFTER ma_chuong_trinh")
+        old_uq = conn.execute("""
+            SELECT INDEX_NAME FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHAN_CONG_MENTOR_TTS'
+              AND NON_UNIQUE = 0 AND INDEX_NAME != 'PRIMARY'
+            GROUP BY INDEX_NAME
+            HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME) = 'ma_ho_so'
+            LIMIT 1
+        """).fetchone()
+        if old_uq:
+            conn.execute(f"ALTER TABLE PHAN_CONG_MENTOR_TTS DROP INDEX `{old_uq['INDEX_NAME']}`")
+
         if conn.execute("SELECT COUNT(*) AS total FROM PHONG_BAN").fetchone()["total"] == 0:
             conn.executemany("INSERT INTO PHONG_BAN (ten_phong_ban, mo_ta) VALUES (?, ?)", [
                 ("Trung tâm Công nghệ Thông tin", "Phát triển phần mềm, giải pháp Web/App, AI và Cloud"),
@@ -721,11 +747,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS (
         ma_phan_cong INTEGER PRIMARY KEY AUTOINCREMENT,
         ma_nguoi_dung_mentor INTEGER NOT NULL,
-        ma_ho_so INTEGER NOT NULL UNIQUE,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER,
+        ma_ung_tuyen INTEGER,
         ma_nguoi_phan_cong INTEGER,
         ngay_phan_cong DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ma_chuong_trinh),
         FOREIGN KEY (ma_nguoi_dung_mentor) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL,
+        FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE SET NULL,
         FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
     """)
@@ -733,6 +764,15 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_phan_cong_mentor
         ON PHAN_CONG_MENTOR_TTS(ma_nguoi_dung_mentor)
     """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_phan_cong_chuong_trinh
+        ON PHAN_CONG_MENTOR_TTS(ma_chuong_trinh)
+    """)
+    phan_cong_sqlite_cols = {row["name"] for row in cursor.execute("PRAGMA table_info(PHAN_CONG_MENTOR_TTS)")}
+    if "ma_chuong_trinh" not in phan_cong_sqlite_cols:
+        cursor.execute("ALTER TABLE PHAN_CONG_MENTOR_TTS ADD COLUMN ma_chuong_trinh INTEGER")
+    if "ma_ung_tuyen" not in phan_cong_sqlite_cols:
+        cursor.execute("ALTER TABLE PHAN_CONG_MENTOR_TTS ADD COLUMN ma_ung_tuyen INTEGER")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (

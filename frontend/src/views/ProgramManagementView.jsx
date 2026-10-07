@@ -15,6 +15,8 @@ import {
   PlusCircle,
   RefreshCw,
   Send,
+  Trash2,
+  UserCheck,
   Users,
   X,
   XCircle,
@@ -89,6 +91,10 @@ export default function ProgramManagementView({ departments, onShowToast, curren
   const [pendingReject, setPendingReject] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [assigningMentorApp, setAssigningMentorApp] = useState(null);
+  const [mentorsList, setMentorsList] = useState([]);
+  const [selectedMentorId, setSelectedMentorId] = useState('');
+  const [mentorSubmitting, setMentorSubmitting] = useState(false);
   const tableScrollRef = useRef(null);
   const applicationLookupRef = useRef(0);
 
@@ -324,6 +330,63 @@ export default function ProgramManagementView({ departments, onShowToast, curren
     }
   };
 
+  const openAssignMentorModal = async (application) => {
+    setAssigningMentorApp(application);
+    setSelectedMentorId(application.ma_nguoi_dung_mentor ? String(application.ma_nguoi_dung_mentor) : '');
+    try {
+      const response = await apiFetch('/api/mentors');
+      const data = await response.json();
+      const list = Array.isArray(data) ? data : (data.items || []);
+      setMentorsList(list);
+    } catch {
+      onShowToast('Không thể tải danh sách Mentor.', 'error');
+    }
+  };
+
+  const handleSaveMentorAssignment = async (event) => {
+    event.preventDefault();
+    if (!assigningMentorApp || !selectedMentorId) return;
+    setMentorSubmitting(true);
+    try {
+      const response = await apiFetch(
+        `/api/programs/${assigningMentorApp.ma_chuong_trinh}/applications/${assigningMentorApp.ma_ung_tuyen}/assign-mentor`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mentor_id: Number(selectedMentorId) }),
+        },
+      );
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể phân công Mentor.');
+      onShowToast(data.message);
+      setAssigningMentorApp(null);
+      await loadApplicants(applicantProgram);
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    } finally {
+      setMentorSubmitting(false);
+    }
+  };
+
+  const handleUnassignMentor = async (application) => {
+    if (!window.confirm(`Xác nhận gỡ phân công Mentor của thực tập sinh ${application.ho_ten}?`)) return;
+    setReviewSubmitting(true);
+    try {
+      const response = await apiFetch(
+        `/api/programs/${application.ma_chuong_trinh}/applications/${application.ma_ung_tuyen}/unassign-mentor`,
+        { method: 'DELETE' },
+      );
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.detail || 'Không thể gỡ phân công.');
+      onShowToast(data.message);
+      await loadApplicants(applicantProgram);
+    } catch (error) {
+      onShowToast(error.message, 'error');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
+
   const closeProgram = async () => {
     if (!pendingClose) return;
     try {
@@ -446,7 +509,7 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                           <button type="button" className="btn btn-secondary btn-sm" title="Xem chi tiết" onClick={() => setDetailProgram(program)}><Eye size={13} /><span>Chi tiết</span></button>
                           {isManager && <button type="button" className="btn btn-secondary btn-sm" title="Danh sách ứng viên" onClick={() => loadApplicants(program)}><Users size={13} /><span>Ứng viên</span></button>}
                           {isAdmin && <button type="button" className="btn btn-outline-primary btn-sm" title="Chỉnh sửa" onClick={() => openEditForm(program)}><Pencil size={13} /><span>Sửa</span></button>}
-                          {isAdmin && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
+                          {isManager && program.trang_thai !== 'DaDong' && <button type="button" className="btn btn-danger btn-sm" title="Đóng đợt" onClick={() => setPendingClose(program)}><Lock size={13} /><span>Đóng đợt</span></button>}
                           {isIntern && (!program.trang_thai_ung_tuyen
                             ? <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={() => openApplication(program)}><Send size={13} /><span>Ứng tuyển</span></button>
                             : program.trang_thai_ung_tuyen === 'DaDuyet' ? null : <button type="button" className="btn btn-secondary btn-sm" disabled><Check size={13} /><span>{program.trang_thai_ung_tuyen === 'ChoDuyet' ? 'Chờ duyệt' : 'Đã từ chối'}</span></button>)}
@@ -505,16 +568,31 @@ export default function ProgramManagementView({ departments, onShowToast, curren
               {applicantsLoading ? <div className="program-modal-message">Đang tải danh sách...</div>
                 : applicants.length === 0 ? <div className="program-modal-message">Chưa có ứng viên đăng ký.</div>
                   : <><div className="table-responsive program-applicants-scroll"><table className="data-table program-applicants-table">
-                    <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th>{isManager && <th>Thao tác</th>}</tr></thead>
+                    <thead><tr><th>Ứng viên</th><th>Trường / Chuyên ngành</th><th>Ngày ứng tuyển</th><th>Trạng thái</th><th>Mentor hướng dẫn</th>{isManager && <th>Thao tác</th>}</tr></thead>
                     <tbody>{applicants.map((application) => <tr key={application.ma_ung_tuyen}>
                       <td><strong>{application.ho_ten}</strong><small>{application.email}<br />{application.so_dien_thoai || 'Chưa có SĐT'}</small></td>
                       <td>{application.ten_truong || 'Chưa cập nhật'}<small>{application.chuyen_nganh || 'Chưa cập nhật'}</small></td>
                       <td>{application.ngay_ung_tuyen ? new Date(application.ngay_ung_tuyen).toLocaleString('vi-VN') : '—'}</td>
                       <td><StatusBadge status={application.trang_thai} /></td>
+                      <td>{application.ten_mentor ? <div><strong>{application.ten_mentor}</strong><br /><small>{application.email_mentor}</small></div> : <span style={{ color: 'var(--text-muted)' }}>Chưa phân công</span>}</td>
                       {isManager && <td>{application.trang_thai === 'ChoDuyet' ? <div className="program-row-actions">
-                        <button type="button" className="btn btn-primary btn-sm" disabled={reviewSubmitting} onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>
+                        {applicantProgram.trang_thai === 'DaDong' && <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Chương trình đã đóng</span>}
+                        {applicantProgram.trang_thai !== 'DaDong' && <button type="button" className="btn btn-primary btn-sm" disabled={reviewSubmitting} onClick={() => reviewApplicant(application, 'DaDuyet')}><Check size={13} />Duyệt</button>}
                         <button type="button" className="btn btn-danger btn-sm" disabled={reviewSubmitting} onClick={() => { setPendingReject(application); setRejectReason(''); }}><XCircle size={13} />Từ chối</button>
-                      </div> : <span className="program-applicant-count">Đã xử lý</span>}</td>}
+                      </div> : <div className="program-row-actions">
+                        {application.trang_thai === 'DaDuyet' && (
+                          <>
+                            <button type="button" className="btn btn-outline-primary btn-sm" disabled={reviewSubmitting} onClick={() => openAssignMentorModal(application)} title="Phân công hoặc đổi Mentor">
+                              <UserCheck size={13} /><span>{application.ten_mentor ? 'Đổi Mentor' : 'Phân công'}</span>
+                            </button>
+                            {application.ten_mentor && (
+                              <button type="button" className="btn btn-danger btn-sm" disabled={reviewSubmitting} onClick={() => handleUnassignMentor(application)} title="Gỡ phân công Mentor">
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>}</td>}
                     </tr>)}</tbody>
                   </table></div>
                     <TablePagination
@@ -608,6 +686,56 @@ export default function ProgramManagementView({ departments, onShowToast, curren
           </section>
         </div>
       )}
+
+      {assigningMentorApp && (
+        <div className="modal-overlay" onMouseDown={(event) => event.target === event.currentTarget && !mentorSubmitting && setAssigningMentorApp(null)}>
+          <section className="modal-container program-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="assign-mentor-title" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 id="assign-mentor-title">{assigningMentorApp.ten_mentor ? 'Đổi Mentor hướng dẫn' : 'Phân công Mentor'}</h3>
+                <p>{assigningMentorApp.ho_ten} · {applicantProgram?.ten_ct}</p>
+              </div>
+              <button type="button" className="modal-close-btn" aria-label="Đóng" disabled={mentorSubmitting} onClick={() => setAssigningMentorApp(null)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleSaveMentorAssignment}>
+              <div className="modal-body">
+                <label className="form-label" htmlFor="select-mentor">Chọn Mentor cho TTS trong chương trình này</label>
+                <select
+                  id="select-mentor"
+                  className="form-control"
+                  value={selectedMentorId}
+                  onChange={(e) => setSelectedMentorId(e.target.value)}
+                  disabled={mentorSubmitting}
+                  required
+                >
+                  <option value="">-- Chọn Mentor hướng dẫn --</option>
+                  {mentorsList.map((m) => {
+                    const maxSlots = m.so_tts_toi_da ?? 3;
+                    const used = m.so_tts_dang_huong_dan || 0;
+                    const available = maxSlots - used;
+                    const isFull = available <= 0 && m.ma_nguoi_dung !== assigningMentorApp.ma_nguoi_dung_mentor;
+                    return (
+                      <option key={m.ma_nguoi_dung} value={m.ma_nguoi_dung} disabled={isFull}>
+                        {m.ho_ten} ({m.phong_ban || 'Chưa phân phòng'}) — Đang hướng dẫn: {used}/{maxSlots} TTS{isFull ? ' (Đã hết chỗ)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '8px' }}>
+                  Mentor được phân công sẽ gắn với hồ sơ ứng tuyển của TTS trong chương trình <strong>{applicantProgram?.ten_ct}</strong>.
+                </small>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" disabled={mentorSubmitting} onClick={() => setAssigningMentorApp(null)}>Hủy</button>
+                <button type="submit" className="btn btn-primary" disabled={mentorSubmitting || !selectedMentorId}>
+                  <UserCheck size={14} /><span>{mentorSubmitting ? 'Đang lưu...' : 'Xác nhận phân công'}</span>
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
 
       <ConfirmDialog
         open={Boolean(pendingClose)}
