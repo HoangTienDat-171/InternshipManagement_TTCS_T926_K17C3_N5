@@ -519,7 +519,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                       const selected = selectedInternIds.includes(intern.ma_ho_so);
                       return <button type="button" key={intern.ma_ho_so} className={`assignment-candidate${selected ? ' selected' : ''}`}
                         onClick={() => setSelectedInternIds((items) => selected ? items.filter((id) => id !== intern.ma_ho_so) : (items.length < Math.max(0, (assignmentMentor.so_tts_toi_da ?? 3) - (assignmentMentor.so_tts_dang_huong_dan || 0)) ? [...items, intern.ma_ho_so] : items))}>
-                        <span className="assignment-check-mark">{selected ? '✓' : '+'}</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small></span>
+                        <span className="assignment-check-mark">{selected ? '✓' : '+'}</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small>{intern.ten_ct && <small style={{ color: 'var(--brand-primary, #0284c7)', display: 'block', fontWeight: 600 }}>Chương trình: {intern.ten_ct}</small>}</span>
                       </button>;
                     })}
                   </div>
@@ -530,7 +530,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                     {selectedInternIds.length === 0 ? <p className="workspace-empty">Chọn TTS ở cột bên trái để thêm vào đợt phân công.</p> : selectedInternIds.map((id) => {
                       const intern = unassignedInterns.find((item) => item.ma_ho_so === id);
                       return intern ? <button type="button" key={id} className="assignment-candidate selected" onClick={() => setSelectedInternIds((items) => items.filter((item) => item !== id))}>
-                        <span className="assignment-check-mark">−</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small></span>
+                        <span className="assignment-check-mark">−</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small>{intern.ten_ct && <small style={{ color: 'var(--brand-primary, #0284c7)', display: 'block', fontWeight: 600 }}>Chương trình: {intern.ten_ct}</small>}</span>
                       </button> : null;
                     })}
                   </div>
@@ -549,7 +549,11 @@ export default function MentorManagementView({ departments, onShowToast, current
             <p className="mentor-capacity-summary">Sức chứa: {assignedInterns.length}/{assignedMentor.so_tts_toi_da ?? 3} TTS</p>
             {modalLoading ? <p>Đang tải danh sách...</p> : assignedInterns.length === 0 ? <p>Mentor chưa được phân công thực tập sinh nào.</p> : <div className="mentor-intern-list">
               {assignedInterns.map((intern) => <div className="mentor-intern-item" key={intern.ma_ho_so}>
-                <div><strong>{intern.ho_ten}</strong><div className="text-muted">{intern.email} · {intern.ten_truong || 'Chưa có trường'} · {intern.chuyen_nganh || 'Chưa có chuyên ngành'}</div></div>
+                <div>
+                  <strong>{intern.ho_ten}</strong>
+                  <div className="text-muted">{intern.email} · {intern.ten_truong || 'Chưa có trường'} · {intern.chuyen_nganh || 'Chưa có chuyên ngành'}</div>
+                  {intern.ten_ct && <div style={{ fontSize: '12px', color: 'var(--brand-primary, #0284c7)', marginTop: '2px' }}>Chương trình: <strong>{intern.ten_ct}</strong> {intern.timeline_status ? `(${intern.timeline_status === 'CURRENT' ? 'Đang thực tập' : (intern.timeline_status === 'UPCOMING' ? 'Sắp tới' : 'Lịch sử')})` : ''}</div>}
+                </div>
                 {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
               </div>)}
             </div>}
