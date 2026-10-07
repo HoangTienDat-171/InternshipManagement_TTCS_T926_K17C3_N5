@@ -512,3 +512,47 @@ class DocumentDetail(BaseModel):
     reviewer_name: Optional[str] = None
     reviewed_at: Optional[str] = None
     review_reason: Optional[str] = None
+
+
+class LeaveRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ma_ung_tuyen: int = Field(gt=0)
+    start_date: date
+    end_date: date
+    ly_do: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("ly_do")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Lý do nghỉ phép không được để trống.")
+        return trimmed
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.start_date > self.end_date:
+            raise ValueError("Ngày bắt đầu không được sau ngày kết thúc.")
+        return self
+
+
+class LeaveRequestReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trang_thai: Literal["DaDuyet", "TuChoi"]
+    ly_do_tu_choi: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("ly_do_tu_choi")
+    @classmethod
+    def validate_reject_reason(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            trimmed = value.strip()
+            return trimmed if trimmed else None
+        return None
+
+    @model_validator(mode="after")
+    def validate_rejection(self):
+        if self.trang_thai == "TuChoi" and not self.ly_do_tu_choi:
+            raise ValueError("Cần cung cấp lý do từ chối đơn nghỉ phép.")
+        return self

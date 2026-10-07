@@ -493,6 +493,30 @@ def init_mysql_db():
                 KEY idx_email_attachments_email_id (email_id, disposition),
                 CONSTRAINT fk_email_attachments_outbox FOREIGN KEY (email_id) REFERENCES EMAIL_OUTBOX(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+            """CREATE TABLE IF NOT EXISTS YEU_CAU_NGHI_PHEP (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_ung_tuyen INT NOT NULL,
+                ma_ho_so INT NOT NULL,
+                ma_chuong_trinh INT NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                ly_do VARCHAR(1000) NOT NULL,
+                trang_thai ENUM('ChoDuyet', 'DaDuyet', 'TuChoi', 'DaHuy') NOT NULL DEFAULT 'ChoDuyet',
+                reviewed_by INT NULL,
+                reviewed_at DATETIME NULL,
+                ly_do_tu_choi VARCHAR(1000) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT chk_yeu_cau_nghi_phep_dates CHECK (start_date <= end_date),
+                KEY idx_yeu_cau_nghi_ung_tuyen (ma_ung_tuyen, trang_thai),
+                KEY idx_yeu_cau_nghi_ho_so (ma_ho_so, trang_thai, start_date),
+                KEY idx_yeu_cau_nghi_chuong_trinh (ma_chuong_trinh, trang_thai),
+                KEY idx_yeu_cau_nghi_status_created (trang_thai, created_at),
+                FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE CASCADE,
+                FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+                FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
+                FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
         ]
         for statement in statements:
             conn.execute(statement)
@@ -954,6 +978,34 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS YEU_CAU_NGHI_PHEP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ung_tuyen INTEGER NOT NULL,
+        ma_ho_so INTEGER NOT NULL,
+        ma_chuong_trinh INTEGER NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        ly_do TEXT NOT NULL,
+        trang_thai TEXT NOT NULL DEFAULT 'ChoDuyet'
+            CHECK(trang_thai IN ('ChoDuyet', 'DaDuyet', 'TuChoi', 'DaHuy')),
+        reviewed_by INTEGER NULL,
+        reviewed_at DATETIME NULL,
+        ly_do_tu_choi TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(start_date <= end_date),
+        FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE CASCADE,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
+        FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
+        FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_nghi_ung_tuyen ON YEU_CAU_NGHI_PHEP(ma_ung_tuyen, trang_thai)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_nghi_ho_so ON YEU_CAU_NGHI_PHEP(ma_ho_so, trang_thai, start_date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_nghi_chuong_trinh ON YEU_CAU_NGHI_PHEP(ma_chuong_trinh, trang_thai)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_nghi_status_created ON YEU_CAU_NGHI_PHEP(trang_thai, created_at)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
