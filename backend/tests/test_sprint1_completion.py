@@ -1668,7 +1668,16 @@ class Sprint1RuntimeTests(unittest.TestCase):
                     (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
                 VALUES (?, 'US14 Data Internship', 2, '2026-10-05', '2026-10-11', 2, 'DangMo')
             """, (f"US14-B-{suffix}",)).lastrowid
-            for program_id, intern in ((program_a, intern_a), (program_b, intern_b)):
+            closed_program = db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP
+                    (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES (?, 'US14 Closed Internship', 1, '2026-09-28', '2026-10-04', 2, 'DaDong')
+            """, (f"US14-CLOSED-{suffix}",)).lastrowid
+            for program_id, intern in (
+                (program_a, intern_a),
+                (program_b, intern_b),
+                (closed_program, intern_a),
+            ):
                 db.execute("""
                     INSERT INTO UNG_TUYEN_CHUONG_TRINH
                         (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet, nguoi_xet_duyet)
@@ -1720,6 +1729,20 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 200)
         self.assertEqual(len(program_schedule["events"]), 1)
+        self.assertEqual(
+            [program["id"] for program in program_schedule["filters"]["programs"]],
+            [program_a],
+        )
+
+        status_code, closed_schedule, _ = self.json_request(
+            f"/api/interns/me/schedule?week_start=2026-09-28&program_id={closed_program}",
+            token=intern_a_token,
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(closed_schedule["events"], [])
+        self.assertEqual(closed_schedule["filters"]["programs"], [])
+        self.assertFalse(closed_schedule["has_program"])
+        self.assertFalse(closed_schedule["mentor_assignment_pending"])
 
         status_code, next_week, _ = self.json_request(
             "/api/interns/me/schedule?week_start=2026-10-05", token=intern_a_token,
@@ -1731,14 +1754,17 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 200)
         self.assertEqual(other_schedule["events"][0]["program"]["id"], program_b)
-        self.assertTrue(other_schedule["warning"])
+        self.assertTrue(other_schedule["has_program"])
+        self.assertFalse(other_schedule["has_mentor"])
+        self.assertTrue(other_schedule["mentor_assignment_pending"])
 
         status_code, empty_schedule, _ = self.json_request(
             "/api/interns/me/schedule?week_start=2026-09-28", token=self.login(empty_intern["email"])[0],
         )
         self.assertEqual(status_code, 200)
         self.assertEqual(empty_schedule["events"], [])
-        self.assertTrue(empty_schedule["warning"])
+        self.assertFalse(empty_schedule["has_program"])
+        self.assertFalse(empty_schedule["mentor_assignment_pending"])
 
 if __name__ == "__main__":
     unittest.main()
