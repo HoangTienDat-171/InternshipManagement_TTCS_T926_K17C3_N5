@@ -1,7 +1,7 @@
 import asyncio
 import io
+import json
 import os
-import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -9,9 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import HTTPException, UploadFile
-from pydantic import ValidationError
-
+from fastapi import FastAPI, HTTPException, UploadFile
 from app import database
 from app.routes import auth_routes, intern_routes, program_routes
 from app.schemas import UserRegister
@@ -36,7 +34,27 @@ class US06ApplicationFlowTests(unittest.TestCase):
         cls.path_patch = patch.object(database, "DB_FILE", str(cls.db_path))
         cls.backend_patch.start()
         cls.path_patch.start()
+        cls.auth_upload_patch = patch.object(auth_routes, "UPLOAD_ROOT", Path(cls.temp_dir.name) / "auth-uploads")
+        cls.program_upload_patch = patch.object(program_routes, "UPLOAD_ROOT", Path(cls.temp_dir.name) / "program-uploads")
+        cls.auth_upload_patch.start()
+        cls.program_upload_patch.start()
         database.init_db()
+
+        cls.http_app = FastAPI()
+
+        @cls.http_app.middleware("http")
+        async def add_test_identity(request, call_next):
+            request.state.current_user = request.scope.get("state", {}).get("test_user")
+            return await call_next(request)
+
+        async def override_db():
+            yield cls.active_db
+
+        cls.http_app.dependency_overrides[database.get_db] = override_db
+        cls.http_app.include_router(auth_routes.router)
+        cls.http_app.include_router(program_routes.router)
+        cls.http_app.include_router(intern_routes.router)
+        cls.active_db = None
 
         db = database.get_db_connection()
         dept = db.execute("SELECT ma_phong_ban FROM PHONG_BAN ORDER BY ma_phong_ban LIMIT 1").fetchone()
@@ -82,6 +100,8 @@ class US06ApplicationFlowTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.program_upload_patch.stop()
+        cls.auth_upload_patch.stop()
         cls.path_patch.stop()
         cls.backend_patch.stop()
         cls.temp_dir.cleanup()
@@ -91,6 +111,73 @@ class US06ApplicationFlowTests(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+
+    @staticmethod
+    def _multipart(fields, file=None):
+        boundary = "us06-test-boundary"
+        chunks = []
+        for name, value in fields.items():
+            chunks.extend([
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                str(value).encode(),
+                b"\r\n",
+            ])
+        if file is not None:
+            name, filename, content_type, content = file
+            chunks.extend([
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode(),
+                f"Content-Type: {content_type}\r\n\r\n".encode(),
+                content,
+                b"\r\n",
+            ])
+        chunks.append(f"--{boundary}--\r\n".encode())
+        return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+    async def _asgi_request_async(self, method, path, user=None, body=b"", content_type=None):
+        headers = [(b"host", b"testserver"), (b"content-length", str(len(body)).encode())]
+        if content_type:
+            headers.append((b"content-type", content_type.encode()))
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "state": {"test_user": user},
+        }
+        request_sent = False
+        events = []
+
+        async def receive():
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        async def send(event):
+            events.append(event)
+
+        await self.http_app(scope, receive, send)
+        response_start = next(event for event in events if event["type"] == "http.response.start")
+        response_body = b"".join(
+            event.get("body", b"") for event in events if event["type"] == "http.response.body"
+        )
+        parsed = json.loads(response_body) if response_body else None
+        return response_start["status"], parsed
+
+    def _http_request(self, method, path, user=None, body=b"", content_type=None):
+        type(self).active_db = self.db
+        return asyncio.run(self._asgi_request_async(method, path, user, body, content_type))
 
     def _create_tts_user(self, email_prefix="tts"):
         unique_id = os.urandom(4).hex()
@@ -154,18 +241,97 @@ class US06ApplicationFlowTests(unittest.TestCase):
         self.assertIsNotNone(prof)
         self.assertEqual(prof["trang_thai_xet_duyet"], "ChoDuyet")
 
-    def test_tts_registration_duplicate_email_and_phone_blocked(self):
+    def test_tts_registration_duplicate_email_returns_conflict(self):
         unique = os.urandom(4).hex()
         email = f"dup.{unique}@student.vn"
         data1 = UserRegister(ho_ten="User One", email=email, so_dien_thoai="0911223344")
         auth_routes.register_user(data1, make_request(), self.db)
 
-        # Duplicate email
         data2 = UserRegister(ho_ten="User Two", email=email, so_dien_thoai="0955667788")
         with self.assertRaises(HTTPException) as ctx:
             auth_routes.register_user(data2, make_request(), self.db)
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("Email đã được đăng ký", ctx.exception.detail)
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertIn("Email", ctx.exception.detail)
+
+    def test_tts_registration_duplicate_phone_returns_conflict(self):
+        unique = os.urandom(4).hex()
+        phone = "09" + str(10000000 + int(unique, 16) % 89999999)
+        auth_routes.register_user(
+            UserRegister(ho_ten="Phone One", email=f"phone1.{unique}@student.vn", so_dien_thoai=phone),
+            make_request(), self.db,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            auth_routes.register_user(
+                UserRegister(ho_ten="Phone Two", email=f"phone2.{unique}@student.vn", so_dien_thoai=phone),
+                make_request(), self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertIn("Số điện thoại", ctx.exception.detail)
+
+    def test_register_with_cv_http_conflicts_and_race_are_normalized(self):
+        unique = os.urandom(4).hex()
+        first_email = f"http-register.{unique}@student.vn"
+        first_phone = "09" + str(10000000 + int(unique, 16) % 89999999)
+        first_body, content_type = self._multipart({
+            "ho_ten": "HTTP Candidate",
+            "email": first_email,
+            "so_dien_thoai": first_phone,
+        })
+        status_code, result = self._http_request(
+            "POST", "/api/auth/register-with-cv", body=first_body, content_type=content_type,
+        )
+        self.assertEqual(status_code, 201, result)
+
+        duplicate_email_body, content_type = self._multipart({
+            "ho_ten": "Duplicate Email",
+            "email": first_email.upper(),
+            "so_dien_thoai": "0933445566",
+        })
+        status_code, result = self._http_request(
+            "POST", "/api/auth/register-with-cv", body=duplicate_email_body, content_type=content_type,
+        )
+        self.assertEqual(status_code, 409, result)
+        self.assertIn("Email", result["detail"])
+
+        duplicate_phone_body, content_type = self._multipart({
+            "ho_ten": "Duplicate Phone",
+            "email": f"phone-http.{unique}@student.vn",
+            "so_dien_thoai": first_phone,
+        })
+        status_code, result = self._http_request(
+            "POST", "/api/auth/register-with-cv", body=duplicate_phone_body, content_type=content_type,
+        )
+        self.assertEqual(status_code, 409, result)
+        self.assertIn("Số điện thoại", result["detail"])
+
+        race_email = f"race-http.{unique}@student.vn"
+        self.db.execute("""
+            CREATE TRIGGER us06_registration_email_race
+            BEFORE INSERT ON NGUOI_DUNG
+            WHEN NEW.email LIKE 'race-http.%@student.vn'
+            BEGIN
+                INSERT INTO NGUOI_DUNG
+                    (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+                VALUES (NULL, 'Concurrent Candidate', NEW.email, 'fixture', 1, NULL, 'ThucTapSinh', 'ChoDuyet');
+            END;
+        """)
+        self.db.commit()
+        race_body, content_type = self._multipart({
+            "ho_ten": "Race Candidate",
+            "email": race_email,
+            "so_dien_thoai": "0933445599",
+        })
+        status_code, result = self._http_request(
+            "POST", "/api/auth/register-with-cv", body=race_body, content_type=content_type,
+        )
+        self.db.execute("DROP TRIGGER us06_registration_email_race")
+        self.db.commit()
+        self.assertEqual(status_code, 409, result)
+        self.assertNotIn("UNIQUE constraint", result["detail"])
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM NGUOI_DUNG WHERE email = ?", (race_email,)).fetchone()[0],
+            0,
+        )
 
     def test_tts_registration_with_cv_upload(self):
         unique = os.urandom(4).hex()
@@ -288,12 +454,18 @@ class US06ApplicationFlowTests(unittest.TestCase):
         self.assertEqual(app_row["ma_ho_so"], profile_id)
         self.assertEqual(app_row["ma_chuong_trinh"], self.open_prog_id)
 
-        # Verify applicant confirmation notification created
+        # The application page already confirms success; only HR receives a persistent notification.
         notif = self.db.execute("""
-            SELECT tieu_de, noi_dung FROM THONG_BAO
-            WHERE ma_nguoi_dung = ? AND tieu_de LIKE '%ứng tuyển%'
+            SELECT tieu_de FROM THONG_BAO
+            WHERE ma_nguoi_dung = ? AND tieu_de = 'Nộp hồ sơ ứng tuyển thành công'
         """, (tts_user["ma_nguoi_dung"],)).fetchone()
-        self.assertIsNotNone(notif)
+        self.assertIsNone(notif)
+        manager_notif = self.db.execute("""
+            SELECT 1 FROM THONG_BAO
+            WHERE tieu_de = 'Ứng viên chương trình mới'
+            LIMIT 1
+        """).fetchone()
+        self.assertIsNotNone(manager_notif)
 
     def test_apply_with_invalid_cv_rejected(self):
         tts_user, _ = self._create_tts_user("badcv")
@@ -443,7 +615,7 @@ class US06ApplicationFlowTests(unittest.TestCase):
     # ---------------------------------------------------------
     # 5. IDOR & application status isolation tests
     # ---------------------------------------------------------
-    def test_tts_status_visibility_and_idor_protection(self):
+    def test_tts_status_visibility_is_scoped_to_current_user(self):
         tts_a, prof_a = self._create_tts_user("user_a")
         tts_b, prof_b = self._create_tts_user("user_b")
 
@@ -458,54 +630,49 @@ class US06ApplicationFlowTests(unittest.TestCase):
         """, (self.dept_id,)).lastrowid
         self.db.commit()
 
-        # A applies to P1
-        cv_a = UploadFile(file=io.BytesIO(VALID_PDF_BYTES), filename="cv_a.pdf")
-        res_a = asyncio.run(program_routes.apply_to_program(
-            program_id=p1, request=make_request(tts_a), cv=cv_a, db=self.db,
-        ))
-        app_id_a = res_a["ma_ung_tuyen"]
+        # Apply through the URL used by the frontend.
+        for user, program_id, filename in (
+            (tts_a, p1, "cv_a.pdf"),
+            (tts_b, p2, "cv_b.pdf"),
+        ):
+            body, content_type = self._multipart(
+                {"use_approved_profile": "false"},
+                ("cv", filename, "application/pdf", VALID_PDF_BYTES),
+            )
+            status_code, result = self._http_request(
+                "POST", f"/api/programs/{program_id}/apply", user=user,
+                body=body, content_type=content_type,
+            )
+            self.assertEqual(status_code, 201, result)
+            self.assertEqual(result["trang_thai"], "ChoDuyet")
 
-        # B applies to P2
-        cv_b = UploadFile(file=io.BytesIO(VALID_PDF_BYTES), filename="cv_b.pdf")
-        res_b = asyncio.run(program_routes.apply_to_program(
-            program_id=p2, request=make_request(tts_b), cv=cv_b, db=self.db,
-        ))
-        app_id_b = res_b["ma_ung_tuyen"]
-
-        # 1. A lists applications -> sees only P1, not P2
-        list_a = program_routes.list_my_applications(make_request(tts_a), self.db)
-        a_prog_ids = [app["ma_chuong_trinh"] for app in list_a]
-        self.assertIn(p1, a_prog_ids)
-        self.assertNotIn(p2, a_prog_ids)
-
-        # 2. B lists applications -> sees only P2, not P1
-        list_b = program_routes.list_my_applications(make_request(tts_b), self.db)
-        b_prog_ids = [app["ma_chuong_trinh"] for app in list_b]
-        self.assertIn(p2, b_prog_ids)
-        self.assertNotIn(p1, b_prog_ids)
-
-        # 3. IDOR test: A retrieves A's application detail -> PASS
-        detail_a = program_routes.get_my_application_detail(app_id_a, make_request(tts_a), self.db)
-        self.assertEqual(detail_a["ma_ung_tuyen"], app_id_a)
-        self.assertEqual(detail_a["trang_thai"], "ChoDuyet")
-
-        # 4. IDOR test: B tries to retrieve A's application detail -> BLOCKED (404)
-        with self.assertRaises(HTTPException) as ctx:
-            program_routes.get_my_application_detail(app_id_a, make_request(tts_b), self.db)
-        self.assertEqual(ctx.exception.status_code, 404)
-
-        # 5. Program list view reflects individual TTS status
-        progs_view_a = program_routes.list_programs(make_request(tts_a), db=self.db)
+        # Program list and intern workspace are the existing frontend status surfaces.
+        status_code, progs_view_a = self._http_request("GET", "/api/programs", user=tts_a)
+        self.assertEqual(status_code, 200, progs_view_a)
         p1_for_a = next((p for p in progs_view_a if p["ma_chuong_trinh"] == p1), None)
         p2_for_a = next((p for p in progs_view_a if p["ma_chuong_trinh"] == p2), None)
         self.assertEqual(p1_for_a["trang_thai_ung_tuyen"], "ChoDuyet")
         self.assertIsNone(p2_for_a["trang_thai_ung_tuyen"])
 
-        # 6. Workspace reflects applications with ma_ung_tuyen
-        ws_a = intern_routes.intern_workspace(make_request(tts_a), self.db)
+        status_code, progs_view_b = self._http_request("GET", "/api/programs", user=tts_b)
+        self.assertEqual(status_code, 200, progs_view_b)
+        p1_for_b = next((p for p in progs_view_b if p["ma_chuong_trinh"] == p1), None)
+        p2_for_b = next((p for p in progs_view_b if p["ma_chuong_trinh"] == p2), None)
+        self.assertIsNone(p1_for_b["trang_thai_ung_tuyen"])
+        self.assertEqual(p2_for_b["trang_thai_ung_tuyen"], "ChoDuyet")
+
+        status_code, ws_a = self._http_request("GET", "/api/interns/me/workspace", user=tts_a)
+        self.assertEqual(status_code, 200, ws_a)
         self.assertEqual(len(ws_a["applications"]), 1)
-        self.assertEqual(ws_a["applications"][0]["ma_ung_tuyen"], app_id_a)
+        self.assertEqual(ws_a["applications"][0]["ma_chuong_trinh"], p1)
         self.assertEqual(ws_a["applications"][0]["trang_thai_ung_tuyen"], "ChoDuyet")
+        self.assertNotIn("ma_ung_tuyen", ws_a["applications"][0])
+
+        status_code, ws_b = self._http_request("GET", "/api/interns/me/workspace", user=tts_b)
+        self.assertEqual(status_code, 200, ws_b)
+        self.assertEqual(len(ws_b["applications"]), 1)
+        self.assertEqual(ws_b["applications"][0]["ma_chuong_trinh"], p2)
+        self.assertNotIn("ma_ung_tuyen", ws_b["applications"][0])
 
 
 if __name__ == "__main__":

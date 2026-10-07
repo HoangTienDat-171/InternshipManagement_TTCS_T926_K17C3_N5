@@ -312,10 +312,6 @@ async def apply_to_program(
                 db, manager["ma_nguoi_dung"], "Ứng viên chương trình mới",
                 f"{user['ho_ten']} vừa ứng tuyển chương trình {program['ten_ct']} và đang chờ duyệt.",
             )
-        create_notification(
-            db, user["ma_nguoi_dung"], "Nộp hồ sơ ứng tuyển thành công",
-            f"Bạn đã ứng tuyển thành công chương trình {program['ten_ct']}. Hồ sơ đang chờ xét duyệt.",
-        )
         db.commit()
     except HTTPException:
         db.rollback()
@@ -517,58 +513,6 @@ def review_program_application(
     )
     db.commit()
     return {"message": f"Đã {'duyệt' if approved else 'từ chối'} ứng viên {application['ho_ten']}."}
-
-
-@router.get("/me/applications")
-def list_my_applications(
-    request: Request,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    user = require_role(request, "ThucTapSinh")
-    profile = db.execute(
-        "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?",
-        (user["ma_nguoi_dung"],),
-    ).fetchone()
-    if not profile:
-        return []
-    rows = db.execute("""
-        SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, c.ma_ct, c.ten_ct,
-               c.ngay_bat_dau, c.ngay_ket_thuc,
-               a.trang_thai, a.trang_thai AS trang_thai_ung_tuyen,
-               a.ngay_ung_tuyen, a.ngay_xet_duyet
-        FROM UNG_TUYEN_CHUONG_TRINH a
-        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-        WHERE a.ma_ho_so = ?
-        ORDER BY a.ngay_ung_tuyen DESC, a.ma_ung_tuyen DESC
-    """, (profile["ma_ho_so"],)).fetchall()
-    return [dict(row) for row in rows]
-
-
-@router.get("/me/applications/{application_id}")
-def get_my_application_detail(
-    application_id: int,
-    request: Request,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    user = require_role(request, "ThucTapSinh")
-    profile = db.execute(
-        "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?",
-        (user["ma_nguoi_dung"],),
-    ).fetchone()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển.")
-    row = db.execute("""
-        SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, c.ma_ct, c.ten_ct,
-               c.ngay_bat_dau, c.ngay_ket_thuc, c.mo_ta_cong_viec, c.yeu_cau,
-               a.trang_thai, a.trang_thai AS trang_thai_ung_tuyen,
-               a.ngay_ung_tuyen, a.ngay_xet_duyet
-        FROM UNG_TUYEN_CHUONG_TRINH a
-        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-        WHERE a.ma_ung_tuyen = ? AND a.ma_ho_so = ?
-    """, (application_id, profile["ma_ho_so"])).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển.")
-    return dict(row)
 
 
 @router.get("/{program_id}", response_model=ProgramDetail)
