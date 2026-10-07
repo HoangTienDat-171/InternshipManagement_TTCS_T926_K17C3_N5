@@ -115,19 +115,31 @@ def register_user(data: UserRegister, request: Request, db: sqlite3.Connection =
     temporary_password = create_temporary_password()
     hashed_pw = hash_password(temporary_password)
 
-    cursor.execute("""
-        INSERT INTO NGUOI_DUNG
-            (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-    """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
-    
-    new_user_id = cursor.lastrowid
+    try:
+        cursor.execute("""
+            INSERT INTO NGUOI_DUNG
+                (ma_phong_ban, ho_ten, email, mat_khau, must_change_password, so_dien_thoai, vai_tro, trang_thai)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+        """, (data.ma_phong_ban, data.ho_ten.strip(), email, hashed_pw, data.so_dien_thoai, user_role, initial_status))
+        new_user_id = cursor.lastrowid
 
-    # Tạo hồ sơ thực tập sinh ban đầu ở trạng thái chờ duyệt
-    cursor.execute("""
-        INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
-        VALUES (?, ?, 'ChoDuyet', NULL)
-    """, (new_user_id, "Chưa cập nhật"))
+        # Tạo hồ sơ thực tập sinh ban đầu ở trạng thái chờ duyệt
+        cursor.execute("""
+            INSERT INTO HO_SO_THUC_TAP (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+            VALUES (?, ?, 'ChoDuyet', NULL)
+        """, (new_user_id, "Chưa cập nhật"))
+    except sqlite3.IntegrityError as exc:
+        db.rollback()
+        error_text = str(exc).lower()
+        if "so_dien_thoai" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Số điện thoại đã được đăng ký trong hệ thống."
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email đã được đăng ký trong hệ thống!"
+        ) from exc
 
     client_ip = request.client.host if request.client else "127.0.0.1"
     cursor.execute("""

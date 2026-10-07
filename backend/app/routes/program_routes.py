@@ -105,15 +105,17 @@ def list_programs(
         profile_id = profile["ma_ho_so"] if profile else None
         where_clause = "WHERE c.trang_thai = 'DangMo'"
 
-    paginated = page is not None or page_size is not None
-    effective_size = page_size or 10
+    req_page = page if isinstance(page, int) else (getattr(page, "default", None) if page is not None else None)
+    req_page_size = page_size if isinstance(page_size, int) else (getattr(page_size, "default", None) if page_size is not None else None)
+    paginated = req_page is not None or req_page_size is not None
+    effective_size = req_page_size or 10
     if paginated:
         count_clause = "WHERE c.trang_thai = 'DangMo'" if user["vai_tro"] == "ThucTapSinh" else ""
         total_items = db.execute(
             f"SELECT COUNT(*) AS total_items FROM CHUONG_TRINH_THUC_TAP c {count_clause}"
         ).fetchone()["total_items"]
         total_pages = (total_items + effective_size - 1) // effective_size if total_items else 0
-        effective_page = min(page or 1, total_pages) if total_pages else 1
+        effective_page = min(req_page or 1, total_pages) if total_pages else 1
         limit_clause = " LIMIT ? OFFSET ?"
         paging_params = (effective_size, (effective_page - 1) * effective_size)
     else:
@@ -245,7 +247,12 @@ async def apply_to_program(
     filename = None
     extension = None
     content = None
-    if use_approved_profile:
+    is_use_approved = (
+        use_approved_profile
+        if isinstance(use_approved_profile, bool)
+        else bool(getattr(use_approved_profile, "default", False))
+    )
+    if is_use_approved:
         if cv and cv.filename:
             raise HTTPException(status_code=400, detail="Chỉ chọn dùng hồ sơ đã duyệt hoặc tải CV mới.")
         if profile["trang_thai_xet_duyet"] != "DaDuyet":
@@ -281,7 +288,7 @@ async def apply_to_program(
         ).fetchone():
             raise HTTPException(status_code=400, detail="Bạn đã ứng tuyển chương trình này.")
 
-        if not use_approved_profile:
+        if not is_use_approved:
             storage_name = f"{uuid4().hex}{extension}"
             absolute_path = UPLOAD_ROOT / storage_name
             UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
@@ -305,6 +312,10 @@ async def apply_to_program(
                 db, manager["ma_nguoi_dung"], "Ứng viên chương trình mới",
                 f"{user['ho_ten']} vừa ứng tuyển chương trình {program['ten_ct']} và đang chờ duyệt.",
             )
+        create_notification(
+            db, user["ma_nguoi_dung"], "Nộp hồ sơ ứng tuyển thành công",
+            f"Bạn đã ứng tuyển thành công chương trình {program['ten_ct']}. Hồ sơ đang chờ xét duyệt.",
+        )
         db.commit()
     except HTTPException:
         db.rollback()
@@ -327,12 +338,12 @@ async def apply_to_program(
     return {
         "message": (
             "Đã gửi hồ sơ đã được duyệt. Đơn ứng tuyển đang chờ duyệt."
-            if use_approved_profile
+            if is_use_approved
             else "Đã ghi nhận hồ sơ. Đơn ứng tuyển đang chờ duyệt."
         ),
         "ma_ung_tuyen": cursor.lastrowid,
         "trang_thai": "ChoDuyet",
-        "su_dung_ho_so_da_duyet": use_approved_profile,
+        "su_dung_ho_so_da_duyet": is_use_approved,
     }
 
 
@@ -506,6 +517,58 @@ def review_program_application(
     )
     db.commit()
     return {"message": f"Đã {'duyệt' if approved else 'từ chối'} ứng viên {application['ho_ten']}."}
+
+
+@router.get("/me/applications")
+def list_my_applications(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user = require_role(request, "ThucTapSinh")
+    profile = db.execute(
+        "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?",
+        (user["ma_nguoi_dung"],),
+    ).fetchone()
+    if not profile:
+        return []
+    rows = db.execute("""
+        SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, c.ma_ct, c.ten_ct,
+               c.ngay_bat_dau, c.ngay_ket_thuc,
+               a.trang_thai, a.trang_thai AS trang_thai_ung_tuyen,
+               a.ngay_ung_tuyen, a.ngay_xet_duyet
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+        WHERE a.ma_ho_so = ?
+        ORDER BY a.ngay_ung_tuyen DESC, a.ma_ung_tuyen DESC
+    """, (profile["ma_ho_so"],)).fetchall()
+    return [dict(row) for row in rows]
+
+
+@router.get("/me/applications/{application_id}")
+def get_my_application_detail(
+    application_id: int,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user = require_role(request, "ThucTapSinh")
+    profile = db.execute(
+        "SELECT ma_ho_so FROM HO_SO_THUC_TAP WHERE ma_nguoi_dung = ?",
+        (user["ma_nguoi_dung"],),
+    ).fetchone()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển.")
+    row = db.execute("""
+        SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, c.ma_ct, c.ten_ct,
+               c.ngay_bat_dau, c.ngay_ket_thuc, c.mo_ta_cong_viec, c.yeu_cau,
+               a.trang_thai, a.trang_thai AS trang_thai_ung_tuyen,
+               a.ngay_ung_tuyen, a.ngay_xet_duyet
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+        WHERE a.ma_ung_tuyen = ? AND a.ma_ho_so = ?
+    """, (application_id, profile["ma_ho_so"])).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển.")
+    return dict(row)
 
 
 @router.get("/{program_id}", response_model=ProgramDetail)
