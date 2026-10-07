@@ -209,6 +209,24 @@ class Sprint1RuntimeTests(unittest.TestCase):
             f"multipart/form-data; boundary={boundary}",
         )
 
+    def upload_pending_document(self, intern_email="tuan.lm@internship.vn"):
+        intern_token, _ = self.login(intern_email)
+        status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=intern_token)
+        self.assertEqual(status_code, 200, workspace)
+        profile_id = workspace["profile"]["ma_ho_so"]
+        admin_token, admin_user = self.login("admin@internship.vn")
+        filename = f"us05-review-{time.time_ns()}.pdf"
+        status_code, raw, _ = self.upload(admin_token, filename, "CV", PDF, profile_id=profile_id)
+        self.assertEqual(status_code, 201, raw)
+        saved = json.loads(raw)
+        return {
+            "document_id": saved["ma_tai_lieu"],
+            "profile_id": profile_id,
+            "intern_token": intern_token,
+            "admin_token": admin_token,
+            "admin_user_id": admin_user["ma_nguoi_dung"],
+        }
+
     def test_search_filters_and_server_pagination(self):
         token, _ = self.login("admin@internship.vn")
         status_code, response, _ = self.json_request("/api/interns?page=1&pageSize=5&search=pagination.case", token=token)
@@ -438,6 +456,8 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual({row["loai_tai_lieu"] for row in rows["documents"]}, {"CV", "DonXinThucTap"})
         status_code, file_body, headers = self.request(f"/api/documents/{doc_id}/file", token=token)
         self.assertEqual((status_code, file_body, headers.get_content_type()), (200, PDF, "application/pdf"))
+        status_code, _, _ = self.request(f"/api/documents/{doc_id}/file")
+        self.assertEqual(status_code, 401)
         another_tts, _ = self.login("lananh.hoang@internship.vn")
         status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=another_tts)
         self.assertEqual(status_code, 404)
@@ -462,6 +482,10 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 400)
 
         admin_token, _ = self.login("admin@internship.vn")
+        hr_token, _ = self.login("hr@internship.vn")
+        for manager_token in (admin_token, hr_token):
+            status_code, file_body, _ = self.request(f"/api/documents/{doc_id}/file", token=manager_token)
+            self.assertEqual((status_code, file_body), (200, PDF))
         status_code, _, _ = self.request(f"/api/documents/{word_document_id}", "DELETE", admin_token)
         self.assertEqual(status_code, 403)
         db = sqlite3.connect(self.db_path)
@@ -478,6 +502,240 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertFalse(deleted_file.exists())
         status_code, _, _ = self.request(f"/api/documents/{doc_id}/file", token=tuan_token)
         self.assertEqual(status_code, 404)
+
+    def test_us05_hr_approval_persists_actor_time_and_prevents_second_decision(self):
+        context = self.upload_pending_document()
+        hr_token, hr_user = self.login("hr@internship.vn")
+        with sqlite3.connect(self.db_path) as db:
+            outbox_before = db.execute("SELECT COUNT(*) FROM EMAIL_OUTBOX").fetchone()[0]
+            review_notice_before = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE reference_type='document' AND reference_id=?",
+                (str(context["document_id"]),),
+            ).fetchone()[0]
+
+        status_code, approved, _ = self.json_request(
+            f"/api/documents/{context['document_id']}/review", "PUT", hr_token,
+            {"trang_thai_duyet": "DaDuyet"},
+        )
+        self.assertEqual(status_code, 200, approved)
+        self.assertEqual(approved["trang_thai_duyet"], "DaDuyet")
+        self.assertEqual(approved["reviewed_by"], hr_user["ma_nguoi_dung"])
+        self.assertEqual(approved["reviewer_name"], hr_user["ho_ten"])
+        self.assertIsNotNone(approved["reviewed_at"])
+        self.assertIsNone(approved["review_reason"])
+        self.assertNotIn("duong_dan_file", approved)
+
+        status_code, listing, _ = self.json_request("/api/documents?page=1&pageSize=100", token=hr_token)
+        self.assertEqual(status_code, 200, listing)
+        listed = next(item for item in listing["items"] if item["ma_tai_lieu"] == context["document_id"])
+        self.assertEqual((listed["reviewed_by"], listed["reviewer_name"]), (hr_user["ma_nguoi_dung"], hr_user["ho_ten"]))
+        self.assertNotIn("duong_dan_file", listed)
+
+        status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=context["intern_token"])
+        self.assertEqual(status_code, 200, workspace)
+        intern_document = next(item for item in workspace["documents"] if item["ma_tai_lieu"] == context["document_id"])
+        self.assertEqual(intern_document["trang_thai_duyet"], "DaDuyet")
+        self.assertEqual(intern_document["reviewed_by"], hr_user["ma_nguoi_dung"])
+
+        with sqlite3.connect(self.db_path) as db:
+            saved_before = db.execute(
+                "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            ).fetchone()
+            status_code, _, _ = self.json_request(
+                f"/api/documents/{context['document_id']}/review", "PUT", context["admin_token"],
+                {"trang_thai_duyet": "TuChoi", "review_reason": "Không hợp lệ"},
+            )
+            self.assertEqual(status_code, 409)
+            saved_after = db.execute(
+                "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            ).fetchone()
+            review_notice_after = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE reference_type='document' AND reference_id=?",
+                (str(context["document_id"]),),
+            ).fetchone()[0]
+            outbox_after = db.execute("SELECT COUNT(*) FROM EMAIL_OUTBOX").fetchone()[0]
+        self.assertEqual(saved_after, saved_before)
+        self.assertEqual(review_notice_after, review_notice_before + 1)
+        self.assertEqual(outbox_after, outbox_before)
+
+    def test_us05_rejection_requires_trimmed_reason_and_tts_can_read_it(self):
+        context = self.upload_pending_document("lananh.hoang@internship.vn")
+        admin_token, admin_user = self.login("admin@internship.vn")
+        path = f"/api/documents/{context['document_id']}/review"
+        for reason in (None, "", " \t\n "):
+            payload = {"trang_thai_duyet": "TuChoi", "review_reason": reason}
+            status_code, response, _ = self.json_request(path, "PUT", admin_token, payload)
+            self.assertEqual(status_code, 400, response)
+            self.assertIn("lý do", response["detail"].lower())
+
+        with sqlite3.connect(self.db_path) as db:
+            pending = db.execute(
+                "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            ).fetchone()
+        self.assertEqual(pending, ("ChoDuyet", None, None, None))
+
+        status_code, rejected, _ = self.json_request(path, "PUT", admin_token, {
+            "trang_thai_duyet": "TuChoi", "review_reason": "  Thiếu giấy tờ đối chiếu. \n",
+        })
+        self.assertEqual(status_code, 200, rejected)
+        self.assertEqual(rejected["review_reason"], "Thiếu giấy tờ đối chiếu.")
+        self.assertEqual(rejected["reviewed_by"], admin_user["ma_nguoi_dung"])
+        self.assertIsNotNone(rejected["reviewed_at"])
+
+        status_code, workspace, _ = self.json_request("/api/interns/me/workspace", token=context["intern_token"])
+        self.assertEqual(status_code, 200, workspace)
+        intern_document = next(item for item in workspace["documents"] if item["ma_tai_lieu"] == context["document_id"])
+        self.assertEqual(intern_document["review_reason"], "Thiếu giấy tờ đối chiếu.")
+        self.assertEqual(intern_document["reviewer_name"], admin_user["ho_ten"])
+
+        hr_token, _ = self.login("hr@internship.vn")
+        status_code, _, _ = self.json_request(path, "PUT", hr_token, {"trang_thai_duyet": "DaDuyet"})
+        self.assertEqual(status_code, 409)
+
+    def test_us05_rbac_and_client_cannot_spoof_review_actor_or_time(self):
+        context = self.upload_pending_document()
+        hr_token, hr_user = self.login("hr@internship.vn")
+        path = f"/api/documents/{context['document_id']}/review"
+        status_code, response, _ = self.json_request(path, "PUT", hr_token, {
+            "trang_thai_duyet": "DaDuyet",
+            "reviewed_by": context["profile_id"],
+            "reviewed_at": "2000-01-01 00:00:00",
+        })
+        self.assertEqual(status_code, 422, response)
+
+        mentor_token, _ = self.login("mentor@internship.vn")
+        other_tts_token, _ = self.login("lananh.hoang@internship.vn")
+        for token, expected in ((None, 401), (mentor_token, 403), (context["intern_token"], 403), (other_tts_token, 403)):
+            status_code, _, _ = self.json_request(path, "PUT", token, {"trang_thai_duyet": "DaDuyet"})
+            self.assertEqual(status_code, expected)
+
+        status_code, _, _ = self.json_request("/api/documents", token=context["intern_token"])
+        self.assertEqual(status_code, 403)
+        with sqlite3.connect(self.db_path) as db:
+            saved = db.execute(
+                "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            ).fetchone()
+        self.assertEqual(saved, ("ChoDuyet", None, None, None))
+
+    def test_us05_concurrent_hr_admin_review_allows_only_one_decision(self):
+        context = self.upload_pending_document()
+        hr_token, hr_user = self.login("hr@internship.vn")
+        requests = (
+            (hr_token, {"trang_thai_duyet": "DaDuyet"}),
+            (context["admin_token"], {"trang_thai_duyet": "TuChoi", "review_reason": "Bổ sung hồ sơ."}),
+        )
+        path = f"/api/documents/{context['document_id']}/review"
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda args: self.json_request(path, "PUT", args[0], args[1]), requests))
+        self.assertEqual(sorted(result[0] for result in results), [200, 409], results)
+
+        with sqlite3.connect(self.db_path) as db:
+            saved = db.execute(
+                "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            ).fetchone()
+            notices = db.execute(
+                "SELECT COUNT(*) FROM THONG_BAO WHERE reference_type='document' AND reference_id=?",
+                (str(context["document_id"]),),
+            ).fetchone()[0]
+        self.assertIn(saved[0], ("DaDuyet", "TuChoi"))
+        self.assertIn(saved[1], (hr_user["ma_nguoi_dung"], context["admin_user_id"]))
+        self.assertIsNotNone(saved[3])
+        self.assertEqual(notices, 1)
+
+    def test_us05_legacy_review_metadata_stays_null(self):
+        context = self.upload_pending_document()
+        with sqlite3.connect(self.db_path) as db:
+            reviewer_fk = next(
+                row for row in db.execute("PRAGMA foreign_key_list(TAI_LIEU_HO_SO)").fetchall()
+                if row[3] == "reviewed_by"
+            )
+            self.assertEqual((reviewer_fk[2], reviewer_fk[4], reviewer_fk[6]), ("NGUOI_DUNG", "ma_nguoi_dung", "SET NULL"))
+            db.execute(
+                "UPDATE TAI_LIEU_HO_SO SET trang_thai_duyet='TuChoi' WHERE ma_tai_lieu=?",
+                (context["document_id"],),
+            )
+            db.commit()
+        hr_token, _ = self.login("hr@internship.vn")
+        status_code, listing, _ = self.json_request("/api/documents?page=1&pageSize=100", token=hr_token)
+        self.assertEqual(status_code, 200, listing)
+        legacy = next(item for item in listing["items"] if item["ma_tai_lieu"] == context["document_id"])
+        self.assertEqual(legacy["trang_thai_duyet"], "TuChoi")
+        self.assertIsNone(legacy["reviewed_by"])
+        self.assertIsNone(legacy["reviewed_at"])
+        self.assertIsNone(legacy["review_reason"])
+
+    def test_us05_secure_download_keeps_mentor_assignment_scope(self):
+        suffix = str(time.time_ns())
+        with sqlite3.connect(self.db_path) as db:
+            mentor_id = db.execute(
+                "SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE email='mentor@internship.vn'",
+            ).fetchone()[0]
+            profile_ids = []
+            for index in range(2):
+                cursor = db.execute("""
+                    INSERT INTO NGUOI_DUNG
+                        (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                    VALUES (1, ?, ?, 'unused-test-hash', 'ThucTapSinh', 'HoatDong')
+                """, (f"US05 Download Intern {index}", f"us05.download.{suffix}.{index}@test.invalid"))
+                profile_cursor = db.execute("""
+                    INSERT INTO HO_SO_THUC_TAP
+                        (ma_nguoi_dung, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                    VALUES (?, 'US05 QA', 'DaDuyet', 'DangThucTap')
+                """, (cursor.lastrowid,))
+                profile_ids.append(profile_cursor.lastrowid)
+            db.execute(
+                "INSERT INTO PHAN_CONG_MENTOR_TTS (ma_nguoi_dung_mentor, ma_ho_so) VALUES (?, ?)",
+                (mentor_id, profile_ids[0]),
+            )
+
+        admin_token, _ = self.login("admin@internship.vn")
+        document_ids = []
+        for profile_id in profile_ids:
+            status_code, raw, _ = self.upload(
+                admin_token, f"us05-mentor-{profile_id}.pdf", "CV", PDF, profile_id=profile_id,
+            )
+            self.assertEqual(status_code, 201, raw)
+            document_ids.append(json.loads(raw)["ma_tai_lieu"])
+
+        mentor_token, _ = self.login("mentor@internship.vn")
+        allowed_status, allowed_body, _ = self.request(f"/api/documents/{document_ids[0]}/file", token=mentor_token)
+        denied_status, _, _ = self.request(f"/api/documents/{document_ids[1]}/file", token=mentor_token)
+        self.assertEqual((allowed_status, allowed_body), (200, PDF))
+        self.assertEqual(denied_status, 404)
+
+    def test_us05_notification_failure_rolls_back_review_metadata(self):
+        context = self.upload_pending_document()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("""
+                CREATE TRIGGER fail_us05_review_notification
+                BEFORE INSERT ON THONG_BAO
+                WHEN NEW.reference_type = 'document'
+                BEGIN
+                    SELECT RAISE(ABORT, 'US05 notification failure test');
+                END
+            """)
+
+        try:
+            status_code, _, _ = self.request(
+                f"/api/documents/{context['document_id']}/review", "PUT", context["admin_token"],
+                json.dumps({"trang_thai_duyet": "DaDuyet"}).encode("utf-8"),
+                "application/json",
+            )
+            self.assertEqual(status_code, 500)
+            with sqlite3.connect(self.db_path) as db:
+                saved = db.execute(
+                    "SELECT trang_thai_duyet, reviewed_by, review_reason, reviewed_at FROM TAI_LIEU_HO_SO WHERE ma_tai_lieu=?",
+                    (context["document_id"],),
+                ).fetchone()
+            self.assertEqual(saved, ("ChoDuyet", None, None, None))
+        finally:
+            with sqlite3.connect(self.db_path) as db:
+                db.execute("DROP TRIGGER IF EXISTS fail_us05_review_notification")
 
     def test_single_session_revokes_rest_and_pushes_logout_for_every_role(self):
         accounts = (
