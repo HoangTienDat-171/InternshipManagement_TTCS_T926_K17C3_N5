@@ -212,7 +212,8 @@ def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection
         SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                t.ten_truong, h.chuyen_nganh, a.ngay_phan_cong, a.ma_phan_cong,
                a.ma_chuong_trinh, a.ma_ung_tuyen,
-               c.ten_ct, c.ma_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct
+               c.ten_ct, c.ma_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
+               h.trang_thai_thuc_tap
         FROM PHAN_CONG_MENTOR_TTS a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -226,7 +227,9 @@ def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection
         d = dict(row)
         d["timeline_status"] = get_timeline_status(
             row["ngay_bat_dau"], row["ngay_ket_thuc"], row["trang_thai_ct"]
-        ) if row["ma_chuong_trinh"] else "CURRENT"
+        ) if row["ma_chuong_trinh"] else (
+            "CURRENT" if row["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
+        )
         items.append(d)
     return items
 
