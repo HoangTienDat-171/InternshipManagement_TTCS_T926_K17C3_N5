@@ -436,22 +436,39 @@ def unassign_mentor_canonical(
     """
     if program_id:
         assignment = db.execute("""
-            SELECT p.ma_phan_cong, h.ma_nguoi_dung
+            SELECT p.ma_phan_cong, h.ma_nguoi_dung, p.ma_chuong_trinh,
+                   c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
+                   h.trang_thai_thuc_tap
             FROM PHAN_CONG_MENTOR_TTS p
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
+            LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
             WHERE p.ma_nguoi_dung_mentor = ? AND p.ma_ho_so = ? AND p.ma_chuong_trinh = ?
         """, (mentor_id, profile_id, program_id)).fetchone()
     else:
         assignment = db.execute("""
-            SELECT p.ma_phan_cong, h.ma_nguoi_dung
+            SELECT p.ma_phan_cong, h.ma_nguoi_dung, p.ma_chuong_trinh,
+                   c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
+                   h.trang_thai_thuc_tap
             FROM PHAN_CONG_MENTOR_TTS p
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
+            LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
             WHERE p.ma_nguoi_dung_mentor = ? AND p.ma_ho_so = ?
             ORDER BY p.ma_phan_cong DESC LIMIT 1
         """, (mentor_id, profile_id)).fetchone()
 
     if not assignment:
         raise HTTPException(status_code=404, detail="Không tìm thấy phân công phù hợp để gỡ.")
+
+    timeline_status = get_timeline_status(
+        assignment["ngay_bat_dau"], assignment["ngay_ket_thuc"], assignment["trang_thai_ct"]
+    ) if assignment["ma_chuong_trinh"] else (
+        "CURRENT" if assignment["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
+    )
+    if timeline_status != "CURRENT":
+        raise HTTPException(
+            status_code=400,
+            detail="Chỉ có thể gỡ phân công trong chương trình hiện tại.",
+        )
 
     db.execute("DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?", (assignment["ma_phan_cong"],))
 

@@ -223,9 +223,17 @@ export default function MentorManagementView({ departments, onShowToast, current
   const removeAssignment = async () => {
     const profileId = pendingUnassignment?.ma_ho_so;
     if (!profileId || !assignedMentor) return;
+    if (pendingUnassignment.timeline_status !== 'CURRENT') {
+      onShowToast('Chỉ có thể gỡ phân công trong chương trình hiện tại.', 'error');
+      setPendingUnassignment(null);
+      return;
+    }
     setRemovingProfileId(profileId);
     try {
-      const response = await apiFetch(`/api/mentors/${assignedMentor.ma_nguoi_dung}/interns/${profileId}`, { method: 'DELETE' });
+      const programQuery = pendingUnassignment.ma_chuong_trinh
+        ? `?program_id=${encodeURIComponent(pendingUnassignment.ma_chuong_trinh)}`
+        : '';
+      const response = await apiFetch(`/api/mentors/${assignedMentor.ma_nguoi_dung}/interns/${profileId}${programQuery}`, { method: 'DELETE' });
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể gỡ phân công.');
       onShowToast(data.message);
@@ -238,6 +246,8 @@ export default function MentorManagementView({ departments, onShowToast, current
       setRemovingProfileId(null);
     }
   };
+
+  const currentAssignedInterns = assignedInterns.filter((intern) => intern.timeline_status === 'CURRENT');
 
   return (
     <div className="mentor-management-page">
@@ -546,15 +556,15 @@ export default function MentorManagementView({ departments, onShowToast, current
         <div className="modal-container" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h3>TTS do {assignedMentor.ho_ten} hướng dẫn</h3><button className="modal-close-btn" type="button" onClick={() => setAssignedMentor(null)}><X size={18} /></button></div>
           <div className="modal-body">
-            <p className="mentor-capacity-summary">Sức chứa: {assignedInterns.length}/{assignedMentor.so_tts_toi_da ?? 3} TTS</p>
-            {modalLoading ? <p>Đang tải danh sách...</p> : assignedInterns.length === 0 ? <p>Mentor chưa được phân công thực tập sinh nào.</p> : <div className="mentor-intern-list">
-              {assignedInterns.map((intern) => <div className="mentor-intern-item" key={intern.ma_ho_so}>
+            <p className="mentor-capacity-summary">Sức chứa: {currentAssignedInterns.length}/{assignedMentor.so_tts_toi_da ?? 3} TTS</p>
+            {modalLoading ? <p>Đang tải danh sách...</p> : currentAssignedInterns.length === 0 ? <p>Mentor chưa có thực tập sinh đang tham gia chương trình hiện tại.</p> : <div className="mentor-intern-list">
+              {currentAssignedInterns.map((intern) => <div className="mentor-intern-item" key={`${intern.ma_ho_so}-${intern.ma_chuong_trinh ?? 'legacy'}`}>
                 <div>
                   <strong>{intern.ho_ten}</strong>
                   <div className="text-muted">{intern.email} · {intern.ten_truong || 'Chưa có trường'} · {intern.chuyen_nganh || 'Chưa có chuyên ngành'}</div>
                   {intern.ten_ct && <div style={{ fontSize: '12px', color: 'var(--brand-primary, #0284c7)', marginTop: '2px' }}>Chương trình: <strong>{intern.ten_ct}</strong> {intern.timeline_status ? `(${intern.timeline_status === 'CURRENT' ? 'Đang thực tập' : (intern.timeline_status === 'UPCOMING' ? 'Sắp tới' : 'Lịch sử')})` : ''}</div>}
                 </div>
-                {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
+                {intern.timeline_status === 'CURRENT' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công khỏi chương trình hiện tại" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
               </div>)}
             </div>}
           </div>

@@ -21,6 +21,7 @@ const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView')
 const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
 const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
 const AttendanceView = lazy(() => import('./views/AttendanceView'));
+const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
 
 function clearSavedSession() {
   try {
@@ -35,6 +36,7 @@ function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
   if (path === '/attendance') return 'intern-attendance';
+  if (path === '/leave-requests') return 'leave-requests';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   if (path === '/evaluations') return 'evaluations';
@@ -46,6 +48,7 @@ function tabForPath(path) {
 function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'intern-attendance') return '/attendance';
+  if (tab === 'leave-requests') return '/leave-requests';
   if (tab === 'tasks') return '/tasks';
   if (tab === 'weekly-reports') return '/weekly-reports';
   if (tab === 'evaluations') return '/evaluations';
@@ -89,6 +92,7 @@ export default function App() {
       : currentUser && (
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'evaluations' && currentUser.vai_tro !== 'Mentor')
@@ -517,6 +521,12 @@ export default function App() {
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-attendance' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở trang chấm công…</div>}>
               <AttendanceView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'leave-requests' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở quản lý nghỉ phép…</div>}>
+              <LeaveManagementView currentUser={currentUser} onShowToast={showToast} />
             </Suspense>
           )}
 
