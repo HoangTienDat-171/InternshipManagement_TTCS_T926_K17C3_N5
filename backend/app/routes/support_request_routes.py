@@ -146,6 +146,8 @@ def list_my_support_requests(
     request: Request,
     trang_thai: Optional[str] = Query(None, description="Lọc trạng thái (PENDING, RESOLVED, REJECTED)"),
     loai_yeu_cau: Optional[str] = Query(None, description="Lọc loại yêu cầu (CERTIFICATE, DOCUMENT, OTHER)"),
+    status: Optional[str] = Query(None, description="Lọc trạng thái (alias)"),
+    type: Optional[str] = Query(None, description="Lọc loại yêu cầu (alias)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     db=Depends(get_db),
@@ -153,8 +155,8 @@ def list_my_support_requests(
     intern = require_role(request, "ThucTapSinh")
     return SupportRequestService(db).list_my_requests(
         intern_user_id=intern["ma_nguoi_dung"],
-        status_filter=trang_thai,
-        type_filter=loai_yeu_cau,
+        status_filter=trang_thai or status,
+        type_filter=loai_yeu_cau or type,
         page=page,
         page_size=page_size,
     )
@@ -183,6 +185,8 @@ def list_support_requests_hr(
     request: Request,
     trang_thai: Optional[str] = Query(None, description="Lọc trạng thái"),
     loai_yeu_cau: Optional[str] = Query(None, description="Lọc loại yêu cầu"),
+    status: Optional[str] = Query(None, description="Lọc trạng thái (alias)"),
+    type: Optional[str] = Query(None, description="Lọc loại yêu cầu (alias)"),
     search: Optional[str] = Query(None, description="Tìm kiếm tên, email TTS hoặc nội dung"),
     intern_id: Optional[int] = Query(None, description="Lọc theo mã TTS"),
     date_from: Optional[str] = Query(None, description="Từ ngày (YYYY-MM-DD)"),
@@ -191,10 +195,20 @@ def list_support_requests_hr(
     page_size: int = Query(10, ge=1, le=100),
     db=Depends(get_db),
 ):
-    require_role(request, "HR", "Admin")
+    actor = require_role(request, "HR", "Admin", "ThucTapSinh")
+    st = trang_thai or status
+    tp = loai_yeu_cau or type
+    if actor["vai_tro"] == "ThucTapSinh":
+        return SupportRequestService(db).list_my_requests(
+            intern_user_id=actor["ma_nguoi_dung"],
+            status_filter=st,
+            type_filter=tp,
+            page=page,
+            page_size=page_size,
+        )
     return SupportRequestService(db).list_all_requests(
-        status_filter=trang_thai,
-        type_filter=loai_yeu_cau,
+        status_filter=st,
+        type_filter=tp,
         search=search,
         intern_id=intern_id,
         date_from=date_from,
@@ -210,7 +224,12 @@ def get_support_request_detail_hr(
     request: Request,
     db=Depends(get_db),
 ):
-    require_role(request, "HR", "Admin")
+    actor = require_role(request, "HR", "Admin", "ThucTapSinh")
+    if actor["vai_tro"] == "ThucTapSinh":
+        return SupportRequestService(db).get_my_request_detail(
+            intern_user_id=actor["ma_nguoi_dung"],
+            request_id=request_id,
+        )
     return SupportRequestService(db).get_request_detail_hr(request_id)
 
 

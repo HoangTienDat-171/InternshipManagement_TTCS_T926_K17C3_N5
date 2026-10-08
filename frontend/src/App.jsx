@@ -135,7 +135,13 @@ export default function App() {
   const [sessionNotice, setSessionNotice] = useState('');
 
   const showToast = (message, type = 'success') => {
-    setToast({ message, type });
+    let text = message;
+    let toastType = type;
+    if (message && typeof message === 'object') {
+      text = message.message || message.detail || '';
+      toastType = message.type || type || 'success';
+    }
+    setToast({ message: String(text || ''), type: toastType });
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => {
       setToast(null);

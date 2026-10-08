@@ -98,6 +98,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [fileError, setFileError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [successNotice, setSuccessNotice] = useState(false);
   const fileInputRef = useRef(null);
 
   // State: Detail / Review Modal
@@ -129,14 +130,14 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       const data = await readJsonResponse(res);
 
       if (!res.ok) {
-        onShowToast?.({ message: data.detail || 'Không thể tải danh sách yêu cầu hỗ trợ.', type: 'error' });
+        onShowToast?.(data.detail || 'Không thể tải danh sách yêu cầu hỗ trợ.', 'error');
         return;
       }
 
       setRequests(data.items || []);
       setTotalCount(data.total || 0);
     } catch (err) {
-      onShowToast?.({ message: 'Lỗi kết nối máy chủ: ' + err.message, type: 'error' });
+      onShowToast?.('Lỗi kết nối máy chủ: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -160,10 +161,10 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       if (res.ok) {
         setSelectedRequest(data);
       } else {
-        onShowToast?.({ message: data.detail || 'Không thể tải chi tiết yêu cầu.', type: 'error' });
+        onShowToast?.(data.detail || 'Không thể tải chi tiết yêu cầu.', 'error');
       }
     } catch (err) {
-      onShowToast?.({ message: 'Lỗi tải chi tiết: ' + err.message, type: 'error' });
+      onShowToast?.('Lỗi tải chi tiết: ' + err.message, 'error');
     } finally {
       setModalLoading(false);
     }
@@ -194,7 +195,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   const handleSubmitCreate = async (e) => {
     e.preventDefault();
     if (!createContent.trim()) {
-      onShowToast?.({ message: 'Vui lòng nhập nội dung yêu cầu hỗ trợ.', type: 'warning' });
+      onShowToast?.('Vui lòng nhập nội dung yêu cầu hỗ trợ.', 'warning');
       return;
     }
     setSubmitting(true);
@@ -213,18 +214,19 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       const data = await readJsonResponse(res);
 
       if (!res.ok) {
-        onShowToast?.({ message: data.detail || 'Không thể gửi yêu cầu hỗ trợ.', type: 'error' });
+        onShowToast?.(data.detail || 'Không thể gửi yêu cầu hỗ trợ.', 'error');
         return;
       }
 
-      onShowToast?.({ message: 'Gửi yêu cầu hỗ trợ thành công! HR sẽ sớm phản hồi.', type: 'success' });
+      onShowToast?.('Đã gửi thành công và chờ xử lý', 'success');
+      setSuccessNotice(true);
       setCreateContent('');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       setPage(1);
       fetchRequests();
     } catch (err) {
-      onShowToast?.({ message: 'Lỗi khi gửi yêu cầu: ' + err.message, type: 'error' });
+      onShowToast?.('Lỗi khi gửi yêu cầu: ' + err.message, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -236,7 +238,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       const res = await apiFetch(`/api/support-requests/${requestId}/files/${fileItem.id}`);
       if (!res.ok) {
         const data = await readJsonResponse(res);
-        onShowToast?.({ message: data.detail || 'Không thể tải tệp đính kèm.', type: 'error' });
+        onShowToast?.(data.detail || 'Không thể tải tệp đính kèm.', 'error');
         return;
       }
       const blob = await res.blob();
@@ -249,14 +251,14 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      onShowToast?.({ message: 'Lỗi khi tải tệp: ' + err.message, type: 'error' });
+      onShowToast?.('Lỗi khi tải tệp: ' + err.message, 'error');
     }
   };
 
   // HR Confirm Processing
   const handleInitiateProcess = (action) => {
     if (action === 'reject' && !responseText.trim()) {
-      onShowToast?.({ message: 'Vui lòng nhập lý do từ chối yêu cầu.', type: 'warning' });
+      onShowToast?.('Vui lòng nhập lý do từ chối yêu cầu.', 'warning');
       return;
     }
     setConfirmDialog({

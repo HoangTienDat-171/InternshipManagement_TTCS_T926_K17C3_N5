@@ -138,6 +138,18 @@ class SupportRequestService:
             if profile_row:
                 profile_id = profile_row[0]
 
+        # Kiểm tra chống duplicate submit: nếu đã có yêu cầu PENDING cùng loại và nội dung
+        existing_pending = self.db.execute("""
+            SELECT id FROM YEU_CAU_HO_TRO
+            WHERE ma_nguoi_dung = ? AND loai_yeu_cau = ? AND noi_dung = ? AND trang_thai = 'PENDING'
+            LIMIT 1
+        """, (intern_user_id, loai, noi_dung)).fetchone()
+        if existing_pending:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Bạn đã có một yêu cầu hỗ trợ tương tự đang chờ xử lý. Vui lòng không gửi trùng lặp."
+            )
+
         cursor = self.db.execute("""
             INSERT INTO YEU_CAU_HO_TRO
                 (ma_nguoi_dung, ma_ho_so, loai_yeu_cau, noi_dung, trang_thai)
