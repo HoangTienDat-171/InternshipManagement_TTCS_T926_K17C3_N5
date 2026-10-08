@@ -60,7 +60,33 @@ class LeaveService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Hồ sơ thực tập sinh chưa được duyệt.")
         return dict(row)
 
-    def create_request(self, intern_user_id: int, payload: dict) -> dict:
+    def list_eligible_programs(self, intern_user_id: int, today: Optional[date] = None) -> list[dict]:
+        """Return approved applications for programs active on the current day."""
+        profile = self._get_intern_profile(intern_user_id)
+        current_day = (today or date.today()).isoformat()
+        rows = self.db.execute("""
+            SELECT a.ma_ung_tuyen, a.ma_chuong_trinh, c.ma_ct, c.ten_ct,
+                   c.ngay_bat_dau, c.ngay_ket_thuc
+            FROM UNG_TUYEN_CHUONG_TRINH a
+            JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+            WHERE a.ma_ho_so = ?
+              AND a.trang_thai = 'DaDuyet'
+              AND c.trang_thai = 'DangMo'
+              AND c.ngay_bat_dau IS NOT NULL
+              AND c.ngay_ket_thuc IS NOT NULL
+              AND c.ngay_bat_dau <= ?
+              AND c.ngay_ket_thuc >= ?
+            ORDER BY c.ngay_bat_dau DESC, a.ma_ung_tuyen DESC
+        """, (profile["ma_ho_so"], current_day, current_day)).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_request(
+        self,
+        intern_user_id: int,
+        payload: dict,
+        today: Optional[date] = None,
+        attachments: Optional[list[dict]] = None,
+    ) -> dict:
         profile = self._get_intern_profile(intern_user_id)
         profile_id = profile["ma_ho_so"]
 
@@ -97,6 +123,21 @@ class LeaveService:
                 detail="Chỉ đơn ứng tuyển đã được duyệt mới có thể đăng ký nghỉ phép.",
             )
 
+        current_day = today or date.today()
+        if app_row["program_status"] != "DangMo":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chỉ có thể đăng ký nghỉ phép trong chương trình đang mở.",
+            )
+
+        prog_start = _as_date(app_row["ngay_bat_dau"])
+        prog_end = _as_date(app_row["ngay_ket_thuc"])
+        if not prog_start or not prog_end or not (prog_start <= current_day <= prog_end):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chỉ có thể đăng ký nghỉ phép trong thời gian chương trình đang diễn ra.",
+            )
+
         req_start = _as_date(start_date)
         req_end = _as_date(end_date)
         if not req_start or not req_end:
@@ -104,9 +145,7 @@ class LeaveService:
         if req_start > req_end:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ngày bắt đầu không được sau ngày kết thúc.")
 
-        # Program period validation
-        prog_start = _as_date(app_row["ngay_bat_dau"])
-        prog_end = _as_date(app_row["ngay_ket_thuc"])
+        # Requested leave dates must stay inside the active program period.
         if prog_start and req_start < prog_start:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -143,6 +182,18 @@ class LeaveService:
             reason,
         ))
         request_id = cursor.lastrowid
+        for attachment in attachments or []:
+            self.db.execute("""
+                INSERT INTO YEU_CAU_NGHI_PHEP_TEP
+                    (leave_request_id, storage_key, original_filename, mime_type, file_size)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                request_id,
+                attachment["storage_key"],
+                attachment["original_filename"],
+                attachment["mime_type"],
+                attachment["file_size"],
+            ))
         self.db.commit()
 
         return self.get_intern_request_detail(intern_user_id, request_id)
@@ -155,7 +206,8 @@ class LeaveService:
             SELECT r.id, r.ma_ung_tuyen, r.ma_ho_so, r.ma_chuong_trinh,
                    r.start_date, r.end_date, r.ly_do, r.trang_thai,
                    r.reviewed_by, r.reviewed_at, r.ly_do_tu_choi, r.created_at,
-                   c.ten_ct, c.ma_ct, reviewer.ho_ten AS reviewer_name
+                   c.ten_ct, c.ma_ct, reviewer.ho_ten AS reviewer_name,
+                   (SELECT COUNT(*) FROM YEU_CAU_NGHI_PHEP_TEP a WHERE a.leave_request_id = r.id) AS attachment_count
             FROM YEU_CAU_NGHI_PHEP r
             JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = r.ma_chuong_trinh
             LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = r.reviewed_by
@@ -172,9 +224,12 @@ class LeaveService:
             SELECT r.id, r.ma_ung_tuyen, r.ma_ho_so, r.ma_chuong_trinh,
                    r.start_date, r.end_date, r.ly_do, r.trang_thai,
                    r.reviewed_by, r.reviewed_at, r.ly_do_tu_choi, r.created_at,
-                   c.ten_ct, c.ma_ct, reviewer.ho_ten AS reviewer_name
+                   c.ten_ct, c.ma_ct, reviewer.ho_ten AS reviewer_name,
+                   h.ma_nguoi_dung AS intern_user_id,
+                   (SELECT COUNT(*) FROM YEU_CAU_NGHI_PHEP_TEP a WHERE a.leave_request_id = r.id) AS attachment_count
             FROM YEU_CAU_NGHI_PHEP r
             JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = r.ma_chuong_trinh
+            JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = r.ma_ho_so
             LEFT JOIN NGUOI_DUNG reviewer ON reviewer.ma_nguoi_dung = r.reviewed_by
             WHERE r.id = ?
         """, (request_id,)).fetchone()
@@ -182,7 +237,9 @@ class LeaveService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy đơn xin nghỉ phép.")
         if row["ma_ho_so"] != profile_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn không có quyền truy cập đơn nghỉ phép này.")
-        return dict(row)
+        result = dict(row)
+        result["attachments"] = self._list_attachments(request_id)
+        return result
 
     def cancel_intern_request(self, intern_user_id: int, request_id: int) -> dict:
         profile = self._get_intern_profile(intern_user_id)
@@ -233,7 +290,8 @@ class LeaveService:
                    r.start_date, r.end_date, r.ly_do, r.trang_thai,
                    r.reviewed_by, r.reviewed_at, r.ly_do_tu_choi, r.created_at,
                    c.ten_ct, c.ma_ct, u.ho_ten AS intern_name, u.email AS intern_email,
-                   reviewer.ho_ten AS reviewer_name
+                   reviewer.ho_ten AS reviewer_name,
+                   (SELECT COUNT(*) FROM YEU_CAU_NGHI_PHEP_TEP a WHERE a.leave_request_id = r.id) AS attachment_count
             FROM YEU_CAU_NGHI_PHEP r
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = r.ma_ho_so
             JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -259,7 +317,8 @@ class LeaveService:
                    r.start_date, r.end_date, r.ly_do, r.trang_thai,
                    r.reviewed_by, r.reviewed_at, r.ly_do_tu_choi, r.created_at,
                    c.ten_ct, c.ma_ct, u.ho_ten AS intern_name, u.email AS intern_email,
-                   reviewer.ho_ten AS reviewer_name, h.ma_nguoi_dung AS intern_user_id
+                   reviewer.ho_ten AS reviewer_name, h.ma_nguoi_dung AS intern_user_id,
+                   (SELECT COUNT(*) FROM YEU_CAU_NGHI_PHEP_TEP a WHERE a.leave_request_id = r.id) AS attachment_count
             FROM YEU_CAU_NGHI_PHEP r
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = r.ma_ho_so
             JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -269,6 +328,27 @@ class LeaveService:
         """, (request_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy đơn xin nghỉ phép.")
+        result = dict(row)
+        result["attachments"] = self._list_attachments(request_id)
+        return result
+
+    def _list_attachments(self, request_id: int) -> list[dict]:
+        rows = self.db.execute("""
+            SELECT id, original_filename, mime_type, file_size, created_at
+            FROM YEU_CAU_NGHI_PHEP_TEP
+            WHERE leave_request_id = ?
+            ORDER BY id ASC
+        """, (request_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_attachment(self, request_id: int, attachment_id: int) -> dict:
+        row = self.db.execute("""
+            SELECT id, leave_request_id, storage_key, original_filename, mime_type, file_size
+            FROM YEU_CAU_NGHI_PHEP_TEP
+            WHERE id = ? AND leave_request_id = ?
+        """, (attachment_id, request_id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài liệu minh chứng.")
         return dict(row)
 
     def review_request(

@@ -108,6 +108,29 @@ class LeaveRequestTests(unittest.TestCase):
         """, (cls.program_1_id, cls.profile_a_id))
         cls.app_a1_id = app_a1.lastrowid
 
+        # Approved applications must still be excluded when their program is future or closed.
+        future_program = db.execute("""
+            INSERT INTO CHUONG_TRINH_THUC_TAP (ma_ct, ten_ct, chi_tieu, ngay_bat_dau, ngay_ket_thuc, trang_thai)
+            VALUES ('PROG-FUTURE', 'Chương trình sắp tới', 10, '2026-10-09', '2026-11-30', 'DangMo')
+        """)
+        cls.future_program_id = future_program.lastrowid
+        future_application = db.execute("""
+            INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet)
+            VALUES (?, ?, 'DaDuyet', CURRENT_TIMESTAMP)
+        """, (cls.future_program_id, cls.profile_a_id))
+        cls.future_application_id = future_application.lastrowid
+
+        closed_program = db.execute("""
+            INSERT INTO CHUONG_TRINH_THUC_TAP (ma_ct, ten_ct, chi_tieu, ngay_bat_dau, ngay_ket_thuc, trang_thai)
+            VALUES ('PROG-CLOSED', 'Chương trình đã đóng', 10, '2026-10-01', '2026-12-31', 'DaDong')
+        """)
+        cls.closed_program_id = closed_program.lastrowid
+        closed_application = db.execute("""
+            INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai, ngay_xet_duyet)
+            VALUES (?, ?, 'DaDuyet', CURRENT_TIMESTAMP)
+        """, (cls.closed_program_id, cls.profile_a_id))
+        cls.closed_application_id = closed_application.lastrowid
+
         # Intern B
         u_b = db.execute("""
             INSERT INTO NGUOI_DUNG (ho_ten, email, mat_khau, vai_tro, trang_thai)
@@ -217,6 +240,42 @@ class LeaveRequestTests(unittest.TestCase):
         self.assertEqual(res["ly_do"], "Bận việc gia đình có xin phép mentor")
         self.assertIsNone(res["reviewed_by"])
         self.assertIsNone(res["reviewed_at"])
+
+    def test_eligible_programs_only_include_approved_current_programs(self):
+        eligible = self.service.list_eligible_programs(self.intern_a_id, today=date(2026, 10, 8))
+        self.assertEqual([item["ma_ung_tuyen"] for item in eligible], [self.app_a1_id])
+
+        # Program start and end dates are inclusive.
+        self.assertEqual(
+            [item["ma_ung_tuyen"] for item in self.service.list_eligible_programs(self.intern_a_id, today=date(2026, 10, 1))],
+            [self.app_a1_id],
+        )
+        self.assertEqual(
+            [item["ma_ung_tuyen"] for item in self.service.list_eligible_programs(self.intern_a_id, today=date(2026, 12, 31))],
+            [self.app_a1_id],
+        )
+
+        status_code, response = self._asgi_request(
+            "GET", "/api/interns/me/leave-programs", user=self.intern_a
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual([item["ma_ung_tuyen"] for item in response], [self.app_a1_id])
+
+    def test_create_request_rejects_future_or_closed_programs(self):
+        for application_id in (self.future_application_id, self.closed_application_id):
+            with self.subTest(application_id=application_id):
+                with self.assertRaises(HTTPException) as ctx:
+                    self.service.create_request(
+                        self.intern_a_id,
+                        {
+                            "ma_ung_tuyen": application_id,
+                            "start_date": "2026-10-15",
+                            "end_date": "2026-10-16",
+                            "ly_do": "Xin nghỉ phép",
+                        },
+                        today=date(2026, 10, 8),
+                    )
+                self.assertEqual(ctx.exception.status_code, 409)
 
     # ================= 2. DATE VALIDATION =================
     def test_date_validation_rules(self):
