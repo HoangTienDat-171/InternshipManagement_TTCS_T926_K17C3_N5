@@ -77,7 +77,10 @@ class AllowanceTests(unittest.TestCase):
     def setUp(self):
         self.db = database.get_db_connection()
         self.__class__.active_db = self.db
+        self.db.execute("DELETE FROM PHU_CAP_LICH_SU_XU_LY")
+        self.db.execute("DELETE FROM PHU_CAP_PHAN_ANH")
         self.db.execute("DELETE FROM PHU_CAP_THUC_TAP")
+        self.db.execute("DELETE FROM THONG_BAO WHERE reference_type = 'allowance'")
         self.db.commit()
         self.service = AllowanceService(self.db)
 
@@ -318,7 +321,7 @@ class AllowanceTests(unittest.TestCase):
                     self.db.execute(f"UPDATE PHU_CAP_THUC_TAP SET {key}=? WHERE id=?", (value,row["id"]))
                 self.db.rollback()
         fk = self.db.execute("PRAGMA foreign_key_list(PHU_CAP_THUC_TAP)").fetchall()
-        self.assertEqual(len(fk), 4)
+        self.assertEqual(len(fk), 5)
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("DELETE FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ung_tuyen=?", (row["ma_ung_tuyen"],))
         self.db.rollback()
@@ -329,6 +332,150 @@ class AllowanceTests(unittest.TestCase):
         self.assertEqual(self.http("POST", "/api/allowances", "hr", payload)[0], 422)
         payload["ghi_chu"] = "  Accepted note  "
         self.assertEqual(self.http("POST", "/api/allowances", "hr", payload)[1]["ghi_chu"], "Accepted note")
+
+    def test_hr_intern_filter_searches_system_id_and_keeps_unprofiled_intern_visible(self):
+        unprofiled = self.db.execute("""INSERT INTO NGUOI_DUNG
+            (ho_ten,email,mat_khau,vai_tro,trang_thai) VALUES
+            ('Unprofiled intern','new-intern@example.test','unused','ThucTapSinh','HoatDong')""").lastrowid
+        self.db.commit()
+        response = self.http("GET", f"/api/allowances/interns?search={unprofiled}", "hr")
+        self.assertEqual(response[0], 200)
+        self.assertEqual(response[1]["total"], 1)
+        self.assertEqual(response[1]["items"][0]["ma_nguoi_dung"], unprofiled)
+        self.assertEqual(response[1]["items"][0]["eligible"], 0)
+        self.assertIsNone(response[1]["items"][0]["ma_ho_so"])
+        filtered = self.http("GET", f"/api/allowances/interns?program_id={self.programs[0]}", "hr")[1]
+        self.assertEqual(filtered["total"], 2)
+        self.assertNotIn(unprofiled, [row["ma_nguoi_dung"] for row in filtered["items"]])
+
+    def test_hr_allowance_list_filters_by_intern_id_not_display_name(self):
+        alice = self.create(ky="2026-09")
+        self.create(name="bob")
+        data = self.http("GET", f"/api/allowances?intern_id={self.users['alice']['ma_nguoi_dung']}", "hr")[1]
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["id"], alice["id"])
+
+    def test_intern_receipt_confirmation_is_audited_and_locks_allowance(self):
+        row = self.create()
+        status, received = self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "alice")
+        self.assertEqual(status, 200)
+        self.assertEqual(received["trang_thai_hien_tai"], "DaNhan")
+        self.assertEqual(received["xac_nhan_boi"], self.users["alice"]["ma_nguoi_dung"])
+        self.assertTrue(received["xac_nhan_luc"])
+        self.assertEqual(received["history"][0]["event_type"], "DaNhan")
+        self.assertEqual(received["history"][0]["so_tien_snapshot"], row["so_tien"])
+        self.assertEqual(self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "alice")[0], 409)
+        status, _ = self.http("PUT", f"/api/allowances/{row['id']}", "hr",
+                              {"ky": "2026-10", "so_tien": "800000", "ghi_chu": "attempt"})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.service.detail(row["id"])["so_tien"], row["so_tien"])
+
+    def test_unreceived_report_notifies_active_hr_and_admin_and_retains_history(self):
+        row = self.create()
+        status, reported = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
+                                     {"noi_dung": "Tôi chưa nhận khoản này."})
+        self.assertEqual(status, 200)
+        self.assertEqual(reported["trang_thai_hien_tai"], "ChuaNhanDuoc")
+        self.assertEqual(reported["report_count"], 1)
+        self.assertEqual(reported["reports"][0]["noi_dung"], "Tôi chưa nhận khoản này.")
+        self.assertEqual(reported["history"][0]["event_type"], "BaoChuaNhanDuoc")
+        active_managers = {row["ma_nguoi_dung"] for row in self.db.execute("""SELECT ma_nguoi_dung
+            FROM NGUOI_DUNG WHERE vai_tro IN ('Admin', 'HR') AND trang_thai = 'HoatDong'""").fetchall()}
+        notifications = self.db.execute("""SELECT ma_nguoi_dung, reference_type, reference_id
+            FROM THONG_BAO WHERE reference_type = 'allowance'""").fetchall()
+        self.assertEqual({row["ma_nguoi_dung"] for row in notifications}, active_managers)
+        self.assertTrue(all(row["reference_id"] == str(reported["id"]) for row in notifications))
+        self.assertTrue(all(row["reference_type"] == "allowance" for row in notifications))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM EMAIL_OUTBOX").fetchone()[0], 0)
+
+    def test_hr_report_inbox_update_is_audited_and_tts_can_confirm_later(self):
+        row = self.create()
+        report_response = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
+                                    {"noi_dung": "Chưa nhận tháng này."})
+        report_id = report_response[1]["reports"][0]["id"]
+        inbox = self.http("GET", "/api/allowances/reports", "hr")[1]
+        self.assertEqual(inbox["total"], 1)
+        self.assertEqual(inbox["items"][0]["report_id"], report_id)
+        status, updated = self.http("PUT", f"/api/allowances/reports/{report_id}", "admin",
+            {"trang_thai_xu_ly": "DangXuLy", "ghi_chu_xu_ly": "Đang xác minh."})
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["trang_thai_hien_tai"], "DangXuLy")
+        self.assertEqual(updated["reports"][0]["nguoi_xu_ly"], "admin")
+        self.assertEqual(updated["history"][0]["event_type"], "BatDauXuLy")
+        status, resolved = self.http("PUT", f"/api/allowances/reports/{report_id}", "hr",
+            {"trang_thai_xu_ly": "DaXuLy", "ghi_chu_xu_ly": "Đã đối soát với bộ phận tài chính."})
+        self.assertEqual(status, 200)
+        self.assertEqual(resolved["reports"][0]["trang_thai_xu_ly"], "DaXuLy")
+        self.assertEqual(len(resolved["history"]), 4)
+        self.assertEqual(self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "alice")[0], 200)
+        final = self.service.detail(row["id"])
+        self.assertEqual(final["trang_thai_nhan"], "DaNhan")
+        self.assertEqual(final["reports"][0]["ghi_chu_xu_ly"], "Đã đối soát với bộ phận tài chính.")
+
+    def test_tts_idor_mentor_and_manager_cannot_impersonate_receipt_actions(self):
+        row = self.create()
+        bob_report = f"/api/interns/me/allowances/{row['id']}/reports"
+        self.assertEqual(self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "bob")[0], 404)
+        self.assertEqual(self.http("POST", bob_report, "bob", {"noi_dung": "Not mine"})[0], 404)
+        self.assertEqual(self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "hr")[0], 403)
+        self.assertEqual(self.http("POST", f"/api/interns/me/allowances/{row['id']}/received", "mentor")[0], 403)
+        self.assertEqual(self.http("GET", "/api/allowances/reports", "mentor")[0], 403)
+        report = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
+                           {"noi_dung": "Chưa nhận."})[1]["reports"][0]
+        self.assertEqual(self.http("PUT", f"/api/allowances/reports/{report['id']}", "alice",
+                                   {"trang_thai_xu_ly": "DaXuLy"})[0], 403)
+
+    def test_after_hr_resolution_a_new_unreceived_report_is_appended(self):
+        row = self.create()
+        first = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
+                          {"noi_dung": "Lần đầu chưa nhận."})[1]["reports"][0]
+        self.http("PUT", f"/api/allowances/reports/{first['id']}", "hr",
+                  {"trang_thai_xu_ly": "DaXuLy", "ghi_chu_xu_ly": "Đã kiểm tra."})
+        status, again = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
+                                  {"noi_dung": "Tôi vẫn chưa nhận."})
+        self.assertEqual(status, 200)
+        self.assertEqual(again["report_count"], 2)
+        self.assertEqual(len(again["history"]), 4)
+        self.assertEqual(again["reports"][0]["noi_dung"], "Tôi vẫn chưa nhận.")
+        self.assertEqual(again["reports"][1]["ghi_chu_xu_ly"], "Đã kiểm tra.")
+
+    def test_receipt_and_hr_update_race_never_changes_confirmed_amount(self):
+        row = self.create(amount="500000")
+        barrier = Barrier(2)
+
+        def confirm():
+            conn = database.get_db_connection()
+            try:
+                barrier.wait(timeout=5)
+                return AllowanceService(conn).confirm_received(row["id"],
+                    self.users["alice"]["ma_nguoi_dung"], self.users["alice"]["ma_nguoi_dung"])
+            except HTTPException as exc:
+                return exc.status_code
+            finally:
+                conn.close()
+
+        def update():
+            conn = database.get_db_connection()
+            try:
+                barrier.wait(timeout=5)
+                payload = AllowanceUpdate(ky="2026-10", so_tien="800000", ghi_chu="Concurrent edit").model_dump()
+                return AllowanceService(conn).save(payload, self.users["hr"]["ma_nguoi_dung"], row["id"])
+            except HTTPException as exc:
+                return exc.status_code
+            finally:
+                conn.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            confirmed, edited = list(pool.map(lambda work: work(), [confirm, update]))
+        final = self.service.detail(row["id"])
+        self.assertEqual(final["trang_thai_nhan"], "DaNhan")
+        self.assertIn(final["so_tien"], {"500000.00", "800000.00"})
+        receipt_event = next(event for event in final["history"] if event["event_type"] == "DaNhan")
+        self.assertEqual(receipt_event["so_tien_snapshot"], final["so_tien"])
+        if final["so_tien"] == "500000.00":
+            self.assertEqual(edited, 409)
+        else:
+            self.assertEqual(edited["so_tien"], "800000.00")
 
 
 if __name__ == "__main__":
