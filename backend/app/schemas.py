@@ -1,6 +1,30 @@
 from datetime import date, time
+from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
+
+
+class AllowanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ky: str = Field(pattern=r"^[1-9][0-9]{3}-(0[1-9]|1[0-2])$")
+    so_tien: Decimal = Field(ge=0, max_digits=15, decimal_places=2, allow_inf_nan=False)
+    ghi_chu: str = Field(default="", max_length=1000)
+
+    @field_validator("so_tien", mode="before")
+    @classmethod
+    def exact_amount(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+            raise ValueError("Số tiền phải là chuỗi thập phân hoặc số nguyên, tối đa 2 chữ số lẻ.")
+        return value
+
+    @field_validator("ghi_chu")
+    @classmethod
+    def trim_note(cls, value):
+        return value.strip()
+
+
+class AllowanceCreate(AllowanceUpdate):
+    ma_ung_tuyen: StrictInt = Field(gt=0)
 
 class UserLogin(BaseModel):
     email: str

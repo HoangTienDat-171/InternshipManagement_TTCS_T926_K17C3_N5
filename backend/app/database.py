@@ -530,6 +530,26 @@ def init_mysql_db():
                     REFERENCES YEU_CAU_NGHI_PHEP(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
         ]
+        statements.append("""CREATE TABLE IF NOT EXISTS PHU_CAP_THUC_TAP (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            ma_ho_so INT NOT NULL,
+            ma_ung_tuyen INT NOT NULL,
+            ky CHAR(7) NOT NULL,
+            so_tien_minor BIGINT NOT NULL,
+            ghi_chu VARCHAR(1000) NOT NULL DEFAULT '',
+            created_by INT NOT NULL,
+            updated_by INT NOT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            UNIQUE KEY uq_phu_cap_ho_so_ky (ma_ho_so, ky),
+            KEY idx_phu_cap_ky (ky, id),
+            CONSTRAINT chk_phu_cap_amount CHECK (so_tien_minor BETWEEN 0 AND 999999999999999),
+            CONSTRAINT chk_phu_cap_period CHECK (ky REGEXP '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
+            FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+            FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
+            FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+            FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
 
@@ -1032,6 +1052,27 @@ def init_db():
     );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_leave_attachment_request ON YEU_CAU_NGHI_PHEP_TEP(leave_request_id, id)")
+
+    cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_THUC_TAP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        ma_ung_tuyen INTEGER NOT NULL,
+        ky TEXT NOT NULL CHECK(length(ky) = 7 AND ky GLOB '[1-9][0-9][0-9][0-9]-[0-1][0-9]'
+            AND substr(ky, 6, 2) BETWEEN '01' AND '12'),
+        so_tien_minor INTEGER NOT NULL CHECK(typeof(so_tien_minor) = 'integer'
+            AND so_tien_minor BETWEEN 0 AND 999999999999999),
+        ghi_chu TEXT NOT NULL DEFAULT '' CHECK(length(ghi_chu) <= 1000),
+        created_by INTEGER NOT NULL,
+        updated_by INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(ma_ho_so, ky),
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
+        FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_ky ON PHU_CAP_THUC_TAP(ky, id)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
