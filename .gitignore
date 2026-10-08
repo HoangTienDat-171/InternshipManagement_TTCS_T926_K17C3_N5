@@ -13,3 +13,6 @@ frontend/dist/
 .env
 .env.*
 !.env.example
+
+# Local runtime logs
+logs/
