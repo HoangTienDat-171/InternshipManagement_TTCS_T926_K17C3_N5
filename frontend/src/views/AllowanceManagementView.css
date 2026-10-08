@@ -1526,6 +1526,241 @@
   margin: 8px 0 0;
 }
 
+.allowance-report-evidence {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.allowance-report-evidence h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+}
+
+.allowance-evidence-item,
+.allowance-local-evidence-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  background: var(--surface-card, #fff);
+}
+
+.allowance-evidence-preview,
+.allowance-local-evidence-item > span {
+  display: grid;
+  flex: 0 0 52px;
+  width: 52px;
+  height: 44px;
+  place-items: center;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.allowance-evidence-preview img,
+.allowance-local-evidence-item > span img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.allowance-evidence-preview:disabled {
+  opacity: .65;
+}
+
+.allowance-evidence-copy,
+.allowance-local-evidence-item > div {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+
+.allowance-evidence-copy strong,
+.allowance-local-evidence-item strong {
+  overflow: hidden;
+  color: var(--text-main, #0f172a);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.allowance-evidence-copy small,
+.allowance-local-evidence-item small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.allowance-evidence-error {
+  color: #b91c1c !important;
+  font-size: 12px;
+}
+
+.allowance-evidence-item > .btn {
+  flex: 0 0 auto;
+}
+
+.allowance-local-evidence-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.allowance-local-evidence-item > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #e11d48;
+  cursor: pointer;
+}
+
+.allowance-report-upload-zone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed #a5b4fc;
+  border-radius: 12px;
+  background: #f8faff;
+  color: #4f46e5;
+}
+
+.allowance-report-upload-zone > div {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.allowance-report-upload-zone strong {
+  color: var(--text-main, #0f172a);
+  font-size: 12px;
+}
+
+.allowance-report-upload-zone small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.allowance-report-upload-zone > label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.allowance-upload-progress {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  color: #475569;
+  font-size: 11px;
+}
+
+.allowance-upload-progress > div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.allowance-upload-progress progress {
+  width: 100%;
+  height: 7px;
+  accent-color: #4f46e5;
+}
+
+.allowance-image-lightbox {
+  position: fixed;
+  z-index: 9999;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 36px;
+  background: rgba(15, 23, 42, .88);
+}
+
+.allowance-image-lightbox > img {
+  max-width: min(100%, 1100px);
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+}
+
+.allowance-image-lightbox > button {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .5);
+  color: #fff;
+  cursor: pointer;
+}
+
+.allowance-report-progress-hint,
+.allowance-report-acknowledgment {
+  margin: 11px 0 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.allowance-report-acknowledged-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 0 0;
+  color: #047857;
+  font-size: 11px;
+}
+
+.allowance-report-acknowledgment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  background: #f0fdf4;
+}
+
+.allowance-report-acknowledgment p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+}
+
+.allowance-report-manager-help {
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .allowance-report-resolution-form {
   display: grid;
   gap: 11px;
@@ -1556,6 +1791,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -1783,6 +2019,35 @@
   background: #1e293b;
 }
 
+:root[data-theme='dark'] .allowance-evidence-item,
+:root[data-theme='dark'] .allowance-local-evidence-item {
+  border-color: #334155;
+  background: #0f172a;
+}
+
+:root[data-theme='dark'] .allowance-evidence-copy strong,
+:root[data-theme='dark'] .allowance-local-evidence-item strong,
+:root[data-theme='dark'] .allowance-report-acknowledgment,
+:root[data-theme='dark'] .allowance-report-progress-hint {
+  color: #e2e8f0;
+}
+
+:root[data-theme='dark'] .allowance-report-upload-zone,
+:root[data-theme='dark'] .allowance-report-manager-help {
+  border-color: #4338ca;
+  background: rgba(49, 46, 129, .3);
+  color: #c7d2fe;
+}
+
+:root[data-theme='dark'] .allowance-report-upload-zone strong {
+  color: #e2e8f0;
+}
+
+:root[data-theme='dark'] .allowance-report-acknowledgment {
+  border-color: rgba(16, 185, 129, .35);
+  background: rgba(6, 95, 70, .25);
+}
+
 :root[data-theme='dark'] .allowance-report-resolution,
 :root[data-theme='dark'] .allowance-page .btn-success-soft {
   border-color: rgba(16, 185, 129, .35);
@@ -1833,6 +2098,26 @@
 }
 
 @media (max-width: 640px) {
+  .allowance-report-upload-zone,
+  .allowance-report-acknowledgment {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .allowance-report-upload-zone > div {
+    flex-basis: calc(100% - 36px);
+  }
+  .allowance-report-upload-zone > label {
+    margin-left: 32px;
+  }
+  .allowance-evidence-item {
+    flex-wrap: wrap;
+  }
+  .allowance-evidence-copy {
+    flex-basis: calc(100% - 70px);
+  }
+  .allowance-image-lightbox {
+    padding: 18px;
+  }
   .allowance-filters-grid.is-manager,
   .allowance-filters-grid.is-intern {
     grid-template-columns: 1fr;

@@ -37,10 +37,15 @@ export default function Navbar({
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => loadNotifications(), 0);
-    const refreshTimer = window.setInterval(loadNotifications, 60000);
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') loadNotifications();
+    };
+    const refreshTimer = window.setInterval(refreshIfVisible, 15000);
+    document.addEventListener('visibilitychange', refreshIfVisible);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(refreshTimer);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
     };
   }, [loadNotifications]);
 
@@ -65,7 +70,7 @@ export default function Navbar({
     if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
     if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
-    if (item.loai === 'allowance_unreceived_report') return { label: 'Phụ cấp', icon: <Wallet size={15} /> };
+    if (['allowance_unreceived_report', 'allowance_report_status', 'allowance_report_acknowledged'].includes(item.loai)) return { label: 'Phụ cấp', icon: <Wallet size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };
 
