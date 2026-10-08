@@ -18,15 +18,22 @@ import {
   Clock3,
   MessageCircleWarning,
   FileText,
-  UserRound
+  UserRound,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Check
 } from 'lucide-react';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { apiFetch, readJsonResponse } from '../utils/api';
+import { apiFetch, apiUploadWithProgress, readJsonResponse } from '../utils/api';
 import './AllowanceManagementView.css';
 
 const emptyPage = { items: [], total: 0 };
+const MAX_REPORT_IMAGES = 5;
+const MAX_REPORT_IMAGE_SIZE = 5 * 1024 * 1024;
+const ACCEPTED_REPORT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 const money = (value) => {
   const [whole, fraction = '00'] = String(value).split('.');
@@ -75,14 +82,25 @@ function receiptStatus(record) {
   return { code, label: labels[code] || 'Chờ xác nhận' };
 }
 
+function reportProgressLabel(record) {
+  if (record?.trang_thai_nhan === 'DaNhan') return '';
+  if (record?.latest_report_status === 'DaXuLy') return 'HR đã xử lý · xem phản hồi';
+  if (record?.latest_report_status === 'DangXuLy') return 'HR đang xử lý';
+  if (record?.report_count > 0) return 'Đang chờ HR tiếp nhận';
+  return '';
+}
+
 function eventLabel(type) {
   const labels = {
     TaoPhuCap: 'HR tạo khoản phụ cấp',
     CapNhatPhuCap: 'HR cập nhật phụ cấp',
     DaNhan: 'TTS xác nhận đã nhận',
+    TTSXacNhanPhanAnh: 'TTS xác nhận nhận phụ cấp, tự đóng phản ánh',
     BaoChuaNhanDuoc: 'TTS báo chưa nhận được',
     BatDauXuLy: 'HR bắt đầu xử lý phản ánh',
+    CapNhatTienDoXuLy: 'HR cập nhật tiến độ xử lý',
     CapNhatKetQuaXuLy: 'HR cập nhật kết quả xử lý',
+    TTSXacNhanDaXemPhanHoi: 'TTS xác nhận đã xem phản hồi của HR',
   };
   return labels[type] || 'Cập nhật phụ cấp';
 }
@@ -209,7 +227,7 @@ function EmptyAllowanceIllustration() {
   );
 }
 
-function AllowanceForm({ record, programs, onSaved, onClose }) {
+function AllowanceForm({ record, onSaved, onClose }) {
   const [selected, setSelected] = useState(record || null);
   const [form, setForm] = useState({
     ky: record?.ky || currentPeriod(),
@@ -217,6 +235,9 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
     ghi_chu: record?.ghi_chu || ''
   });
   const [program, setProgram] = useState('');
+  const [eligiblePrograms, setEligiblePrograms] = useState([]);
+  const [eligibleProgramsLoading, setEligibleProgramsLoading] = useState(!record);
+  const [eligibleProgramsError, setEligibleProgramsError] = useState('');
   const [page, setPage] = useState(1);
   const [options, setOptions] = useState(emptyPage);
   const [optionsLoading, setOptionsLoading] = useState(false);
@@ -228,6 +249,28 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
   const titleRef = useRef(null);
 
   useEffect(() => { titleRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    if (record) return undefined;
+    const controller = new AbortController();
+    requestJson('/api/allowances/eligible-programs', { signal: controller.signal })
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setEligiblePrograms(data);
+          setEligibleProgramsError('');
+        }
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setEligiblePrograms([]);
+          setEligibleProgramsError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEligibleProgramsLoading(false);
+      });
+    return () => controller.abort();
+  }, [record, retry]);
 
   useEffect(() => {
     if (record) return undefined;
@@ -300,7 +343,7 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
       <div className="allowance-form-info-callout" role="note">
         <Info size={18} className="allowance-info-icon" />
         <div>
-          Một hồ sơ có một khoản phụ cấp trong mỗi kỳ. Chương trình đã kết thúc vẫn có thể được nhập phụ cấp lịch sử.
+          Chỉ chọn chương trình đang diễn ra trong thời gian hiệu lực. Có thể cấp nhiều khoản phụ cấp cho cùng một TTS trong một kỳ.
         </div>
       </div>
 
@@ -310,15 +353,16 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
             <div className="allowance-form-section">
               <div className="allowance-section-header">
                 <span className="allowance-section-badge">1</span>
-                <h3>Chọn hồ sơ thực tập sinh</h3>
+                <h3>Chọn chương trình và thực tập sinh</h3>
               </div>
 
               <div className="allowance-form-grid">
                 <label className="allowance-field">
-                  <span className="allowance-field-label">Chương trình</span>
+                  <span className="allowance-field-label">Chương trình (không bắt buộc)</span>
                   <CustomSelect
                     id="allowance-form-program"
                     value={program}
+                    disabled={eligibleProgramsLoading}
                     onChange={(e) => {
                       setProgram(e.target.value);
                       setPage(1);
@@ -327,8 +371,8 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
                       setOptionsLoading(true);
                     }}
                   >
-                    <option value="">Tất cả chương trình</option>
-                    {programs.map((item) => (
+                    <option value="">Không lọc theo chương trình</option>
+                    {eligiblePrograms.map((item) => (
                       <option key={item.ma_chuong_trinh} value={item.ma_chuong_trinh}>
                         {item.ten_ct} · {item.ma_ct}
                       </option>
@@ -338,7 +382,7 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
 
                 <label className="allowance-field">
                   <span className="allowance-field-label">
-                    Hồ sơ tham gia đã duyệt <span className="allowance-required">*</span>
+                    Thực tập sinh / mã TTS <span className="allowance-required">*</span>
                   </span>
                   <CustomSelect
                     id="allowance-profile"
@@ -346,20 +390,29 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
                     disabled={optionsLoading}
                     onChange={(e) => setSelected(options.items.find((item) => item.ma_ung_tuyen === Number(e.target.value)) || null)}
                   >
-                    <option value="">Chọn thực tập sinh và chương trình</option>
+                    <option value="">Chọn TTS theo mã số</option>
                     {selected && !selectedInPage && (
                       <option value={selected.ma_ung_tuyen}>
-                        {selected.ho_ten} · HS #{selected.ma_ho_so} · {selected.ten_ct}
+                        TTS #{selected.ma_nguoi_dung} · {selected.ho_ten} · HS #{selected.ma_ho_so} · {selected.ten_ct}
                       </option>
                     )}
                     {options.items.map((item) => (
                       <option key={item.ma_ung_tuyen} value={item.ma_ung_tuyen}>
-                        {item.ho_ten} · {item.email} · HS #{item.ma_ho_so} · {item.ten_ct}
+                        TTS #{item.ma_nguoi_dung} · {item.ho_ten} · HS #{item.ma_ho_so} · {item.ten_ct}
                       </option>
                     ))}
                   </CustomSelect>
                 </label>
 
+                {eligibleProgramsError && (
+                  <p role="alert" className="allowance-error allowance-full">
+                    Không tải được chương trình đang hiệu lực: {eligibleProgramsError}{' '}
+                    <button type="button" onClick={() => { setEligibleProgramsLoading(true); setRetry((n) => n + 1); }}>Thử lại</button>
+                  </p>
+                )}
+                {!eligibleProgramsLoading && !eligibleProgramsError && !eligiblePrograms.length && (
+                  <p className="allowance-feedback-text allowance-full">Hiện không có chương trình nào đang diễn ra để cấp phụ cấp.</p>
+                )}
                 {optionsLoading && <p role="status" className="allowance-feedback-text allowance-full">Đang tải hồ sơ…</p>}
                 {optionsError && (
                   <p role="alert" className="allowance-error allowance-full">
@@ -367,15 +420,17 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
                   </p>
                 )}
                 {!optionsLoading && !optionsError && !options.total && (
-                  <p className="allowance-feedback-text allowance-full">Không có hồ sơ đã duyệt phù hợp.</p>
+                  <p className="allowance-feedback-text allowance-full">
+                    {program ? 'Chương trình này hiện không có TTS với hồ sơ đã duyệt.' : 'Không có TTS nào thuộc chương trình đang hiệu lực.'}
+                  </p>
                 )}
-                {options.total > 25 && (
+                {options.total > 50 && (
                   <div className="allowance-option-pages allowance-full">
                     <button type="button" className="btn btn-secondary btn-sm" disabled={optionsLoading || page <= 1} onClick={() => setPage(page - 1)}>
                       Trang trước
                     </button>
-                    <span>Trang {page} / {Math.ceil(options.total / 25)} · {options.total} hồ sơ</span>
-                    <button type="button" className="btn btn-secondary btn-sm" disabled={optionsLoading || page * 25 >= options.total} onClick={() => setPage(page + 1)}>
+                    <span>Trang {page} / {Math.ceil(options.total / 50)} · {options.total} hồ sơ</span>
+                    <button type="button" className="btn btn-secondary btn-sm" disabled={optionsLoading || page * 50 >= options.total} onClick={() => setPage(page + 1)}>
                       Trang sau
                     </button>
                   </div>
@@ -393,6 +448,7 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
                 <div className="allowance-profile-meta">
                   <div className="allowance-profile-title-row">
                     <strong>{selected.ho_ten}</strong>
+                    <span className="allowance-profile-badge">TTS #{selected.ma_nguoi_dung}</span>
                     <span className="allowance-profile-badge">
                       Hồ sơ #{selected.ma_ho_so}
                     </span>
@@ -495,25 +551,113 @@ function AllowanceForm({ record, programs, onSaved, onClose }) {
   );
 }
 
-function AllowanceReportCard({ report, onUpdated, onShowToast }) {
-  const [status, setStatus] = useState(report.trang_thai_xu_ly);
+function formatFileSize(value) {
+  const bytes = Number(value) || 0;
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function LocalEvidencePreview({ file }) {
+  const [url] = useState(() => URL.createObjectURL(file));
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  return <img src={url} alt={`Xem trước ${file.name}`} />;
+}
+
+function AllowanceEvidenceCard({ reportId, attachment, onShowToast }) {
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [error, setError] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const url = `/api/allowance-reports/${reportId}/attachments/${attachment.id}`;
+
+  useEffect(() => {
+    let objectUrl = '';
+    const controller = new AbortController();
+    apiFetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Không tải được ảnh minh chứng.');
+        objectUrl = URL.createObjectURL(await response.blob());
+        if (!controller.signal.aborted) setPreviewUrl(objectUrl);
+      })
+      .catch((err) => { if (!controller.signal.aborted) setError(err.message); });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+
+  const download = async () => {
+    try {
+      const response = await apiFetch(`${url}?download=true`);
+      if (!response.ok) throw new Error('Không tải được ảnh minh chứng.');
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = attachment.original_filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+    } catch (err) {
+      onShowToast?.(err.message, 'error');
+    }
+  };
+
+  return (
+    <>
+      <div className="allowance-evidence-item">
+        <button type="button" className="allowance-evidence-preview" disabled={!previewUrl} onClick={() => setPreviewOpen(true)}>
+          {previewUrl ? <img src={previewUrl} alt={`Minh chứng: ${attachment.original_filename}`} /> : <ImageIcon size={20} />}
+        </button>
+        <div className="allowance-evidence-copy">
+          <strong title={attachment.original_filename}>{attachment.original_filename}</strong>
+          <small>{formatFileSize(attachment.file_size)} · Ảnh minh chứng</small>
+          {error && <small className="allowance-evidence-error">{error}</small>}
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm" disabled={!previewUrl} onClick={() => setPreviewOpen(true)}>Xem</button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={download}>Tải xuống</button>
+      </div>
+      {previewOpen && previewUrl && (
+        <div className="allowance-image-lightbox" role="dialog" aria-modal="true" aria-label="Xem ảnh minh chứng" onClick={() => setPreviewOpen(false)}>
+          <button type="button" aria-label="Đóng ảnh" onClick={() => setPreviewOpen(false)}><X size={20} /></button>
+          <img src={previewUrl} alt={`Minh chứng: ${attachment.original_filename}`} onClick={(event) => event.stopPropagation()} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function AllowanceReportCard({ report, onUpdated, onAcknowledged, onShowToast }) {
   const [note, setNote] = useState(report.ghi_chu_xu_ly || '');
   const [saving, setSaving] = useState(false);
+  const [acknowledging, setAcknowledging] = useState(false);
 
-  const submit = async (event) => {
+  const submit = async (event, nextStatus) => {
     event.preventDefault();
     setSaving(true);
     try {
       const data = await requestJson(`/api/allowances/reports/${report.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trang_thai_xu_ly: status, ghi_chu_xu_ly: note }),
+        body: JSON.stringify({ trang_thai_xu_ly: nextStatus, ghi_chu_xu_ly: note }),
       });
       onUpdated(data);
-      onShowToast?.('Đã cập nhật tiến độ xử lý phản ánh.');
+      onShowToast?.('Đã lưu phản ánh và gửi thông báo cập nhật cho TTS.');
     } catch (error) {
       onShowToast?.(error.message || 'Không thể cập nhật phản ánh.', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const acknowledge = async () => {
+    if (acknowledging) return;
+    setAcknowledging(true);
+    try {
+      const data = await requestJson(`/api/interns/me/allowance-reports/${report.id}/acknowledge`, { method: 'POST' });
+      onAcknowledged?.(data);
+      onShowToast?.('Đã xác nhận bạn đã xem phản hồi của HR.');
+    } catch (error) {
+      onShowToast?.(error.message || 'Không thể xác nhận đã xem phản hồi.', 'error');
+    } finally {
+      setAcknowledging(false);
     }
   };
 
@@ -526,15 +670,56 @@ function AllowanceReportCard({ report, onUpdated, onShowToast }) {
         </span>
       </div>
       <p className="allowance-report-note">{report.noi_dung}</p>
+      {report.attachments?.length > 0 && (
+        <section className="allowance-report-evidence" aria-label="Ảnh minh chứng đính kèm">
+          <h4><ImageIcon size={15} /> Ảnh minh chứng ({report.attachments.length})</h4>
+          {report.attachments.map((attachment) => (
+            <AllowanceEvidenceCard key={attachment.id} reportId={report.id} attachment={attachment} onShowToast={onShowToast} />
+          ))}
+        </section>
+      )}
       {report.nguoi_xu_ly && <p className="allowance-report-meta">Cập nhật bởi {report.nguoi_xu_ly} · {timestamp(report.updated_at)}</p>}
-      {report.ghi_chu_xu_ly && <p className="allowance-report-resolution"><strong>Phản hồi:</strong> {report.ghi_chu_xu_ly}</p>}
+      {report.ghi_chu_xu_ly && <p className="allowance-report-resolution"><strong>Phản hồi của HR:</strong> {report.ghi_chu_xu_ly}</p>}
+      {onUpdated && report.tts_acknowledged_at && (
+        <p className="allowance-report-acknowledged-meta"><CheckCircle2 size={15} /> TTS đã xác nhận xem phản hồi · {timestamp(report.tts_acknowledged_at)}</p>
+      )}
+      {report.trang_thai_xu_ly === 'DaXuLy' && !onUpdated && (
+        <div className="allowance-report-acknowledgment">
+          {report.tts_acknowledged_at ? (
+            <p><CheckCircle2 size={16} /> Bạn đã xác nhận xem phản hồi · {timestamp(report.tts_acknowledged_at)}</p>
+          ) : (
+            <>
+              <p>HR đã hoàn tất xử lý. Hãy xem ghi chú ở trên, sau đó xác nhận để lưu lại rằng bạn đã nhận được phản hồi.</p>
+              <button type="button" className="btn btn-success-soft btn-sm" onClick={acknowledge} disabled={acknowledging}>
+                <Check size={15} /> {acknowledging ? 'Đang lưu…' : 'Xác nhận đã xem phản hồi'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {!onUpdated && report.trang_thai_xu_ly !== 'DaXuLy' && (
+        <p className="allowance-report-progress-hint">
+          {report.trang_thai_xu_ly === 'DangXuLy'
+            ? 'HR đã tiếp nhận phản ánh và đang kiểm tra. Bạn sẽ nhận được thông báo khi có cập nhật.'
+            : 'Phản ánh đã được gửi và đang chờ HR tiếp nhận.'}
+        </p>
+      )}
       {onUpdated && (
-        <form className="allowance-report-resolution-form" onSubmit={submit}>
-          <label><span>Tiến độ xử lý</span><CustomSelect value={status} onChange={(event) => setStatus(event.target.value)} disabled={saving}>
-            <option value="DangXuLy">Đang xử lý</option><option value="DaXuLy">Đã xử lý</option>
-          </CustomSelect></label>
-          <label><span>Ghi chú xử lý</span><textarea value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="Nhập kết quả hoặc ghi chú cho TTS…" disabled={saving} /></label>
-          <div className="allowance-report-form-footer"><small>{note.length}/1000</small><button type="submit" className="btn btn-primary btn-sm" disabled={saving}>{saving ? 'Đang lưu…' : 'Lưu tiến độ'}</button></div>
+        <form className="allowance-report-resolution-form" onSubmit={(event) => submit(event, report.trang_thai_xu_ly === 'DaXuLy' ? 'DaXuLy' : 'DangXuLy')}>
+          <p className="allowance-report-manager-help" role="status">
+            {report.trang_thai_xu_ly === 'DaXuLy'
+              ? 'Đã xử lý — TTS đã nhận được kết quả và ghi chú.'
+              : report.trang_thai_xu_ly === 'DangXuLy'
+                ? 'Đang xử lý — TTS đã được thông báo HR đang kiểm tra phản ánh.'
+                : 'Phản ánh đang chờ tiếp nhận. Lưu tiến độ để chuyển sang Đang xử lý và thông báo cho TTS.'}
+          </p>
+          <label><span>Ghi chú / kết quả gửi cho TTS</span><textarea value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="Ghi rõ nội dung đã kiểm tra, kết quả và bước tiếp theo…" disabled={saving} /></label>
+          <div className="allowance-report-form-footer">
+            <small>{note.length}/1000</small>
+            <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>
+              {saving ? 'Đang lưu…' : report.trang_thai_xu_ly === 'DaXuLy' ? 'Cập nhật kết quả cho TTS' : 'Lưu tiến độ & thông báo TTS'}
+            </button>
+          </div>
         </form>
       )}
     </article>
@@ -589,8 +774,9 @@ function AllowanceDetails({ recordId, endpoint, canManage, onClose, onRequestRec
               <span className="allowance-detail-status-note">
                 {data.trang_thai_nhan === 'DaNhan'
                   ? `TTS xác nhận lúc ${timestamp(data.xac_nhan_luc)}`
-                  : data.latest_report_status === 'DangXuLy' ? 'HR đang xử lý phản ánh gần nhất'
-                    : data.report_count ? 'TTS đã gửi phản ánh chưa nhận' : 'Đang chờ TTS xác nhận'}
+                  : data.latest_report_status === 'DaXuLy' ? 'HR đã xử lý phản ánh — xem phản hồi bên dưới'
+                    : data.latest_report_status === 'DangXuLy' ? 'HR đã tiếp nhận và đang xử lý phản ánh'
+                      : data.report_count ? 'Phản ánh đã gửi — đang chờ HR tiếp nhận' : 'Đang chờ TTS xác nhận'}
               </span>
             </div>
             <strong className="allowance-detail-hero-amount">{money(data.so_tien)}</strong>
@@ -646,7 +832,13 @@ function AllowanceDetails({ recordId, endpoint, canManage, onClose, onRequestRec
           <section className="allowance-detail-history" aria-label="Lịch sử xác nhận và xử lý">
             <div className="allowance-detail-section-heading"><FileText size={17} /><h3>Phản ánh và xử lý</h3><span>{data.reports?.length || 0}</span></div>
             {data.reports?.length ? data.reports.map((report) => (
-              <AllowanceReportCard key={`${report.id}-${report.trang_thai_xu_ly}-${report.ghi_chu_xu_ly || ''}`} report={report} onUpdated={canManage ? (value) => { setData(value); onChanged?.(); } : undefined} onShowToast={onShowToast} />
+              <AllowanceReportCard
+                key={`${report.id}-${report.trang_thai_xu_ly}-${report.ghi_chu_xu_ly || ''}-${report.tts_acknowledged_at || ''}`}
+                report={report}
+                onUpdated={canManage ? (value) => { setData(value); onChanged?.(); } : undefined}
+                onAcknowledged={!canManage ? (value) => { setData(value); onChanged?.(); } : undefined}
+                onShowToast={onShowToast}
+              />
             )) : <p className="allowance-history-empty">Chưa có phản ánh nào cho khoản phụ cấp này.</p>}
             {data.history?.length > 0 && (
               <div className="allowance-event-timeline">
@@ -708,6 +900,9 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
   const [confirmItem, setConfirmItem] = useState(null);
   const [reportItem, setReportItem] = useState(null);
   const [reportNote, setReportNote] = useState('');
+  const [reportFiles, setReportFiles] = useState([]);
+  const [reportFileError, setReportFileError] = useState('');
+  const [reportUploadProgress, setReportUploadProgress] = useState(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
 
   const activeDetailId = requestedAllowanceId ? Number(requestedAllowanceId) : detailId;
@@ -793,20 +988,62 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
     event.preventDefault();
     if (!reportItem || receiptBusy) return;
     setReceiptBusy(true);
+    setReportUploadProgress(reportFiles.length ? 0 : null);
     try {
-      await requestJson(`/api/interns/me/allowances/${reportItem.id}/reports`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ noi_dung: reportNote }),
-      });
-      onShowToast?.('Phản ánh chưa nhận phụ cấp đã được gửi tới HR.');
+      const body = new FormData();
+      body.append('noi_dung', reportNote);
+      reportFiles.forEach((file) => body.append('files', file));
+      const response = await apiUploadWithProgress(
+        `/api/interns/me/allowances/${reportItem.id}/reports`,
+        body,
+        (progress) => setReportUploadProgress(progress),
+      );
+      if (!response.ok) throw new Error(errorMessage(response.data?.detail));
+      onShowToast?.('Phản ánh và ảnh minh chứng đã được gửi tới HR.');
       setReportItem(null);
       setReportNote('');
+      setReportFiles([]);
+      setReportFileError('');
+      setReportUploadProgress(null);
       setRevision((value) => value + 1);
     } catch (error) {
       onShowToast?.(error.message || 'Không thể gửi phản ánh.', 'error');
     } finally {
       setReceiptBusy(false);
+      setReportUploadProgress(null);
     }
+  };
+
+  const addReportFiles = (selected) => {
+    if (!selected.length) return;
+    const combined = [...reportFiles, ...selected];
+    if (combined.length > MAX_REPORT_IMAGES) {
+      setReportFileError(`Chỉ được đính kèm tối đa ${MAX_REPORT_IMAGES} ảnh.`);
+      return;
+    }
+    const invalidType = combined.find((file) => !ACCEPTED_REPORT_IMAGE_TYPES.has(file.type));
+    if (invalidType) {
+      setReportFileError('Chỉ hỗ trợ ảnh PNG, JPG, JPEG hoặc WEBP.');
+      return;
+    }
+    const oversized = combined.find((file) => file.size > MAX_REPORT_IMAGE_SIZE);
+    if (oversized) {
+      setReportFileError(`Ảnh “${oversized.name}” vượt quá 5 MB.`);
+      return;
+    }
+    setReportFiles(combined);
+    setReportFileError('');
+  };
+
+  const selectReportFiles = (event) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = '';
+    addReportFiles(selected);
+  };
+
+  const removeReportFile = (index) => {
+    setReportFiles((items) => items.filter((_, itemIndex) => itemIndex !== index));
+    setReportFileError('');
   };
 
   const requestReceiptConfirmation = (item) => {
@@ -820,6 +1057,9 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
     onAllowanceOpened?.();
     setReportItem(item);
     setReportNote('');
+    setReportFiles([]);
+    setReportFileError('');
+    setReportUploadProgress(null);
   };
 
   if (!canRead) return <p role="alert">Bạn không có quyền xem phụ cấp.</p>;
@@ -866,7 +1106,6 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
         <AllowanceForm
           key={form.record?.id || 'new'}
           record={form.record}
-          programs={programs}
           onClose={() => setForm(null)}
           onSaved={() => {
             setForm(null);
@@ -951,7 +1190,7 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
         )}
       </section>
 
-      {canManage && (
+      {canManage && (reportInboxLoading || reportInboxError || reportInbox.total > 0) && (
         <section className={`allowance-report-inbox${reportInboxOpen ? ' is-open' : ''}`} aria-label="Phản ánh phụ cấp cần xử lý">
           <div className="allowance-report-inbox-header">
             <span className="allowance-report-inbox-icon"><MessageCircleWarning size={19} /></span>
@@ -1079,7 +1318,7 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
                     </td>
                     <td data-label="Trạng thái nhận">
                       <ReceiptStatusBadge record={item} />
-                      {item.report_count > 0 && <small className="allowance-status-subtext">{item.report_count} lần phản ánh</small>}
+                      {reportProgressLabel(item) && <small className="allowance-status-subtext">{item.report_count} phản ánh · {reportProgressLabel(item)}</small>}
                     </td>
                     {canManage && (
                       <td data-label="Cập nhật">
@@ -1113,7 +1352,7 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
                         {!canManage && item.trang_thai_nhan !== 'DaNhan' && (
                           <>
                             <button type="button" className="btn btn-success-soft btn-sm" onClick={() => setConfirmItem(item)}>Đã nhận</button>
-                            <button type="button" className="btn btn-warning-soft btn-sm" onClick={() => { setReportItem(item); setReportNote(''); }}>Chưa nhận</button>
+                            <button type="button" className="btn btn-warning-soft btn-sm" onClick={() => requestReceiptReport(item)}>Chưa nhận</button>
                           </>
                         )}
                       </div>
@@ -1166,14 +1405,44 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
       <ConfirmDialog
         open={Boolean(reportItem)}
         title="Báo chưa nhận được phụ cấp"
-        message={reportItem ? `Phản ánh sẽ được gửi tới HR để kiểm tra khoản ${money(reportItem.so_tien)} kỳ ${periodLabel(reportItem.ky)}.` : ''}
+        message={reportItem ? `HR sẽ kiểm tra khoản ${money(reportItem.so_tien)} kỳ ${periodLabel(reportItem.ky)}. Bạn có thể đính kèm ảnh biến động số dư để làm minh chứng.` : ''}
         confirmLabel="Gửi phản ánh"
-        confirmDisabled={!reportNote.trim()}
+        confirmDisabled={!reportNote.trim() || Boolean(reportFileError)}
         busy={receiptBusy}
-        onCancel={() => { setReportItem(null); setReportNote(''); }}
+        onCancel={() => { setReportItem(null); setReportNote(''); setReportFiles([]); setReportFileError(''); setReportUploadProgress(null); }}
         onConfirm={() => handleReportUnreceived({ preventDefault() {} })}
       >
         <label className="allowance-report-compose-label"><span>Nội dung phản ánh</span><textarea value={reportNote} maxLength={2000} onChange={(event) => setReportNote(event.target.value)} placeholder="Mô tả ngắn gọn tình trạng bạn chưa nhận được phụ cấp…" /><small>{reportNote.length}/2000 ký tự</small></label>
+        <div
+          className="allowance-report-upload-zone"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { event.preventDefault(); addReportFiles(Array.from(event.dataTransfer.files || [])); }}
+        >
+          <Upload size={20} />
+          <div><strong>Ảnh minh chứng (không bắt buộc)</strong><small>Kéo ảnh vào đây hoặc chọn từ thiết bị · PNG, JPG, WEBP · Tối đa 5 MB/ảnh, tối đa 5 ảnh</small></div>
+          <label className="btn btn-secondary btn-sm">
+            Chọn ảnh
+            <input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden disabled={receiptBusy} onChange={selectReportFiles} />
+          </label>
+        </div>
+        {reportFileError && <p className="allowance-evidence-error" role="alert">{reportFileError}</p>}
+        {reportFiles.length > 0 && (
+          <div className="allowance-local-evidence-list" aria-label="Ảnh đã chọn">
+            {reportFiles.map((file, index) => (
+              <div className="allowance-local-evidence-item" key={`${file.name}-${file.lastModified}-${index}`}>
+                <span><LocalEvidencePreview file={file} /></span>
+                <div><strong title={file.name}>{file.name}</strong><small>{formatFileSize(file.size)}</small></div>
+                <button type="button" aria-label={`Xóa ${file.name}`} title="Xóa ảnh" disabled={receiptBusy} onClick={() => removeReportFile(index)}><Trash2 size={15} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+        {reportUploadProgress !== null && reportFiles.length > 0 && (
+          <div className="allowance-upload-progress" role="status">
+            <div><span>Đang tải ảnh minh chứng…</span><span>{reportUploadProgress}%</span></div>
+            <progress max="100" value={reportUploadProgress} />
+          </div>
+        )}
       </ConfirmDialog>
     </div>
   );

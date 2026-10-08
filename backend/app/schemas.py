@@ -50,6 +50,12 @@ class AllowanceReportUpdate(BaseModel):
     def trim_resolution_note(cls, value):
         return value.strip()
 
+    @model_validator(mode="after")
+    def completed_report_requires_note(self):
+        if self.trang_thai_xu_ly == "DaXuLy" and not self.ghi_chu_xu_ly:
+            raise ValueError("Vui lòng ghi rõ kết quả xử lý để thực tập sinh xem lại.")
+        return self
+
 class UserLogin(BaseModel):
     email: str
     mat_khau: str

@@ -544,7 +544,7 @@ def init_mysql_db():
             updated_by INT NOT NULL,
             created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
             updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-            UNIQUE KEY uq_phu_cap_ho_so_ky (ma_ho_so, ky),
+            KEY idx_phu_cap_profile_period (ma_ho_so, ky),
             KEY idx_phu_cap_ky (ky, id),
             CONSTRAINT chk_phu_cap_amount CHECK (so_tien_minor BETWEEN 0 AND 999999999999999),
             CONSTRAINT chk_phu_cap_period CHECK (ky REGEXP '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
@@ -599,6 +599,8 @@ def init_mysql_db():
             noi_dung VARCHAR(2000) NOT NULL,
             trang_thai_xu_ly VARCHAR(24) NOT NULL DEFAULT 'ChoXuLy',
             ghi_chu_xu_ly VARCHAR(1000) NOT NULL DEFAULT '',
+            tts_acknowledged_at DATETIME(6) NULL,
+            tts_acknowledged_by INT NULL,
             updated_by INT NULL,
             updated_at DATETIME(6) NULL,
             created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -608,6 +610,37 @@ def init_mysql_db():
             FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
             FOREIGN KEY (reported_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
             FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        report_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHU_CAP_PHAN_ANH'
+        """).fetchall()
+        report_column_names = {row["COLUMN_NAME"] for row in report_columns}
+        if "tts_acknowledged_at" not in report_column_names:
+            conn.execute("ALTER TABLE PHU_CAP_PHAN_ANH ADD COLUMN tts_acknowledged_at DATETIME(6) NULL")
+        if "tts_acknowledged_by" not in report_column_names:
+            conn.execute("ALTER TABLE PHU_CAP_PHAN_ANH ADD COLUMN tts_acknowledged_by INT NULL")
+        acknowledgment_fk = conn.execute("""
+            SELECT 1 FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHU_CAP_PHAN_ANH'
+              AND COLUMN_NAME = 'tts_acknowledged_by' AND REFERENCED_TABLE_NAME = 'NGUOI_DUNG'
+            LIMIT 1
+        """).fetchone()
+        if not acknowledgment_fk:
+            conn.execute("""
+                ALTER TABLE PHU_CAP_PHAN_ANH ADD CONSTRAINT fk_phu_cap_report_acknowledged_by
+                FOREIGN KEY (tts_acknowledged_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            """)
+        conn.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_PHAN_ANH_TEP (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            report_id BIGINT NOT NULL,
+            storage_key VARCHAR(48) NOT NULL UNIQUE,
+            original_filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(100) NOT NULL,
+            file_size BIGINT UNSIGNED NOT NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            KEY idx_phu_cap_report_file_report (report_id, id),
+            FOREIGN KEY (report_id) REFERENCES PHU_CAP_PHAN_ANH(id) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         conn.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_LICH_SU_XU_LY (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -1144,13 +1177,13 @@ def init_db():
         updated_by INTEGER NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(ma_ho_so, ky),
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
         FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
         FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
         FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
         FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
     )""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_profile_period ON PHU_CAP_THUC_TAP(ma_ho_so, ky)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_ky ON PHU_CAP_THUC_TAP(ky, id)")
     allowance_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(PHU_CAP_THUC_TAP)")}
     for name, definition in (
@@ -1168,15 +1201,34 @@ def init_db():
         trang_thai_xu_ly TEXT NOT NULL DEFAULT 'ChoXuLy'
             CHECK(trang_thai_xu_ly IN ('ChoXuLy', 'DangXuLy', 'DaXuLy')),
         ghi_chu_xu_ly TEXT NOT NULL DEFAULT '' CHECK(length(ghi_chu_xu_ly) <= 1000),
+        tts_acknowledged_at TEXT NULL,
+        tts_acknowledged_by INTEGER NULL,
         updated_by INTEGER NULL,
         updated_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
         FOREIGN KEY (reported_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
-        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY (tts_acknowledged_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
     )""")
+    report_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(PHU_CAP_PHAN_ANH)")}
+    if "tts_acknowledged_at" not in report_columns:
+        cursor.execute("ALTER TABLE PHU_CAP_PHAN_ANH ADD COLUMN tts_acknowledged_at TEXT NULL")
+    if "tts_acknowledged_by" not in report_columns:
+        cursor.execute("ALTER TABLE PHU_CAP_PHAN_ANH ADD COLUMN tts_acknowledged_by INTEGER NULL")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_phan_anh_allowance ON PHU_CAP_PHAN_ANH(allowance_id, id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_phan_anh_status ON PHU_CAP_PHAN_ANH(trang_thai_xu_ly, id)")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_PHAN_ANH_TEP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        storage_key TEXT NOT NULL UNIQUE,
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL CHECK(file_size > 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (report_id) REFERENCES PHU_CAP_PHAN_ANH(id) ON DELETE RESTRICT
+    )""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_report_file_report ON PHU_CAP_PHAN_ANH_TEP(report_id, id)")
     cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_LICH_SU_XU_LY (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         allowance_id INTEGER NOT NULL,
