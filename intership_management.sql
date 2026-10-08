@@ -214,6 +214,9 @@ CREATE TABLE IF NOT EXISTS PHU_CAP_THUC_TAP (
     ky CHAR(7) NOT NULL,
     so_tien_minor BIGINT NOT NULL,
     ghi_chu VARCHAR(1000) NOT NULL DEFAULT '',
+    trang_thai_nhan VARCHAR(24) NOT NULL DEFAULT 'ChoXacNhan',
+    xac_nhan_boi INT NULL,
+    xac_nhan_luc DATETIME(6) NULL,
     created_by INT NOT NULL,
     updated_by INT NOT NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -222,10 +225,48 @@ CREATE TABLE IF NOT EXISTS PHU_CAP_THUC_TAP (
     KEY idx_phu_cap_ky (ky, id),
     CONSTRAINT chk_phu_cap_amount CHECK (so_tien_minor BETWEEN 0 AND 999999999999999),
     CONSTRAINT chk_phu_cap_period CHECK (ky REGEXP '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
+    CONSTRAINT chk_phu_cap_receipt_status CHECK (trang_thai_nhan IN ('ChoXacNhan', 'DaNhan', 'ChuaNhanDuoc')),
     FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
     FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
     FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+    FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+    FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS PHU_CAP_PHAN_ANH (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    allowance_id BIGINT NOT NULL,
+    reported_by INT NOT NULL,
+    noi_dung VARCHAR(2000) NOT NULL,
+    trang_thai_xu_ly VARCHAR(24) NOT NULL DEFAULT 'ChoXuLy',
+    ghi_chu_xu_ly VARCHAR(1000) NOT NULL DEFAULT '',
+    updated_by INT NULL,
+    updated_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_phu_cap_phan_anh_allowance (allowance_id, id),
+    KEY idx_phu_cap_phan_anh_status (trang_thai_xu_ly, id),
+    CONSTRAINT chk_phu_cap_phan_anh_status CHECK (trang_thai_xu_ly IN ('ChoXuLy', 'DangXuLy', 'DaXuLy')),
+    FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+    FOREIGN KEY (reported_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
     FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS PHU_CAP_LICH_SU_XU_LY (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    allowance_id BIGINT NOT NULL,
+    report_id BIGINT NULL,
+    event_type VARCHAR(32) NOT NULL,
+    noi_dung TEXT NULL,
+    actor_id INT NOT NULL,
+    actor_name VARCHAR(100) NOT NULL,
+    actor_role VARCHAR(30) NOT NULL,
+    so_tien_minor_snapshot BIGINT NULL,
+    ky_snapshot CHAR(7) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    KEY idx_phu_cap_history_allowance (allowance_id, id),
+    FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+    FOREIGN KEY (report_id) REFERENCES PHU_CAP_PHAN_ANH(id) ON DELETE RESTRICT,
+    FOREIGN KEY (actor_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

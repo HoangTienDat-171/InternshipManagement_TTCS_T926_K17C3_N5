@@ -26,6 +26,30 @@ class AllowanceUpdate(BaseModel):
 class AllowanceCreate(AllowanceUpdate):
     ma_ung_tuyen: StrictInt = Field(gt=0)
 
+
+class AllowanceReceiptReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    noi_dung: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("noi_dung")
+    @classmethod
+    def trim_report(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Vui lòng nhập nội dung phản ánh.")
+        return value
+
+
+class AllowanceReportUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    trang_thai_xu_ly: Literal["DangXuLy", "DaXuLy"]
+    ghi_chu_xu_ly: str = Field(default="", max_length=1000)
+
+    @field_validator("ghi_chu_xu_ly")
+    @classmethod
+    def trim_resolution_note(cls, value):
+        return value.strip()
+
 class UserLogin(BaseModel):
     email: str
     mat_khau: str

@@ -537,6 +537,9 @@ def init_mysql_db():
             ky CHAR(7) NOT NULL,
             so_tien_minor BIGINT NOT NULL,
             ghi_chu VARCHAR(1000) NOT NULL DEFAULT '',
+            trang_thai_nhan VARCHAR(24) NOT NULL DEFAULT 'ChoXacNhan',
+            xac_nhan_boi INT NULL,
+            xac_nhan_luc DATETIME(6) NULL,
             created_by INT NOT NULL,
             updated_by INT NOT NULL,
             created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -545,13 +548,84 @@ def init_mysql_db():
             KEY idx_phu_cap_ky (ky, id),
             CONSTRAINT chk_phu_cap_amount CHECK (so_tien_minor BETWEEN 0 AND 999999999999999),
             CONSTRAINT chk_phu_cap_period CHECK (ky REGEXP '^[1-9][0-9]{3}-(0[1-9]|1[0-2])$'),
+            CONSTRAINT chk_phu_cap_receipt_status CHECK (trang_thai_nhan IN ('ChoXacNhan', 'DaNhan', 'ChuaNhanDuoc')),
             FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
             FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
             FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
-            FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+            FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
+
+        allowance_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHU_CAP_THUC_TAP'
+        """).fetchall()
+        allowance_column_names = {row["COLUMN_NAME"] for row in allowance_columns}
+        for name, definition in (
+            ("trang_thai_nhan", "VARCHAR(24) NOT NULL DEFAULT 'ChoXacNhan'"),
+            ("xac_nhan_boi", "INT NULL"),
+            ("xac_nhan_luc", "DATETIME(6) NULL"),
+        ):
+            if name not in allowance_column_names:
+                conn.execute(f"ALTER TABLE PHU_CAP_THUC_TAP ADD COLUMN {name} {definition}")
+        receipt_status_check = conn.execute("""
+            SELECT 1 FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHU_CAP_THUC_TAP'
+              AND CONSTRAINT_NAME = 'chk_phu_cap_receipt_status' AND CONSTRAINT_TYPE = 'CHECK'
+            LIMIT 1
+        """).fetchone()
+        if not receipt_status_check:
+            conn.execute("""
+                ALTER TABLE PHU_CAP_THUC_TAP ADD CONSTRAINT chk_phu_cap_receipt_status
+                CHECK (trang_thai_nhan IN ('ChoXacNhan', 'DaNhan', 'ChuaNhanDuoc'))
+            """)
+        confirmed_by_fk = conn.execute("""
+            SELECT 1 FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHU_CAP_THUC_TAP'
+              AND COLUMN_NAME = 'xac_nhan_boi' AND REFERENCED_TABLE_NAME = 'NGUOI_DUNG'
+            LIMIT 1
+        """).fetchone()
+        if not confirmed_by_fk:
+            conn.execute("""
+                ALTER TABLE PHU_CAP_THUC_TAP ADD CONSTRAINT fk_phu_cap_confirmed_by
+                FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+            """)
+        conn.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_PHAN_ANH (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            allowance_id BIGINT NOT NULL,
+            reported_by INT NOT NULL,
+            noi_dung VARCHAR(2000) NOT NULL,
+            trang_thai_xu_ly VARCHAR(24) NOT NULL DEFAULT 'ChoXuLy',
+            ghi_chu_xu_ly VARCHAR(1000) NOT NULL DEFAULT '',
+            updated_by INT NULL,
+            updated_at DATETIME(6) NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            KEY idx_phu_cap_phan_anh_allowance (allowance_id, id),
+            KEY idx_phu_cap_phan_anh_status (trang_thai_xu_ly, id),
+            CONSTRAINT chk_phu_cap_phan_anh_status CHECK (trang_thai_xu_ly IN ('ChoXuLy', 'DangXuLy', 'DaXuLy')),
+            FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+            FOREIGN KEY (reported_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+            FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_LICH_SU_XU_LY (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            allowance_id BIGINT NOT NULL,
+            report_id BIGINT NULL,
+            event_type VARCHAR(32) NOT NULL,
+            noi_dung TEXT NULL,
+            actor_id INT NOT NULL,
+            actor_name VARCHAR(100) NOT NULL,
+            actor_role VARCHAR(30) NOT NULL,
+            so_tien_minor_snapshot BIGINT NULL,
+            ky_snapshot CHAR(7) NULL,
+            created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            KEY idx_phu_cap_history_allowance (allowance_id, id),
+            FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+            FOREIGN KEY (report_id) REFERENCES PHU_CAP_PHAN_ANH(id) ON DELETE RESTRICT,
+            FOREIGN KEY (actor_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
 
         columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -1062,6 +1136,10 @@ def init_db():
         so_tien_minor INTEGER NOT NULL CHECK(typeof(so_tien_minor) = 'integer'
             AND so_tien_minor BETWEEN 0 AND 999999999999999),
         ghi_chu TEXT NOT NULL DEFAULT '' CHECK(length(ghi_chu) <= 1000),
+        trang_thai_nhan TEXT NOT NULL DEFAULT 'ChoXacNhan'
+            CHECK(trang_thai_nhan IN ('ChoXacNhan', 'DaNhan', 'ChuaNhanDuoc')),
+        xac_nhan_boi INTEGER NULL,
+        xac_nhan_luc TEXT NULL,
         created_by INTEGER NOT NULL,
         updated_by INTEGER NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1070,9 +1148,52 @@ def init_db():
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
         FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE RESTRICT,
         FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
-        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
     )""")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_ky ON PHU_CAP_THUC_TAP(ky, id)")
+    allowance_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(PHU_CAP_THUC_TAP)")}
+    for name, definition in (
+        ("trang_thai_nhan", "TEXT NOT NULL DEFAULT 'ChoXacNhan'"),
+        ("xac_nhan_boi", "INTEGER NULL"),
+        ("xac_nhan_luc", "TEXT NULL"),
+    ):
+        if name not in allowance_columns:
+            cursor.execute(f"ALTER TABLE PHU_CAP_THUC_TAP ADD COLUMN {name} {definition}")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_PHAN_ANH (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        allowance_id INTEGER NOT NULL,
+        reported_by INTEGER NOT NULL,
+        noi_dung TEXT NOT NULL CHECK(length(noi_dung) BETWEEN 1 AND 2000),
+        trang_thai_xu_ly TEXT NOT NULL DEFAULT 'ChoXuLy'
+            CHECK(trang_thai_xu_ly IN ('ChoXuLy', 'DangXuLy', 'DaXuLy')),
+        ghi_chu_xu_ly TEXT NOT NULL DEFAULT '' CHECK(length(ghi_chu_xu_ly) <= 1000),
+        updated_by INTEGER NULL,
+        updated_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+        FOREIGN KEY (reported_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_phan_anh_allowance ON PHU_CAP_PHAN_ANH(allowance_id, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_phan_anh_status ON PHU_CAP_PHAN_ANH(trang_thai_xu_ly, id)")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_LICH_SU_XU_LY (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        allowance_id INTEGER NOT NULL,
+        report_id INTEGER NULL,
+        event_type TEXT NOT NULL,
+        noi_dung TEXT,
+        actor_id INTEGER NOT NULL,
+        actor_name TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        so_tien_minor_snapshot INTEGER NULL,
+        ky_snapshot TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (allowance_id) REFERENCES PHU_CAP_THUC_TAP(id) ON DELETE RESTRICT,
+        FOREIGN KEY (report_id) REFERENCES PHU_CAP_PHAN_ANH(id) ON DELETE RESTRICT,
+        FOREIGN KEY (actor_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_phu_cap_history_allowance ON PHU_CAP_LICH_SU_XU_LY(allowance_id, id)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS DANH_GIA_THUC_TAP (
