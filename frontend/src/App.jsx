@@ -23,6 +23,7 @@ const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementVi
 const AttendanceView = lazy(() => import('./views/AttendanceView'));
 const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
 const AllowanceManagementView = lazy(() => import('./views/AllowanceManagementView'));
+const SupportRequestView = lazy(() => import('./views/SupportRequestView'));
 
 function clearSavedSession() {
   try {
@@ -38,6 +39,7 @@ function tabForPath(path) {
   if (path === '/schedule') return 'intern-schedule';
   if (path === '/attendance') return 'intern-attendance';
   if (path === '/leave-requests') return 'leave-requests';
+  if (path === '/support-requests') return 'support-requests';
   if (/^\/allowances(?:\/\d+)?$/.test(path)) return 'allowances';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
@@ -51,6 +53,7 @@ function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'intern-attendance') return '/attendance';
   if (tab === 'leave-requests') return '/leave-requests';
+  if (tab === 'support-requests') return '/support-requests';
   if (tab === 'allowances') return '/allowances';
   if (tab === 'tasks') return '/tasks';
   if (tab === 'weekly-reports') return '/weekly-reports';
@@ -97,6 +100,7 @@ export default function App() {
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'support-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'allowances' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -545,6 +549,11 @@ export default function App() {
           {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'leave-requests' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở quản lý nghỉ phép…</div>}>
               <LeaveManagementView currentUser={currentUser} onShowToast={showToast} />
+            </Suspense>
+          )}
+          {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'support-requests' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở yêu cầu hỗ trợ…</div>}>
+              <SupportRequestView currentUser={currentUser} onShowToast={showToast} />
             </Suspense>
           )}
 
