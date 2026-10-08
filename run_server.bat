@@ -30,6 +30,8 @@ if not exist "%IMS_PYTHON%" (
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (
+    if "%~1"=="--no-pause" exit /b %EXIT_CODE%
+    if "%~2"=="--no-pause" exit /b %EXIT_CODE%
     echo.
     echo Nhan phim bat ky de thoat...
     pause >nul
