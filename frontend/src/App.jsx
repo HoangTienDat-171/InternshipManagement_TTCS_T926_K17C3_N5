@@ -22,6 +22,7 @@ const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView')
 const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
 const AttendanceView = lazy(() => import('./views/AttendanceView'));
 const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
+const AllowanceManagementView = lazy(() => import('./views/AllowanceManagementView'));
 
 function clearSavedSession() {
   try {
@@ -37,6 +38,7 @@ function tabForPath(path) {
   if (path === '/schedule') return 'intern-schedule';
   if (path === '/attendance') return 'intern-attendance';
   if (path === '/leave-requests') return 'leave-requests';
+  if (/^\/allowances(?:\/\d+)?$/.test(path)) return 'allowances';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   if (path === '/evaluations') return 'evaluations';
@@ -49,6 +51,7 @@ function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'intern-attendance') return '/attendance';
   if (tab === 'leave-requests') return '/leave-requests';
+  if (tab === 'allowances') return '/allowances';
   if (tab === 'tasks') return '/tasks';
   if (tab === 'weekly-reports') return '/weekly-reports';
   if (tab === 'evaluations') return '/evaluations';
@@ -65,7 +68,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => requestedContractPath ? 'contract-link' : tabForPath(window.location.pathname));
   const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
   const [requestedWeeklyReportId, setRequestedWeeklyReportId] = useState(() => window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
-  
+  const [requestedAllowanceId, setRequestedAllowanceId] = useState(() => window.location.pathname.match(/^\/allowances\/(\d+)$/)?.[1] || null);
+
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
     if (window.location.pathname === '/login') {
@@ -93,6 +97,7 @@ export default function App() {
         (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'allowances' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'evaluations' && currentUser.vai_tro !== 'Mentor')
@@ -338,6 +343,7 @@ export default function App() {
     if (window.location.pathname !== nextPath) window.history.pushState(null, '', nextPath);
     setRequestedTaskId(null);
     setRequestedWeeklyReportId(null);
+    setRequestedAllowanceId(null);
     setActiveTab(tab);
   };
 
@@ -353,6 +359,11 @@ export default function App() {
       window.history.pushState(null, '', `/weekly-reports/${reportId}`);
       setRequestedWeeklyReportId(reportId);
       setActiveTab('weekly-reports');
+    } else if (notification.reference_type === 'allowance') {
+      const allowanceId = String(notification.reference_id);
+      window.history.pushState(null, '', `/allowances/${allowanceId}`);
+      setRequestedAllowanceId(allowanceId);
+      setActiveTab('allowances');
     }
   };
 
@@ -364,6 +375,7 @@ export default function App() {
       } else {
         setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
         setRequestedWeeklyReportId(window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
+        setRequestedAllowanceId(window.location.pathname.match(/^\/allowances\/(\d+)$/)?.[1] || null);
         setActiveTab(tabForPath(window.location.pathname));
       }
     };
@@ -379,7 +391,7 @@ export default function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId]);
+  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId, requestedAllowanceId]);
 
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
@@ -427,7 +439,7 @@ export default function App() {
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
 
       {/* Sidebar */}
-      <Sidebar 
+      <Sidebar
         activeTab={visibleActiveTab}
         onTabChange={navigateToTab}
         currentUser={currentUser}
@@ -450,6 +462,7 @@ export default function App() {
         {/* Top Navbar */}
         <Navbar
           currentUser={currentUser}
+          activeTab={visibleActiveTab}
           onLogout={handleLogout}
           onOpenAccount={(section) => { setAccountSection(section); navigateToTab('profile'); }}
           onToggleSidebar={handleNavigationToggle}
@@ -524,6 +537,11 @@ export default function App() {
             </Suspense>
           )}
 
+          {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'allowances' && (
+            <Suspense fallback={<div className="loading-state">Đang tải phụ cấp…</div>}>
+            <AllowanceManagementView key={currentUser.ma_nguoi_dung} currentUser={currentUser} onShowToast={showToast} requestedAllowanceId={requestedAllowanceId} onAllowanceOpened={() => { setRequestedAllowanceId(null); if (/^\/allowances\/\d+$/.test(window.location.pathname)) window.history.replaceState(null, '', '/allowances'); }} />
+            </Suspense>
+          )}
           {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'leave-requests' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở quản lý nghỉ phép…</div>}>
               <LeaveManagementView currentUser={currentUser} onShowToast={showToast} />

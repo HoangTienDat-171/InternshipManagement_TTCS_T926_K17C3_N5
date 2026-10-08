@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
-export default function Navbar({ 
-  currentUser, 
-  onLogout, 
+export default function Navbar({
+  currentUser,
+  activeTab,
+  onLogout,
   onOpenAccount,
   onToggleSidebar,
   sidebarOpen = false,
@@ -64,6 +65,7 @@ export default function Navbar({
     if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
     if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
+    if (item.loai === 'allowance_unreceived_report') return { label: 'Phụ cấp', icon: <Wallet size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };
 
@@ -92,7 +94,33 @@ export default function Navbar({
     }
   };
 
+  const getTabLabel = (tab, role) => {
+    const isIntern = role === 'ThucTapSinh';
+    const canManage = ['Admin', 'HR'].includes(role);
+    switch (tab) {
+      case 'allowances': return isIntern ? 'Lịch sử phụ cấp' : 'Quản lý phụ cấp';
+      case 'interns': return 'Quản lý Thực tập sinh';
+      case 'mentors': return 'Quản lý Mentor';
+      case 'programs': return canManage ? 'Chương trình thực tập' : 'Chương trình đang mở';
+      case 'documents': return 'Quản lý Tài liệu';
+      case 'work-shifts': return 'Quản lý ca làm việc';
+      case 'leave-requests': return isIntern ? 'Đăng ký nghỉ phép' : 'Quản lý nghỉ phép';
+      case 'intern-dashboard': return 'Tổng quan thực tập';
+      case 'intern-schedule': return 'Lịch thực tập';
+      case 'intern-attendance': return 'Chấm công hôm nay';
+      case 'mentor-workspace': return 'Nhóm thực tập sinh';
+      case 'tasks': return isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập';
+      case 'weekly-reports': return 'Báo cáo tuần';
+      case 'evaluations': return 'Đánh giá thực tập sinh';
+      case 'my-evaluations': return 'Đánh giá của tôi';
+      case 'accounts': return 'Quản trị Người dùng';
+      case 'profile': return 'Tài khoản cá nhân';
+      default: return 'Quản lý phụ cấp';
+    }
+  };
+
   const roleInfo = currentUser ? getRoleBadge(currentUser.vai_tro) : null;
+  const currentTabLabel = getTabLabel(activeTab, currentUser?.vai_tro);
 
   return (
     <header className="top-navbar">
@@ -107,9 +135,16 @@ export default function Navbar({
         >
           <Menu size={20} />
         </button>
-        <h2 className="navbar-title" style={{ fontSize: '17px', fontWeight: 700 }}>
-          Hệ thống Quản lý Thực tập sinh
-        </h2>
+        <div className="navbar-heading-container">
+          <nav className="navbar-breadcrumb" aria-label="Đường dẫn nhanh">
+            <span className="breadcrumb-root">Trang chủ</span>
+            <span className="breadcrumb-separator" aria-hidden="true">/</span>
+            <span className="breadcrumb-current">{currentTabLabel}</span>
+          </nav>
+          <h2 className="navbar-title">
+            Hệ thống Quản lý Thực tập sinh
+          </h2>
+        </div>
       </div>
 
       <div className="navbar-actions">
@@ -131,7 +166,7 @@ export default function Navbar({
                   <div className="notification-list">
                     {notifications.map((item) => {
                       const meta = notificationMeta(item);
-                      const navigable = ['internship_task', 'weekly_report'].includes(item.reference_type) && item.reference_id;
+                      const navigable = ['internship_task', 'weekly_report', 'allowance'].includes(item.reference_type) && item.reference_id;
                       return <article key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`}>
                         <button type="button" className="notification-item-main" onClick={() => openNotification(item)}>
                           <span className="notification-type-icon">{meta.icon}</span>

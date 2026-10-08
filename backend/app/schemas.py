@@ -1,6 +1,54 @@
 from datetime import date, time
+from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
+
+
+class AllowanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ky: str = Field(pattern=r"^[1-9][0-9]{3}-(0[1-9]|1[0-2])$")
+    so_tien: Decimal = Field(ge=0, max_digits=15, decimal_places=2, allow_inf_nan=False)
+    ghi_chu: str = Field(default="", max_length=1000)
+
+    @field_validator("so_tien", mode="before")
+    @classmethod
+    def exact_amount(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+            raise ValueError("Số tiền phải là chuỗi thập phân hoặc số nguyên, tối đa 2 chữ số lẻ.")
+        return value
+
+    @field_validator("ghi_chu")
+    @classmethod
+    def trim_note(cls, value):
+        return value.strip()
+
+
+class AllowanceCreate(AllowanceUpdate):
+    ma_ung_tuyen: StrictInt = Field(gt=0)
+
+
+class AllowanceReceiptReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    noi_dung: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("noi_dung")
+    @classmethod
+    def trim_report(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Vui lòng nhập nội dung phản ánh.")
+        return value
+
+
+class AllowanceReportUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    trang_thai_xu_ly: Literal["DangXuLy", "DaXuLy"]
+    ghi_chu_xu_ly: str = Field(default="", max_length=1000)
+
+    @field_validator("ghi_chu_xu_ly")
+    @classmethod
+    def trim_resolution_note(cls, value):
+        return value.strip()
 
 class UserLogin(BaseModel):
     email: str
