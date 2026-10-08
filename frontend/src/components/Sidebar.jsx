@@ -60,6 +60,16 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       label: 'Quản lý ca làm việc',
       icon: <Clock3 size={18} />
     }] : []),
+    ...(canManage ? [{
+      id: 'leave-requests',
+      label: 'Quản lý nghỉ phép',
+      icon: <Calendar size={18} />
+    }] : []),
+    ...(isIntern ? [{
+      id: 'leave-requests',
+      label: 'Đăng ký nghỉ phép',
+      icon: <Calendar size={18} />
+    }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
       id: 'accounts',
