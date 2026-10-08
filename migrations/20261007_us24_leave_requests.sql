@@ -25,3 +25,17 @@ CREATE TABLE IF NOT EXISTS YEU_CAU_NGHI_PHEP (
     FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
     FOREIGN KEY (reviewed_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Store leave evidence metadata separately and cascade it with the leave request.
+CREATE TABLE IF NOT EXISTS YEU_CAU_NGHI_PHEP_TEP (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    leave_request_id BIGINT NOT NULL,
+    storage_key VARCHAR(64) NOT NULL UNIQUE,
+    original_filename VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(127) NOT NULL,
+    file_size BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_leave_attachment_request (leave_request_id, id),
+    CONSTRAINT fk_leave_attachment_request FOREIGN KEY (leave_request_id)
+        REFERENCES YEU_CAU_NGHI_PHEP(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
