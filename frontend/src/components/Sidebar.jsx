@@ -15,7 +15,8 @@ import {
   Clock3,
   ClipboardCheck,
   LogOut,
-  X
+  X,
+  Wallet
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout, isOpen = false, isCollapsed = false, onClose }) {
@@ -69,6 +70,11 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       id: 'leave-requests',
       label: 'Đăng ký nghỉ phép',
       icon: <Calendar size={18} />
+    }] : []),
+    ...((canManage || isIntern) ? [{
+      id: 'allowances',
+      label: canManage ? 'Quản lý phụ cấp' : 'Lịch sử phụ cấp',
+      icon: <Wallet size={18} />
     }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
