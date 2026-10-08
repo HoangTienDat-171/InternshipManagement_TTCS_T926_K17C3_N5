@@ -1,12 +1,11 @@
 import React from 'react';
-import { 
-  UserCheck, 
-  Calendar, 
+import {
+  UserCheck,
+  Calendar,
   CalendarDays,
   Award,
-  FolderUp, 
-  ShieldCheck, 
-  Building2,
+  FolderUp,
+  ShieldCheck,
   GraduationCap,
   LayoutDashboard,
   UsersRound,
@@ -88,7 +87,7 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
     <aside id="app-navigation" className={`app-sidebar${isOpen ? ' is-open' : ''}`} aria-hidden={isCollapsed ? 'true' : undefined}>
       <div className="sidebar-header">
         <div className="brand-icon">
-          <Building2 size={22} />
+          <GraduationCap size={22} strokeWidth={2} />
         </div>
         <div className="brand-info">
           <h1>IMS PORTAL</h1>
