@@ -1,7 +1,7 @@
 """US12 + US30: Comprehensive tests for program-scoped Mentor assignment and sequential internship participation."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 import json
 from pathlib import Path
 import tempfile
@@ -334,6 +334,58 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
 
         active_mentor = get_intern_active_assignment(self.db, profile_id, as_of=ref_date)
         self.assertEqual(active_mentor["ma_nguoi_dung"], self.mentor_bob_id)
+
+    def test_unassign_is_limited_to_current_program_and_preserves_history(self):
+        """Only the current-program assignment is removable; historical assignment remains intact."""
+        today = date.today()
+        user_id, profile_id = self._create_intern("unassign_timeline")
+        current_program = self._create_program(
+            "UNASSIGN-CURRENT",
+            (today - timedelta(days=5)).isoformat(),
+            (today + timedelta(days=5)).isoformat(),
+        )
+        historical_program = self._create_program(
+            "UNASSIGN-HISTORY",
+            (today - timedelta(days=20)).isoformat(),
+            (today - timedelta(days=10)).isoformat(),
+        )
+        self._apply_and_approve(profile_id, current_program)
+        self._apply_and_approve(profile_id, historical_program)
+        assign_mentor_canonical(self.db, self.mentor_alice_id, profile_id, program_id=current_program)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile_id, program_id=historical_program)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as ctx:
+            unassign_mentor_canonical(
+                self.db,
+                mentor_id=self.mentor_bob_id,
+                profile_id=profile_id,
+                program_id=historical_program,
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(
+            self.db.execute(
+                "SELECT COUNT(*) AS total FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so = ? AND ma_chuong_trinh = ?",
+                (profile_id, historical_program),
+            ).fetchone()["total"],
+            1,
+        )
+
+        unassign_mentor_canonical(
+            self.db,
+            mentor_id=self.mentor_alice_id,
+            profile_id=profile_id,
+            program_id=current_program,
+        )
+        self.db.commit()
+        remaining = self.db.execute(
+            "SELECT ma_chuong_trinh, ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so = ?",
+            (profile_id,),
+        ).fetchall()
+        self.assertEqual(
+            [(row["ma_chuong_trinh"], row["ma_nguoi_dung_mentor"]) for row in remaining],
+            [(historical_program, self.mentor_bob_id)],
+        )
 
     # =========================================================================
     # Test 6: Overlapping Approval Blocked (Section 77)

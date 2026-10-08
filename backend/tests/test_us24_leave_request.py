@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
 from pydantic import ValidationError
+from starlette.datastructures import FormData, UploadFile
 
 from app import database
 from app.leave_service import LeaveService, get_approved_leaves_for_profile
@@ -19,6 +21,17 @@ from app.schemas import LeaveRequestCreate, LeaveRequestReview
 
 def request_for(user=None):
     return SimpleNamespace(state=SimpleNamespace(current_user=user))
+
+
+class _AsyncFormContext:
+    def __init__(self, form):
+        self.form = form
+
+    async def __aenter__(self):
+        return self.form
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        await self.form.close()
 
 
 class LeaveRequestTests(unittest.TestCase):
@@ -223,6 +236,24 @@ class LeaveRequestTests(unittest.TestCase):
             parsed = raw_data
         return response_meta.get("status", 500), parsed
 
+    def _multipart_request(self, files, user=None, application_id=None):
+        form_values = [
+            ("ma_ung_tuyen", str(application_id or self.app_a1_id)),
+            ("start_date", "2026-10-15"),
+            ("end_date", "2026-10-16"),
+            ("ly_do", "Xin nghỉ phép để kiểm tra minh chứng tải lên"),
+        ]
+        form_values.extend(
+            ("files", UploadFile(filename=name, file=BytesIO(content)))
+            for name, content in files
+        )
+        form = FormData(form_values)
+        return SimpleNamespace(
+            headers={"content-type": "multipart/form-data; boundary=us24-test"},
+            state=SimpleNamespace(current_user=user or self.intern_a),
+            form=lambda: _AsyncFormContext(form),
+        )
+
     # ================= 1. CREATE VALID LEAVE =================
     def test_create_valid_own_request(self):
         payload = {
@@ -276,6 +307,99 @@ class LeaveRequestTests(unittest.TestCase):
                         today=date(2026, 10, 8),
                     )
                 self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_evidence_metadata_schema_has_unique_storage_and_request_cascade(self):
+        columns = {
+            row["name"] for row in self.db.execute("PRAGMA table_info(YEU_CAU_NGHI_PHEP_TEP)").fetchall()
+        }
+        self.assertTrue(
+            {"id", "leave_request_id", "storage_key", "original_filename", "mime_type", "file_size"}
+            <= columns
+        )
+        foreign_keys = self.db.execute("PRAGMA foreign_key_list(YEU_CAU_NGHI_PHEP_TEP)").fetchall()
+        self.assertTrue(any(
+            row["from"] == "leave_request_id"
+            and row["table"] == "YEU_CAU_NGHI_PHEP"
+            and row["to"] == "id"
+            and row["on_delete"] == "CASCADE"
+            for row in foreign_keys
+        ))
+        unique_indexes = self.db.execute("PRAGMA index_list(YEU_CAU_NGHI_PHEP_TEP)").fetchall()
+        self.assertTrue(any(
+            row["unique"]
+            and [col["name"] for col in self.db.execute(
+                f"PRAGMA index_info({row['name']})"
+            ).fetchall()] == ["storage_key"]
+            for row in unique_indexes
+        ))
+
+    def test_evidence_upload_is_private_persisted_and_owner_scoped(self):
+        """Valid evidence has random storage, persisted metadata, and owner-only retrieval."""
+        pdf_bytes = b"%PDF-1.4\nprivate leave evidence"
+        request = self._multipart_request([("../../medical-proof.pdf", pdf_bytes)])
+
+        with tempfile.TemporaryDirectory(prefix="ims-us24-evidence-") as evidence_dir:
+            with patch.object(leave_routes, "_evidence_root", return_value=Path(evidence_dir)):
+                created = asyncio.run(leave_routes.create_leave_request(request, self.db))
+
+                self.assertEqual(created["attachment_count"], 1)
+                attachment = created["attachments"][0]
+                self.assertEqual(attachment["original_filename"], "medical-proof.pdf")
+                self.assertEqual(attachment["file_size"], len(pdf_bytes))
+                self.assertNotIn("storage_key", attachment)
+
+                metadata = self.db.execute(
+                    "SELECT storage_key FROM YEU_CAU_NGHI_PHEP_TEP WHERE id = ?",
+                    (attachment["id"],),
+                ).fetchone()
+                storage_key = metadata["storage_key"]
+                self.assertRegex(storage_key, r"^[0-9a-f]{32}\.pdf$")
+                stored_path = Path(evidence_dir) / storage_key
+                self.assertEqual(stored_path.read_bytes(), pdf_bytes)
+
+                response = leave_routes.get_my_leave_attachment(
+                    created["id"], attachment["id"], request, db=self.db
+                )
+                self.assertEqual(Path(response.path), stored_path)
+                self.assertIn("medical-proof.pdf", response.headers["content-disposition"])
+
+                other_intern_request = SimpleNamespace(
+                    state=SimpleNamespace(current_user=self.intern_b),
+                )
+                with self.assertRaises(HTTPException) as ctx:
+                    leave_routes.get_my_leave_attachment(
+                        created["id"], attachment["id"], other_intern_request, db=self.db
+                    )
+                self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_evidence_upload_rejects_invalid_extension_and_oversize_without_artifacts(self):
+        invalid_files = [
+            ("evidence.exe", b"%PDF-1.4 invalid extension"),
+            ("invalid.pdf", b"not a PDF document"),
+            ("oversized.pdf", b"%PDF-1.4" + b"x" * (5 * 1024 * 1024)),
+        ]
+        for filename, content in invalid_files:
+            with self.subTest(filename=filename):
+                request = self._multipart_request([(filename, content)])
+                with tempfile.TemporaryDirectory(prefix="ims-us24-invalid-evidence-") as evidence_dir:
+                    with patch.object(leave_routes, "_evidence_root", return_value=Path(evidence_dir)):
+                        with self.assertRaises(HTTPException) as ctx:
+                            asyncio.run(leave_routes.create_leave_request(request, self.db))
+                        self.assertEqual(ctx.exception.status_code, 400)
+                        self.assertEqual(list(Path(evidence_dir).iterdir()), [])
+                        self.assertEqual(
+                            self.db.execute("SELECT COUNT(*) AS total FROM YEU_CAU_NGHI_PHEP").fetchone()["total"],
+                            0,
+                        )
+
+    def test_evidence_files_are_removed_when_request_persistence_fails(self):
+        request = self._multipart_request([("proof.pdf", b"%PDF-1.4 evidence")])
+        with tempfile.TemporaryDirectory(prefix="ims-us24-rollback-evidence-") as evidence_dir:
+            with patch.object(leave_routes, "_evidence_root", return_value=Path(evidence_dir)):
+                with patch.object(LeaveService, "create_request", side_effect=RuntimeError("simulated insert failure")):
+                    with self.assertRaisesRegex(RuntimeError, "simulated insert failure"):
+                        asyncio.run(leave_routes.create_leave_request(request, self.db))
+                self.assertEqual(list(Path(evidence_dir).iterdir()), [])
 
     # ================= 2. DATE VALIDATION =================
     def test_date_validation_rules(self):
