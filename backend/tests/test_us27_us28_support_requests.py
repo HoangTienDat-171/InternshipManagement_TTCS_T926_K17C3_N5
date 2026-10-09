@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from fastapi import HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
@@ -60,7 +61,14 @@ class FakeForm:
 
 
 def fake_request(user=None, headers=None, json_body=None, form_fields=None, form_files=None):
+    import uuid
     headers = dict(headers or {})
+    if json_body is not None and "loai_yeu_cau" in json_body:
+        json_body = dict(json_body)
+        json_body.setdefault("idempotency_key", uuid.uuid4().hex)
+    if form_fields is not None:
+        form_fields = dict(form_fields)
+        form_fields.setdefault("idempotency_key", uuid.uuid4().hex)
     req = SimpleNamespace(
         state=SimpleNamespace(current_user=user),
         headers=headers,
@@ -74,7 +82,7 @@ def fake_request(user=None, headers=None, json_body=None, form_fields=None, form
     req.json = _json
     if form_fields is not None or form_files is not None:
         headers["content-type"] = "multipart/form-data; boundary=----fake"
-        req.form = lambda: FakeForm(form_fields or {}, form_files or [])
+        req.form = lambda **kwargs: FakeForm(form_fields or {}, form_files or [])
     return req
 
 
@@ -154,6 +162,69 @@ class SupportRequestTests(unittest.TestCase):
             "mentor": {"ma_nguoi_dung": self.mentor_id, "vai_tro": "Mentor", "ho_ten": "Mentor Vũ E", "email": f"mentor.e.{uid}@test.vn"},
         }
 
+    def create_request(self, intern_user_id, payload, attachments=None):
+        import uuid
+        request_payload = dict(payload)
+        request_payload.setdefault("idempotency_key", uuid.uuid4().hex)
+        return self.service.create_request(intern_user_id, request_payload, attachments)
+
+    def make_asgi_app(self, max_body_size=20 * 1024 * 1024):
+        app = FastAPI()
+        app.add_middleware(
+            support_request_routes.SupportRequestBodyLimitMiddleware,
+            max_body_size=max_body_size,
+        )
+        app.include_router(support_request_routes.router)
+        self.observed_content_lengths = []
+
+        @app.middleware("http")
+        async def set_test_user(request: Request, call_next):
+            self.observed_content_lengths.append(request.headers.get("content-length"))
+            request.state.current_user = self.users["intern1"]
+            return await call_next(request)
+
+        def test_db():
+            conn = database.get_db_connection()
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        app.dependency_overrides[support_request_routes.get_db] = test_db
+        return app
+
+    @staticmethod
+    def multipart_body(file_content: bytes, idempotency_key="asgi-test-key") -> bytes:
+        boundary = b"ims-support-boundary"
+        parts = [
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"loai_yeu_cau\"\r\n\r\nOTHER\r\n",
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"noi_dung\"\r\n\r\nNeed help\r\n",
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"idempotency_key\"\r\n\r\n" + idempotency_key.encode() + b"\r\n",
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"files\"; filename=\"proof.pdf\"\r\nContent-Type: application/pdf\r\n\r\n"
+            + file_content + b"\r\n",
+            b"--" + boundary + b"--\r\n",
+        ]
+        return b"".join(parts)
+
+    @staticmethod
+    async def stream_body(body: bytes):
+        for offset in range(0, len(body), 257):
+            yield body[offset:offset + 257]
+
+    def post_multipart(self, app, body: bytes):
+        async def send():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                return await client.post(
+                    "/api/support-requests",
+                    headers={"content-type": "multipart/form-data; boundary=ims-support-boundary"},
+                    content=self.stream_body(body),
+                )
+
+        return asyncio.run(send())
+
     def tearDown(self):
         try:
             self.conn.execute("DELETE FROM THONG_BAO")
@@ -200,7 +271,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_rbac_intern_denied_hr_management_endpoints(self):
         """TTS bị từ chối 403 khi gọi API giải quyết hoặc từ chối của HR"""
-        req_data = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu cần duyệt"})
+        req_data = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu cần duyệt"})
 
         intern_req = fake_request(user=self.users["intern1"], json_body={"phan_hoi_hr": "Tự duyệt"})
         with self.assertRaises(HTTPException) as cm:
@@ -214,7 +285,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_rbac_mentor_denied_all_support_endpoints(self):
         """Mentor không thuộc đối tượng xử lý yêu cầu hỗ trợ -> bị chặn 403 trên toàn bộ các route"""
-        req_data = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin chứng chỉ"})
+        req_data = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin chứng chỉ"})
 
         mentor_req = fake_request(user=self.users["mentor"])
 
@@ -271,8 +342,8 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_rbac_admin_has_full_management_access(self):
         """Admin có toàn quyền quản lý: xem danh sách, xem chi tiết, giải quyết và từ chối yêu cầu"""
-        req1 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Yêu cầu 1"})
-        req2 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu 2"})
+        req1 = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Yêu cầu 1"})
+        req2 = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu 2"})
 
         admin_req = fake_request(user=self.users["admin"])
 
@@ -310,6 +381,60 @@ class SupportRequestTests(unittest.TestCase):
     # =========================================================================
     # 2. KIỂM THỬ TỆP ĐÍNH KÈM (FILE UPLOAD & DOWNLOAD VALIDATION)
     # =========================================================================
+
+    def test_asgi_multipart_upload_without_content_length_uses_real_parser(self):
+        app = self.make_asgi_app()
+        body = self.multipart_body(b"%PDF-1.4\nproof")
+
+        response = self.post_multipart(app, body)
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertIsNone(self.observed_content_lengths[-1])
+        self.assertEqual(response.json()["so_luong_tep"], 1)
+
+    def test_asgi_multipart_body_limit_without_content_length(self):
+        app = self.make_asgi_app(max_body_size=512)
+        body = self.multipart_body(b"%PDF-1.4\n" + b"x" * 2048)
+
+        response = self.post_multipart(app, body)
+
+        self.assertEqual(response.status_code, 413, response.text)
+        self.assertIsNone(self.observed_content_lengths[-1])
+        root = _support_file_root()
+        self.assertFalse(root.exists() and any(root.iterdir()))
+
+    def test_asgi_multipart_file_count_is_limited_during_parsing(self):
+        app = self.make_asgi_app()
+        boundary = b"ims-support-boundary"
+        parts = [
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"loai_yeu_cau\"\r\n\r\nOTHER\r\n",
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"noi_dung\"\r\n\r\nNeed help\r\n",
+            b"--" + boundary + b"\r\nContent-Disposition: form-data; name=\"idempotency_key\"\r\n\r\nasgi-six-files\r\n",
+        ]
+        for index in range(6):
+            parts.append(
+                b"--" + boundary
+                + f"\r\nContent-Disposition: form-data; name=\"files\"; filename=\"proof-{index}.pdf\"\r\n".encode()
+                + b"Content-Type: application/pdf\r\n\r\n%PDF-1.4 test\r\n"
+            )
+        parts.append(b"--" + boundary + b"--\r\n")
+        response = self.post_multipart(app, b"".join(parts))
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("Too many files", response.text)
+        root = _support_file_root()
+        self.assertFalse(root.exists() and any(root.iterdir()))
+
+    def test_asgi_file_validation_failure_removes_staged_file(self):
+        app = self.make_asgi_app()
+        body = self.multipart_body(b"%PDF-1.4\n" + b"x" * 64)
+
+        with patch.object(support_request_routes, "MAX_SUPPORT_FILE_SIZE", 8):
+            response = self.post_multipart(app, body)
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIsNone(self.observed_content_lengths[-1])
+        root = _support_file_root()
+        self.assertFalse(root.exists() and any(root.iterdir()))
 
     def test_file_upload_valid_multipart_success(self):
         """TTS gửi yêu cầu hỗ trợ kèm file PDF và PNG hợp lệ qua multipart/form-data thành công 201"""
@@ -505,28 +630,23 @@ class SupportRequestTests(unittest.TestCase):
         self.assertIn("Dung lượng yêu cầu vượt quá giới hạn", cm.exception.detail)
 
     def test_file_upload_cleanup_on_error(self):
-        """Nếu quá trình lưu DB gặp lỗi (hoặc vi phạm trùng lặp), các file đã lưu tạm trên đĩa phải được dọn dẹp sạch sẽ"""
-        # Bước 1: Tạo yêu cầu trước để sẵn sàng gây xung đột duplicate submit
-        self.service.create_request(self.intern1_id, {
-            "loai_yeu_cau": "CERTIFICATE",
-            "noi_dung": "Đơn xin chứng nhận đang chờ",
-        })
-
+        """Nếu lưu yêu cầu thất bại, các file vừa staging phải được dọn sạch."""
         root = _support_file_root()
         before_files = set(root.glob("*")) if root.exists() else set()
-
-        # Bước 2: Gửi multipart với cùng loại và nội dung kèm file PDF
         req = fake_request(
             user=self.users["intern1"],
-            form_fields={"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Đơn xin chứng nhận đang chờ"},
+            form_fields={"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Đơn xin chứng nhận"},
             form_files=[FakeUpload("temp_doc.pdf", b"%PDF-1.4 test content")],
         )
 
-        with self.assertRaises(HTTPException) as cm:
-            asyncio.run(support_request_routes.create_support_request(req, db=self.conn))
-        self.assertEqual(cm.exception.status_code, 409)
+        with patch.object(
+            support_request_routes.SupportRequestService,
+            "create_request",
+            side_effect=RuntimeError("synthetic persistence failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "synthetic persistence failure"):
+                asyncio.run(support_request_routes.create_support_request(req, db=self.conn))
 
-        # Kiểm tra không có file mồ côi nào mới sinh ra còn sót lại trong thư mục lưu trữ
         after_files = set(root.glob("*")) if root.exists() else set()
         self.assertEqual(after_files - before_files, set())
 
@@ -616,7 +736,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_file_download_nonexistent_or_path_traversal_404(self):
         """Tải file không tồn tại hoặc storage_key sai quy cách trả về 404 Not Found"""
-        req_data = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Không kèm file"})
+        req_data = self.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Không kèm file"})
 
         # Tải file ID không tồn tại
         with self.assertRaises(HTTPException) as cm:
@@ -637,55 +757,59 @@ class SupportRequestTests(unittest.TestCase):
     # 3. KIỂM THỬ CHỐNG DUPLICATE SUBMIT (GỬI TRÙNG LẶP)
     # =========================================================================
 
-    def test_duplicate_submit_service_level_rejected_while_pending(self):
-        """Service: gửi trùng lặp yêu cầu (cùng loại và nội dung) khi yêu cầu trước đang PENDING bị chặn 409 Conflict"""
+    def test_identical_independent_requests_are_allowed_while_pending(self):
+        """Nội dung giống nhau được phép khi mỗi thao tác có idempotency key riêng"""
         payload = {
             "loai_yeu_cau": "CERTIFICATE",
             "noi_dung": "Em cần cấp giấy xác nhận thời gian thực tập.",
         }
-        req1 = self.service.create_request(self.intern1_id, payload)
+        req1 = self.create_request(self.intern1_id, payload)
         self.assertEqual(req1["trang_thai"], "PENDING")
 
-        with self.assertRaises(HTTPException) as cm:
-            self.service.create_request(self.intern1_id, payload)
-        self.assertEqual(cm.exception.status_code, 409)
-        self.assertIn("đang chờ xử lý", cm.exception.detail)
-        self.assertIn("trùng lặp", cm.exception.detail)
+        req2 = self.create_request(self.intern1_id, payload)
+        self.assertNotEqual(req1["id"], req2["id"])
+        self.assertEqual(req2["trang_thai"], "PENDING")
 
-    def test_duplicate_submit_route_level_json_rejected_while_pending(self):
-        """Route (JSON): gửi trùng lặp payload khi có yêu cầu đang PENDING trả về 409 Conflict"""
-        payload = {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin cấp tài liệu bảo mật"}
+    def test_missing_idempotency_key_is_rejected(self):
+        with self.assertRaises(HTTPException) as cm:
+            self.service.create_request(self.intern1_id, {
+                "loai_yeu_cau": "OTHER",
+                "noi_dung": "A request without an operation key",
+            })
+        self.assertEqual(cm.exception.status_code, 422)
+
+    def test_duplicate_submit_route_level_json_is_idempotent(self):
+        """Route (JSON): cùng idempotency key trả lại cùng bản ghi"""
+        payload = {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin cấp tài liệu bảo mật", "idempotency_key": "json-operation-1"}
 
         req1 = fake_request(user=self.users["intern1"], json_body=payload)
         res1 = asyncio.run(support_request_routes.create_support_request(req1, db=self.conn))
         self.assertEqual(res1["trang_thai"], "PENDING")
 
         req2 = fake_request(user=self.users["intern1"], json_body=payload)
-        with self.assertRaises(HTTPException) as cm:
-            asyncio.run(support_request_routes.create_support_request(req2, db=self.conn))
-        self.assertEqual(cm.exception.status_code, 409)
+        res2 = asyncio.run(support_request_routes.create_support_request(req2, db=self.conn))
+        self.assertEqual(res1["id"], res2["id"])
 
-    def test_duplicate_submit_route_level_multipart_rejected_while_pending(self):
-        """Route (Multipart): gửi trùng lặp form-data khi có yêu cầu đang PENDING trả về 409 Conflict"""
-        fields = {"loai_yeu_cau": "OTHER", "noi_dung": "Hỗ trợ đổi người hướng dẫn"}
+    def test_duplicate_submit_route_level_multipart_is_idempotent(self):
+        """Route (Multipart): cùng idempotency key trả lại cùng bản ghi"""
+        fields = {"loai_yeu_cau": "OTHER", "noi_dung": "Hỗ trợ đổi người hướng dẫn", "idempotency_key": "multipart-operation-1"}
 
         req1 = fake_request(user=self.users["intern1"], form_fields=fields)
         res1 = asyncio.run(support_request_routes.create_support_request(req1, db=self.conn))
         self.assertEqual(res1["trang_thai"], "PENDING")
 
         req2 = fake_request(user=self.users["intern1"], form_fields=fields)
-        with self.assertRaises(HTTPException) as cm:
-            asyncio.run(support_request_routes.create_support_request(req2, db=self.conn))
-        self.assertEqual(cm.exception.status_code, 409)
+        res2 = asyncio.run(support_request_routes.create_support_request(req2, db=self.conn))
+        self.assertEqual(res1["id"], res2["id"])
 
     def test_duplicate_submit_allowed_after_resolved(self):
         """Khi yêu cầu trước đã được RESOLVED, TTS ĐƯỢC PHÉP gửi lại yêu cầu cùng loại và nội dung (201 Created)"""
         payload = {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Cần cấp chứng nhận"}
-        req1 = self.service.create_request(self.intern1_id, payload)
+        req1 = self.create_request(self.intern1_id, payload)
         self.service.resolve_request(self.hr_id, req1["id"], "Đã hoàn thành cấp chứng nhận đợt 1.")
 
         # Gửi lại yêu cầu thứ 2 với nội dung tương tự -> Cho phép thành công
-        req2 = self.service.create_request(self.intern1_id, payload)
+        req2 = self.create_request(self.intern1_id, payload)
         self.assertIsNotNone(req2["id"])
         self.assertNotEqual(req1["id"], req2["id"])
         self.assertEqual(req2["trang_thai"], "PENDING")
@@ -693,29 +817,29 @@ class SupportRequestTests(unittest.TestCase):
     def test_duplicate_submit_allowed_after_rejected(self):
         """Khi yêu cầu trước đã bị REJECTED, TTS ĐƯỢC PHÉP gửi lại yêu cầu cùng loại và nội dung (201 Created)"""
         payload = {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin cấp tài liệu chuyên ngành"}
-        req1 = self.service.create_request(self.intern1_id, payload)
+        req1 = self.create_request(self.intern1_id, payload)
         self.service.reject_request(self.hr_id, req1["id"], "Chưa đủ điều kiện xét duyệt.")
 
         # Gửi lại sau khi bị từ chối -> Cho phép thành công
-        req2 = self.service.create_request(self.intern1_id, payload)
+        req2 = self.create_request(self.intern1_id, payload)
         self.assertIsNotNone(req2["id"])
         self.assertNotEqual(req1["id"], req2["id"])
         self.assertEqual(req2["trang_thai"], "PENDING")
 
     def test_duplicate_submit_different_content_or_different_user_allowed(self):
         """Cho phép gửi nếu khác nội dung, khác loại, hoặc là TTS khác"""
-        self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 1"})
+        self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 1"})
 
         # Cùng TTS 1 nhưng khác loại -> Thành công
-        req_diff_type = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Nội dung 1"})
+        req_diff_type = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Nội dung 1"})
         self.assertEqual(req_diff_type["trang_thai"], "PENDING")
 
         # Cùng TTS 1 nhưng khác nội dung -> Thành công
-        req_diff_content = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 2"})
+        req_diff_content = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 2"})
         self.assertEqual(req_diff_content["trang_thai"], "PENDING")
 
         # TTS 2 gửi cùng loại và cùng nội dung với TTS 1 -> Thành công (không bị nhầm lẫn giữa các người dùng)
-        req_other_user = self.service.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 1"})
+        req_other_user = self.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Nội dung 1"})
         self.assertEqual(req_other_user["ma_nguoi_dung"], self.intern2_id)
 
     def test_concurrent_duplicate_submission_with_idempotency_key(self):
@@ -760,8 +884,64 @@ class SupportRequestTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(rows[0], 1)
 
-    def test_concurrent_duplicate_submission_without_idempotency_key(self):
-        """Gửi đồng thời nhiều yêu cầu trùng nội dung PENDING không có idempotency key: chỉ 1 bản ghi tạo thành công, các request khác nhận 409 Conflict"""
+    def test_mysql_duplicate_key_race_returns_committed_idempotent_request(self):
+        """A MySQL 1062 unique-key race rolls back and reads the winning request."""
+        key = "mysql-race-idempotency-key"
+        existing = self.service.create_request(self.intern1_id, {
+            "loai_yeu_cau": "OTHER",
+            "noi_dung": "Concurrent retry",
+            "idempotency_key": key,
+        })
+
+        class SyntheticMySQLIntegrityError(Exception):
+            pass
+
+        SyntheticMySQLIntegrityError.__name__ = "IntegrityError"
+        SyntheticMySQLIntegrityError.__module__ = "pymysql.err"
+
+        class EmptyCursor:
+            def fetchone(self):
+                return None
+
+        class ConcurrentMySQLWriteProxy:
+            def __init__(self, connection):
+                self.connection = connection
+                self.hide_existing_once = True
+                self.raise_duplicate_once = True
+
+            def execute(self, statement, params=()):
+                normalized = " ".join(statement.split()).upper()
+                if "SELECT ID FROM YEU_CAU_HO_TRO" in normalized and self.hide_existing_once:
+                    self.hide_existing_once = False
+                    return EmptyCursor()
+                if "INSERT INTO YEU_CAU_HO_TRO" in normalized and self.raise_duplicate_once:
+                    self.raise_duplicate_once = False
+                    raise SyntheticMySQLIntegrityError(1062, "Duplicate entry for idempotency key")
+                return self.connection.execute(statement, params)
+
+            def rollback(self):
+                return self.connection.rollback()
+
+            def commit(self):
+                return self.connection.commit()
+
+        replay = SupportRequestService(ConcurrentMySQLWriteProxy(self.conn)).create_request(
+            self.intern1_id,
+            {
+                "loai_yeu_cau": "OTHER",
+                "noi_dung": "Concurrent retry",
+                "idempotency_key": key,
+            },
+        )
+        self.assertEqual(replay["id"], existing["id"])
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM YEU_CAU_HO_TRO WHERE ma_nguoi_dung = ? AND idempotency_key = ?",
+            (self.intern1_id, key),
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_concurrent_identical_content_with_distinct_keys_creates_independent_requests(self):
+        """Các yêu cầu độc lập cùng nội dung nhưng key khác nhau không bị gộp hoặc chặn"""
         results = []
         noi_dung = "Yêu cầu tranh chấp không key"
 
@@ -774,6 +954,7 @@ class SupportRequestTests(unittest.TestCase):
                     {
                         "loai_yeu_cau": "OTHER",
                         "noi_dung": noi_dung,
+                        "idempotency_key": f"independent-operation-{idx}",
                     }
                 )
                 results.append(("SUCCESS", 201, res["id"]))
@@ -790,18 +971,15 @@ class SupportRequestTests(unittest.TestCase):
                 f.result()
 
         successes = [r for r in results if r[0] == "SUCCESS"]
-        conflicts = [r for r in results if r[0] == "CONFLICT" and r[1] == 409]
+        self.assertEqual(len(successes), 4, results)
+        self.assertEqual(len({r[2] for r in successes}), 4)
 
-        # Đúng 1 request thành công và các request còn lại nhận 409
-        self.assertEqual(len(successes), 1)
-        self.assertEqual(len(conflicts), 3)
-
-        # Kiểm tra trong DB chỉ có duy nhất 1 bản ghi được tạo
+        # Mỗi key biểu diễn một thao tác riêng, dù nội dung giống nhau.
         rows = self.conn.execute(
             "SELECT count(*) FROM YEU_CAU_HO_TRO WHERE ma_nguoi_dung = ? AND loai_yeu_cau = 'OTHER' AND noi_dung = ?",
             (self.intern1_id, noi_dung)
         ).fetchone()
-        self.assertEqual(rows[0], 1)
+        self.assertEqual(rows[0], 4)
 
     # =========================================================================
     # 4. KIỂM THỬ TRẠNG THÁI & STATE TRANSITIONS
@@ -809,7 +987,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_state_transition_pending_to_resolved_success(self):
         """Chuyển trạng thái PENDING -> RESOLVED kèm nội dung phản hồi, người xử lý và thời gian xử lý"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin cấp chứng nhận"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin cấp chứng nhận"})
         self.assertEqual(req["trang_thai"], "PENDING")
 
         resolved = self.service.resolve_request(self.hr_id, req["id"], "HR xác nhận đã cấp chứng nhận thành công.")
@@ -820,7 +998,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_state_transition_pending_to_rejected_success(self):
         """Chuyển trạng thái PENDING -> REJECTED kèm lý do từ chối, người xử lý và thời gian xử lý"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu tài liệu không phù hợp"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu tài liệu không phù hợp"})
         self.assertEqual(req["trang_thai"], "PENDING")
 
         rejected = self.service.reject_request(self.hr_id, req["id"], "Tài liệu này thuộc diện bảo mật nội bộ.")
@@ -832,7 +1010,7 @@ class SupportRequestTests(unittest.TestCase):
     def test_state_transition_terminal_to_terminal_forbidden(self):
         """Không cho phép chuyển trạng thái từ trạng thái kết thúc (RESOLVED hoặc REJECTED) -> 409 Conflict"""
         # 1. Từ RESOLVED không được resolve lại hay reject
-        req1 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Req 1"})
+        req1 = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Req 1"})
         self.service.resolve_request(self.hr_id, req1["id"], "Đã xong.")
 
         with self.assertRaises(HTTPException) as cm:
@@ -844,7 +1022,7 @@ class SupportRequestTests(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 409)
 
         # 2. Từ REJECTED không được reject lại hay resolve
-        req2 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Req 2"})
+        req2 = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Req 2"})
         self.service.reject_request(self.hr_id, req2["id"], "Từ chối lần đầu.")
 
         with self.assertRaises(HTTPException) as cm:
@@ -857,7 +1035,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_state_transition_reject_without_reason_rejected(self):
         """Từ chối mà không có lý do hoặc toàn ký tự trắng bị từ chối 400 Bad Request"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Hỗ trợ chung"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Hỗ trợ chung"})
         with self.assertRaises(HTTPException) as cm:
             self.service.reject_request(self.hr_id, req["id"], "     ")
         self.assertEqual(cm.exception.status_code, 400)
@@ -865,7 +1043,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_state_transition_concurrent_resolve_reject_race_condition(self):
         """Chống tranh chấp khi 2 nhân sự xử lý đồng thời cùng một yêu cầu PENDING: chỉ đúng 1 bên thành công, 1 bên nhận 409"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xử lý đồng thời"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xử lý đồng thời"})
 
         results = []
 
@@ -906,7 +1084,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_idor_intern_cannot_view_other_intern_detail_my_route(self):
         """Chống IDOR (/api/support-requests/my/{id}): TTS 1 không được xem chi tiết của TTS 2 -> 403 Forbidden"""
-        req2 = self.service.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Đơn của TTS 2"})
+        req2 = self.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Đơn của TTS 2"})
 
         # Qua service
         with self.assertRaises(HTTPException) as cm:
@@ -921,7 +1099,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_idor_intern_cannot_view_other_intern_detail_shared_route(self):
         """Chống IDOR (/api/support-requests/{id}): TTS 1 gọi route chung xem request của TTS 2 -> 403 Forbidden"""
-        req2 = self.service.create_request(self.intern2_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Tài liệu của TTS 2"})
+        req2 = self.create_request(self.intern2_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Tài liệu của TTS 2"})
 
         req_obj = fake_request(user=self.users["intern1"])
         with self.assertRaises(HTTPException) as cm:
@@ -936,7 +1114,7 @@ class SupportRequestTests(unittest.TestCase):
             "mime_type": "application/pdf",
             "file_size": 2048,
         }]
-        req2 = self.service.create_request(
+        req2 = self.create_request(
             self.intern2_id,
             {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "File của B"},
             attachments=attachments,
@@ -957,7 +1135,7 @@ class SupportRequestTests(unittest.TestCase):
         self.conn.commit()
 
         with self.assertRaises(HTTPException) as cm:
-            self.service.create_request(self.intern1_id, {
+            self.create_request(self.intern1_id, {
                 "loai_yeu_cau": "CERTIFICATE",
                 "noi_dung": "Gán profile người khác",
                 "ma_ho_so": profile2_id,
@@ -967,9 +1145,9 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_idor_intern_list_strict_isolation(self):
         """Cách ly dữ liệu danh sách: TTS chỉ thấy các yêu cầu của chính mình, không thấy của TTS khác"""
-        self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Của A1"})
-        self.service.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Của A2"})
-        self.service.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Của B1"})
+        self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Của A1"})
+        self.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Của A2"})
+        self.create_request(self.intern2_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Của B1"})
 
         res1 = self.service.list_my_requests(self.intern1_id)
         self.assertEqual(res1["total"], 2)
@@ -985,7 +1163,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_feedback_history_resolved_contains_response_and_handler_info(self):
         """Lịch sử phản hồi: TTS xem chi tiết yêu cầu RESOLVED thấy đầy đủ phản hồi HR, tên/email người xử lý và ngày xử lý"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin cấp chứng nhận thực tập"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin cấp chứng nhận thực tập"})
         self.service.resolve_request(self.hr_id, req["id"], "Giấy chứng nhận đã được xuất và gửi qua email cho bạn.")
 
         detail = self.service.get_my_request_detail(self.intern1_id, req["id"])
@@ -1005,7 +1183,7 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_feedback_history_rejected_contains_reason_and_handler_info(self):
         """Lịch sử phản hồi: TTS xem chi tiết yêu cầu REJECTED thấy rõ lý do từ chối và thông tin HR xử lý"""
-        req = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin tài liệu dự án ABC"})
+        req = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin tài liệu dự án ABC"})
         self.service.reject_request(self.hr_id, req["id"], "Dự án ABC thuộc diện tài liệu mật cấp công ty, không được cung cấp.")
 
         detail = self.service.get_my_request_detail(self.intern1_id, req["id"])
@@ -1018,13 +1196,13 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_feedback_history_multiple_requests_chronological_order(self):
         """Lịch sử danh sách yêu cầu hiển thị đúng theo thứ tự thời gian giảm dần với đầy đủ trạng thái khác nhau"""
-        r1 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Yêu cầu 1 (Cũ nhất)"})
+        r1 = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Yêu cầu 1 (Cũ nhất)"})
         self.service.resolve_request(self.hr_id, r1["id"], "Đã xử lý 1")
 
-        r2 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu 2 (Giữa)"})
+        r2 = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Yêu cầu 2 (Giữa)"})
         self.service.reject_request(self.hr_id, r2["id"], "Từ chối 2")
 
-        r3 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Yêu cầu 3 (Mới nhất)"})
+        r3 = self.create_request(self.intern1_id, {"loai_yeu_cau": "OTHER", "noi_dung": "Yêu cầu 3 (Mới nhất)"})
 
         history = self.service.list_my_requests(self.intern1_id)
         self.assertEqual(history["total"], 3)
@@ -1045,10 +1223,10 @@ class SupportRequestTests(unittest.TestCase):
 
     def test_feedback_history_notifications_audit_on_resolve_and_reject(self):
         """Khi HR phản hồi giải quyết hoặc từ chối, hệ thống tạo thông báo tự động cho TTS để theo dõi lịch sử phản hồi"""
-        req1 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin chứng nhận"})
+        req1 = self.create_request(self.intern1_id, {"loai_yeu_cau": "CERTIFICATE", "noi_dung": "Xin chứng nhận"})
         self.service.resolve_request(self.hr_id, req1["id"], "Đã hoàn thành cấp chứng nhận.")
 
-        req2 = self.service.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin tài liệu mật"})
+        req2 = self.create_request(self.intern1_id, {"loai_yeu_cau": "DOCUMENT", "noi_dung": "Xin tài liệu mật"})
         self.service.reject_request(self.hr_id, req2["id"], "Từ chối do chính sách bảo mật.")
 
         notifs = self.conn.execute("""

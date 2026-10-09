@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
+from starlette.responses import JSONResponse
 
 from .. import database as database_module
 from ..database import get_db
@@ -35,6 +36,74 @@ SUPPORT_FILE_TYPES = {
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+
+
+class _RequestBodyTooLarge(Exception):
+    pass
+
+
+class SupportRequestBodyLimitMiddleware:
+    """Limit request bytes as ASGI receives them, before multipart parsing."""
+
+    def __init__(self, app, max_body_size: int = MAX_TOTAL_REQUEST_SIZE):
+        self.app = app
+        self.max_body_size = max_body_size
+
+    async def __call__(self, scope, receive, send):
+        protected_paths = {
+            "/api/support-requests",
+            "/api/interns/me/support-requests",
+        }
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") != "POST"
+            or scope.get("path") not in protected_paths
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        raw_length = headers.get(b"content-length")
+        if raw_length:
+            try:
+                if int(raw_length) > self.max_body_size:
+                    response = JSONResponse(
+                        status_code=413,
+                        content={"detail": "Dung lượng yêu cầu vượt quá giới hạn cho phép."},
+                    )
+                    await response(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_size:
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def tracking_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _RequestBodyTooLarge:
+            if response_started:
+                return
+            response = JSONResponse(
+                status_code=413,
+                content={"detail": "Dung lượng yêu cầu vượt quá giới hạn cho phép."},
+            )
+            await response(scope, receive, send)
 
 
 def _support_file_root() -> Path:
@@ -73,14 +142,14 @@ async def create_support_request(request: Request, db=Depends(get_db)):
     try:
         content_type = request.headers.get("content-type", "").lower()
         if content_type.startswith("multipart/form-data"):
-            async with request.form() as form:
+            async with request.form(max_files=MAX_SUPPORT_FILES, max_fields=10) as form:
                 idempotency_key = (
                     request.headers.get("idempotency-key")
                     or form.get("idempotency_key")
                     or None
                 )
                 if idempotency_key:
-                    idempotency_key = str(idempotency_key).strip()[:128]
+                    idempotency_key = str(idempotency_key).strip()
 
                 payload = {
                     "loai_yeu_cau": form.get("loai_yeu_cau"),
@@ -92,6 +161,8 @@ async def create_support_request(request: Request, db=Depends(get_db)):
                     data = SupportRequestCreate.model_validate(payload)
                 except ValidationError as exc:
                     raise RequestValidationError(exc.errors()) from exc
+                if not data.idempotency_key or len(data.idempotency_key) > 128:
+                    raise HTTPException(status_code=422, detail="Idempotency-Key là bắt buộc và không được vượt quá 128 ký tự.")
 
                 uploads = [
                     value for key, value in form.multi_items()
@@ -168,8 +239,10 @@ async def create_support_request(request: Request, db=Depends(get_db)):
             try:
                 payload = await request.json()
                 if not payload.get("idempotency_key") and request.headers.get("idempotency-key"):
-                    payload["idempotency_key"] = request.headers.get("idempotency-key").strip()[:128]
+                    payload["idempotency_key"] = request.headers.get("idempotency-key").strip()
                 data = SupportRequestCreate.model_validate(payload)
+                if not data.idempotency_key or len(data.idempotency_key) > 128:
+                    raise HTTPException(status_code=422, detail="Idempotency-Key là bắt buộc và không được vượt quá 128 ký tự.")
             except ValidationError as exc:
                 raise RequestValidationError(exc.errors()) from exc
             except ValueError as exc:

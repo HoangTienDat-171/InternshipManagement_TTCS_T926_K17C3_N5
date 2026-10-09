@@ -14,6 +14,8 @@ app = FastAPI(
     version="1.1.0"
 )
 
+app.add_middleware(support_request_routes.SupportRequestBodyLimitMiddleware)
+
 # Giai đoạn 1: Bảo mật khi truyền tải (In Transit Security Middleware)
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

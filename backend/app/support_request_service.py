@@ -12,6 +12,19 @@ logger = logging.getLogger(__name__)
 VALID_REQUEST_TYPES = {"CERTIFICATE", "DOCUMENT", "OTHER"}
 VALID_STATUSES = {"PENDING", "RESOLVED", "REJECTED"}
 
+
+def _is_unique_key_violation(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    error_code = getattr(exc, "errno", None)
+    if error_code is None:
+        error_code = exc.args[0] if getattr(exc, "args", None) else None
+    error_module = exc.__class__.__module__
+    error_name = exc.__class__.__name__
+    return error_code == 1062 and error_name == "IntegrityError" and (
+        error_module.startswith("pymysql.err") or error_module.startswith("mysql.connector.errors")
+    )
+
 TYPE_LABELS = {
     "CERTIFICATE": "Giấy chứng nhận",
     "DOCUMENT": "Tài liệu",
@@ -33,14 +46,6 @@ class SupportRequestService:
         if isinstance(self.db, sqlite3.Connection):
             if not self.db.in_transaction:
                 self.db.execute("BEGIN IMMEDIATE")
-        else:
-            try:
-                self.db.execute(
-                    "SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? FOR UPDATE",
-                    (intern_user_id,),
-                )
-            except Exception:
-                pass
 
     def _format_request(self, item: dict, include_attachments: bool = True) -> dict:
         d = dict(item)
@@ -131,6 +136,18 @@ class SupportRequestService:
                 detail="Nội dung yêu cầu không được vượt quá 2000 ký tự."
             )
 
+        raw_idempotency_key = payload.get("idempotency_key")
+        idempotency_key = raw_idempotency_key.strip() if isinstance(raw_idempotency_key, str) else ""
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Idempotency-Key là bắt buộc và không được vượt quá 128 ký tự.",
+            )
+
+        # SQLite serializes writers here. MySQL relies on the unique key below,
+        # which safely arbitrates concurrent retries without a stale snapshot read.
+        self._begin_write(intern_user_id)
+
         # Nếu có gửi ma_ho_so, kiểm tra quyền sở hữu của TTS
         if profile_id:
             profile_row = self.db.execute("""
@@ -138,6 +155,7 @@ class SupportRequestService:
                 WHERE ma_ho_so = ? AND ma_nguoi_dung = ?
             """, (profile_id, intern_user_id)).fetchone()
             if not profile_row:
+                self.db.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Hồ sơ thực tập không hợp lệ hoặc không thuộc về bạn."
@@ -152,35 +170,15 @@ class SupportRequestService:
             if profile_row:
                 profile_id = profile_row[0]
 
-        # Bắt đầu khóa giao dịch để chống tranh chấp đồng thời
-        self._begin_write(intern_user_id)
-
-        # Lấy idempotency_key nếu có
-        idempotency_key = (payload.get("idempotency_key") or "").strip()
-        idempotency_key = idempotency_key[:128] if idempotency_key else None
-
-        # Nếu có idempotency_key, kiểm tra xem thao tác này đã từng được thực hiện chưa
-        if idempotency_key:
-            existing_same_key = self.db.execute("""
-                SELECT id FROM YEU_CAU_HO_TRO
-                WHERE ma_nguoi_dung = ? AND idempotency_key = ?
-                LIMIT 1
-            """, (intern_user_id, idempotency_key)).fetchone()
-            if existing_same_key:
-                req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
-                return self._get_request_row(req_id)
-
-        # Kiểm tra chống duplicate submit: nếu đã có yêu cầu PENDING cùng loại và nội dung
-        existing_pending = self.db.execute("""
+        existing_same_key = self.db.execute("""
             SELECT id FROM YEU_CAU_HO_TRO
-            WHERE ma_nguoi_dung = ? AND loai_yeu_cau = ? AND noi_dung = ? AND trang_thai = 'PENDING'
+            WHERE ma_nguoi_dung = ? AND idempotency_key = ?
             LIMIT 1
-        """, (intern_user_id, loai, noi_dung)).fetchone()
-        if existing_pending:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Bạn đã có một yêu cầu hỗ trợ tương tự đang chờ xử lý. Vui lòng không gửi trùng lặp."
-            )
+        """, (intern_user_id, idempotency_key)).fetchone()
+        if existing_same_key:
+            req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
+            self.db.rollback()
+            return self._get_request_row(req_id)
 
         try:
             cursor = self.db.execute("""
@@ -189,17 +187,19 @@ class SupportRequestService:
                 VALUES (?, ?, ?, ?, 'PENDING', ?)
             """, (intern_user_id, profile_id, loai, noi_dung, idempotency_key))
             request_id = cursor.lastrowid
-        except Exception:
+        except Exception as exc:
             self.db.rollback()
-            if idempotency_key:
-                existing_same_key = self.db.execute("""
-                    SELECT id FROM YEU_CAU_HO_TRO
-                    WHERE ma_nguoi_dung = ? AND idempotency_key = ?
-                    LIMIT 1
-                """, (intern_user_id, idempotency_key)).fetchone()
-                if existing_same_key:
-                    req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
-                    return self._get_request_row(req_id)
+            if not _is_unique_key_violation(exc):
+                raise
+            existing_same_key = self.db.execute("""
+                SELECT id FROM YEU_CAU_HO_TRO
+                WHERE ma_nguoi_dung = ? AND idempotency_key = ?
+                LIMIT 1
+            """, (intern_user_id, idempotency_key)).fetchone()
+            if existing_same_key:
+                req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
+                self.db.rollback()
+                return self._get_request_row(req_id)
             raise
 
         if attachments:
