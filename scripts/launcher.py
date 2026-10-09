@@ -13,6 +13,7 @@ import re
 import shutil
 import smtplib
 import socket
+import sqlite3
 import ssl
 import subprocess
 import sys
@@ -117,7 +118,6 @@ def is_pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
-        # Check tasklist for Windows PID existence
         out = subprocess.check_output(
             ["tasklist", "/fi", f"PID eq {pid}", "/fo", "csv", "/nh"],
             text=True, stderr=subprocess.DEVNULL
@@ -127,6 +127,54 @@ def is_pid_alive(pid: int) -> bool:
     except Exception:
         pass
     return False
+
+
+def get_process_creation_time(pid: int) -> float | None:
+    """
+    Retrieves process creation time on Windows as FILETIME uint64 (float).
+    Uses ctypes for speed, with PowerShell CIM fallback.
+    """
+    if pid <= 0:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        PROCESS_QUERY_INFORMATION = 0x0400
+        h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h_proc:
+            h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+        if h_proc:
+            try:
+                creation_time = wintypes.FILETIME()
+                exit_time = wintypes.FILETIME()
+                kernel_time = wintypes.FILETIME()
+                user_time = wintypes.FILETIME()
+                if ctypes.windll.kernel32.GetProcessTimes(
+                    h_proc,
+                    ctypes.byref(creation_time),
+                    ctypes.byref(exit_time),
+                    ctypes.byref(kernel_time),
+                    ctypes.byref(user_time),
+                ):
+                    ft_u64 = (creation_time.dwHighDateTime << 32) | creation_time.dwLowDateTime
+                    return float(ft_u64)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h_proc)
+    except Exception:
+        pass
+
+    try:
+        cmd = [
+            "powershell.exe", "-NoProfile", "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CreationDate.ToFileTime()"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip().isdigit():
+            return float(res.stdout.strip())
+    except Exception:
+        pass
+    return None
 
 
 def get_process_cmdline(pid: int) -> str:
@@ -158,37 +206,71 @@ def get_process_name(pid: int) -> str:
     return ""
 
 
-def verify_process_ownership(pid: int, expected_type: str) -> bool:
-    """Verifies that the process belongs to our project (uvicorn backend or vite frontend)."""
+def verify_process_ownership(pid: int, expected_type: str, saved_proc_info: dict | None = None) -> tuple[bool, str]:
+    """
+    Verifies process identity and ownership strictly:
+    1. Checks if PID is active.
+    2. Validates process creation time against saved state to detect PID reuse.
+    3. Verifies process executable and command line belong strictly to our project root.
+    """
+    if pid <= 0:
+        return False, "PID không hợp lệ"
     if not is_pid_alive(pid):
-        return False
+        return False, f"Tiến trình PID {pid} không còn hoạt động"
+
+    curr_ctime = get_process_creation_time(pid)
+    if saved_proc_info and "creation_time" in saved_proc_info:
+        saved_ctime = saved_proc_info.get("creation_time")
+        if saved_ctime is not None and curr_ctime is not None:
+            # Tolerates small measurement drift (2 seconds = 20,000,000 in 100ns units)
+            if abs(float(curr_ctime) - float(saved_ctime)) > 20000000:
+                return False, f"PID {pid} đã bị hệ điều hành tái sử dụng (creation time không khớp)"
+
     cmdline = get_process_cmdline(pid).lower()
     proc_name = get_process_name(pid).lower()
     root_str = str(ROOT_DIR).lower()
+    backend_str = str(BACKEND_DIR).lower()
+    frontend_str = str(FRONTEND_DIR).lower()
 
     if expected_type == "backend":
-        if ("uvicorn" in cmdline or "main:app" in cmdline or "backend.app.main" in cmdline) and (root_str in cmdline or "python" in proc_name):
-            return True
-        if "python" in proc_name and root_str in cmdline:
-            return True
+        is_our_code = root_str in cmdline or backend_str in cmdline or "backend.app.main:app" in cmdline
+        is_python = "python" in proc_name or "uvicorn" in proc_name
+        is_uvicorn = "uvicorn" in cmdline or "main:app" in cmdline
+        if is_python and is_our_code and is_uvicorn:
+            return True, "Xác minh thành công backend của dự án"
+        return False, f"Tiến trình PID {pid} không thuộc backend của dự án này"
+
     elif expected_type == "frontend":
-        if ("vite" in cmdline or "frontend" in cmdline) and ("node" in proc_name or root_str in cmdline):
-            return True
-        if "node" in proc_name and root_str in cmdline:
-            return True
-    return False
+        is_our_code = root_str in cmdline or frontend_str in cmdline
+        is_node = "node" in proc_name or "vite" in proc_name
+        if is_node and is_our_code and ("vite" in cmdline or "dev" in cmdline):
+            return True, "Xác minh thành công frontend của dự án"
+        return False, f"Tiến trình PID {pid} không thuộc frontend của dự án này"
+
+    return False, f"Loại tiến trình không xác định: {expected_type}"
 
 
-def kill_process_tree(pid: int) -> bool:
-    """Terminates process tree safely."""
+def kill_process_tree(pid: int, expected_type: str, saved_proc_info: dict | None = None) -> tuple[bool, str]:
+    """
+    Terminates process tree safely ONLY when ownership is strictly verified.
+    Refuses to kill foreign or unverified processes.
+    """
+    is_owned, reason = verify_process_ownership(pid, expected_type, saved_proc_info)
+    if not is_owned:
+        log_startup(f"{expected_type.upper()}_PRESERVED", f"Từ chối kill PID {pid}: {reason}", level="WARNING")
+        return False, reason
+
     try:
         res = subprocess.run(
             ["taskkill.exe", "/pid", str(pid), "/t", "/f"],
             capture_output=True, text=True, timeout=10
         )
-        return res.returncode == 0
-    except Exception:
-        return False
+        if res.returncode == 0:
+            log_startup(f"{expected_type.upper()}_STOPPED", f"Đã dừng tiến trình PID {pid}")
+            return True, "Đã dừng thành công"
+        return False, f"Lỗi taskkill: {res.stderr.strip() or res.stdout.strip()}"
+    except Exception as exc:
+        return False, str(exc)
 
 
 def load_state() -> dict:
@@ -216,29 +298,54 @@ def clear_state():
         pass
 
 
-def find_mysql_windows_service() -> tuple[str | None, str]:
-    """Finds installed MySQL or MariaDB Windows service. Returns (service_name, status)."""
+def find_matching_mysql_service(configured_service: str = "") -> tuple[str | None, str, list[str]]:
+    """
+    Finds matching Windows MySQL/MariaDB service without blindly picking the first one.
+    Returns (selected_service, status, candidate_services).
+    """
     try:
         out = subprocess.check_output(
             ["sc.exe", "query", "state=", "all"],
             text=True, stderr=subprocess.DEVNULL
         )
-        curr_svc = None
+        candidates = []
         for line in out.splitlines():
             line = line.strip()
             if line.startswith("SERVICE_NAME:"):
-                curr_svc = line.split(":", 1)[1].strip()
-                if any(k in curr_svc.lower() for k in ["mysql", "mariadb"]):
-                    # Query its specific state
-                    state_out = subprocess.check_output(
-                        ["sc.exe", "query", curr_svc],
-                        text=True, stderr=subprocess.DEVNULL
-                    )
-                    status = "RUNNING" if "RUNNING" in state_out else "STOPPED"
-                    return curr_svc, status
+                svc = line.split(":", 1)[1].strip()
+                if any(k in svc.lower() for k in ["mysql", "mariadb"]):
+                    candidates.append(svc)
+
+        # 1. Explicitly configured service
+        if configured_service:
+            match = next((s for s in candidates if s.lower() == configured_service.lower()), None)
+            if match:
+                state_out = subprocess.check_output(["sc.exe", "query", match], text=True, stderr=subprocess.DEVNULL)
+                status = "RUNNING" if "RUNNING" in state_out else "STOPPED"
+                return match, status, candidates
+            return None, "", candidates
+
+        # 2. Single candidate service
+        if len(candidates) == 1:
+            svc = candidates[0]
+            state_out = subprocess.check_output(["sc.exe", "query", svc], text=True, stderr=subprocess.DEVNULL)
+            status = "RUNNING" if "RUNNING" in state_out else "STOPPED"
+            return svc, status, candidates
+
+        # 3. Multiple candidates: check if exactly one is already running
+        if len(candidates) > 1:
+            running_svcs = []
+            for svc in candidates:
+                state_out = subprocess.check_output(["sc.exe", "query", svc], text=True, stderr=subprocess.DEVNULL)
+                if "RUNNING" in state_out:
+                    running_svcs.append(svc)
+            if len(running_svcs) == 1:
+                return running_svcs[0], "RUNNING", candidates
+            return None, "MULTIPLE", candidates
+
     except Exception:
         pass
-    return None, ""
+    return None, "", []
 
 
 def start_windows_service(svc_name: str) -> tuple[bool, str]:
@@ -274,9 +381,26 @@ class Launcher:
         if platform.system() != "Windows":
             return False, "Hệ thống launcher này được thiết kế dành cho môi trường Microsoft Windows."
 
-        # 2. Python Environment Check
+        # 2. Check .env file (Bắt buộc kiểm tra cấu hình TRƯỚC TIÊN)
+        if not ENV_FILE.is_file():
+            log_startup("ENV_MISSING", "backend/.env is missing", level="ERROR")
+            return False, (
+                "Thiếu file cấu hình backend\\.env.\n"
+                "  Vui lòng sao chép từ backend\\.env.example và điền thông tin kết nối MySQL/SMTP:\n"
+                "  copy backend\\.env.example backend\\.env"
+            )
+
+        # Parse env file
+        self.env = parse_env_file(ENV_FILE)
+
+        # 3. Node.js & npm Check in PATH
+        if not shutil.which("node"):
+            return False, "Không tìm thấy Node.js trong PATH. Vui lòng cài đặt Node.js LTS (https://nodejs.org/)."
+        if not shutil.which("npm"):
+            return False, "Không tìm thấy npm trong PATH. Vui lòng kiểm tra lại cài đặt Node.js."
+
+        # 4. Python Environment Check
         if not VENV_PYTHON.is_file():
-            # Check if current Python has required packages
             try:
                 import fastapi  # noqa: F401
                 import uvicorn  # noqa: F401
@@ -290,53 +414,43 @@ class Launcher:
                     "  Và cài đặt: backend\\.venv\\Scripts\\python.exe -m pip install -r backend\\requirements.txt"
                 )
 
-        # 3. Node.js & npm Check
-        if not shutil.which("node"):
-            return False, "Không tìm thấy Node.js trong PATH. Vui lòng cài đặt Node.js LTS (https://nodejs.org/)."
-        if not shutil.which("npm"):
-            return False, "Không tìm thấy npm trong PATH. Vui lòng kiểm tra lại cài đặt Node.js."
-
-        # 4. Frontend dependencies check
+        # 5. Frontend dependencies check
         vite_bin = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
         if not vite_bin.is_file():
-            print("  -> Đang cài đặt gói thư viện Frontend ban đầu (npm install)...")
-            res = subprocess.run(
-                ["npm.cmd", "install", "--no-audit", "--no-fund"],
-                cwd=str(FRONTEND_DIR), capture_output=True, text=True
-            )
-            if res.returncode != 0:
-                return False, f"Cài đặt thư viện frontend thất bại: {res.stderr.strip() or res.stdout.strip()}"
-
-        # 5. Check .env file
-        if not ENV_FILE.is_file():
-            log_startup("ENV_MISSING", "backend/.env is missing", level="ERROR")
-            return False, (
-                "Thiếu file cấu hình backend\\.env.\n"
-                "  Vui lòng sao chép từ backend\\.env.example và điền thông tin kết nối MySQL/SMTP:\n"
-                "  copy backend\\.env.example backend\\.env"
-            )
-
-        # Re-read env
-        self.env = parse_env_file(ENV_FILE)
+            allow_install = "--install" in sys.argv or "--setup" in sys.argv
+            if allow_install:
+                print("  -> Đang cài đặt gói thư viện Frontend ban đầu (npm install)...")
+                res = subprocess.run(
+                    ["npm.cmd", "install", "--no-audit", "--no-fund"],
+                    cwd=str(FRONTEND_DIR), capture_output=True, text=True
+                )
+                if res.returncode != 0:
+                    return False, f"Cài đặt thư viện frontend thất bại: {res.stderr.strip() or res.stdout.strip()}"
+            else:
+                return False, (
+                    "Thư viện frontend chưa được cài đặt (thiếu frontend\\node_modules).\n"
+                    "  Vui lòng chạy: cd frontend && npm install\n"
+                    "  Hoặc chạy launcher với cờ '--install' để tự động cài đặt."
+                )
 
         # 6. Check Port Collisions (ports 8000 & 3000)
         # Port 8000 (Backend)
         p8000_pid = get_port_listener_pid(8000)
         if p8000_pid:
-            saved_backend_pid = self.state.get("backend", {}).get("pid")
-            is_our_backend = (saved_backend_pid and saved_backend_pid == p8000_pid) or verify_process_ownership(p8000_pid, "backend")
+            saved_be = self.state.get("backend", {})
+            is_our_backend, _ = verify_process_ownership(p8000_pid, "backend", saved_be)
             if not is_our_backend:
                 proc_name = get_process_name(p8000_pid) or "Unknown"
-                return False, f"Cổng 8000 đang bị chiếm bởi tiến trình khác (PID: {p8000_pid}, Tên: {proc_name}). Không thể khởi động backend."
+                return False, f"Cổng 8000 đang bị chiếm bởi tiến trình khác không thuộc dự án (PID: {p8000_pid}, Tên: {proc_name}). Không thể khởi động backend."
 
         # Port 3000 (Frontend)
         p3000_pid = get_port_listener_pid(3000)
         if p3000_pid:
-            saved_frontend_pid = self.state.get("frontend", {}).get("pid")
-            is_our_frontend = (saved_frontend_pid and saved_frontend_pid == p3000_pid) or verify_process_ownership(p3000_pid, "frontend")
+            saved_fe = self.state.get("frontend", {})
+            is_our_frontend, _ = verify_process_ownership(p3000_pid, "frontend", saved_fe)
             if not is_our_frontend:
                 proc_name = get_process_name(p3000_pid) or "Unknown"
-                return False, f"Cổng 3000 đang bị chiếm bởi tiến trình khác (PID: {p3000_pid}, Tên: {proc_name}). Không thể khởi động frontend."
+                return False, f"Cổng 3000 đang bị chiếm bởi tiến trình khác không thuộc dự án (PID: {p3000_pid}, Tên: {proc_name}). Không thể khởi động frontend."
 
         log_startup("ENV_CHECK_OK", "Environment and ports verified successfully")
         return True, "OK"
@@ -345,11 +459,21 @@ class Launcher:
         backend_type = self.env.get("IMS_DATABASE_BACKEND", "mysql").strip().lower()
 
         if backend_type == "sqlite":
-            sqlite_path = self.env.get("IMS_SQLITE_PATH", str(BACKEND_DIR / "app" / "internship.db"))
-            if not Path(sqlite_path).exists():
+            sqlite_path = Path(self.env.get("IMS_SQLITE_PATH", str(BACKEND_DIR / "app" / "internship.db"))).resolve()
+            if not sqlite_path.is_file():
                 return False, "FAILED", f"SQLite database không tồn tại tại {sqlite_path}"
-            log_startup("MYSQL_CHECK", f"Using SQLite backend at {sqlite_path}")
-            return True, "CONNECTED (SQLite)", "SQLite Mode"
+            try:
+                uri = f"{sqlite_path.as_uri()}?mode=ro"
+                conn = sqlite3.connect(uri, uri=True, timeout=5)
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.close()
+                conn.close()
+                log_startup("SQLITE_CHECK", f"Verified SQLite connection at {sqlite_path}")
+                return True, "CONNECTED (SQLite)", f"SQLite Mode ({sqlite_path.name})"
+            except Exception as exc:
+                log_startup("SQLITE_CONNECT_ERROR", str(exc), level="ERROR")
+                return False, "FAILED", f"Không thể kết nối đến cơ sở dữ liệu SQLite tại {sqlite_path}: {exc}"
 
         # MySQL backend
         host = self.env.get("MYSQL_HOST", "127.0.0.1").strip()
@@ -359,8 +483,6 @@ class Launcher:
         database = self.env.get("MYSQL_DATABASE", "internship_management").strip()
 
         is_local = host in ("127.0.0.1", "localhost", "::1")
-
-        # Test TCP connectivity
         tcp_ready = is_tcp_open(host, port, timeout=2.0)
 
         if not tcp_ready:
@@ -368,12 +490,21 @@ class Launcher:
                 log_startup("MYSQL_REMOTE_UNREACHABLE", f"Cannot connect to remote MySQL at {host}:{port}", level="ERROR")
                 return False, "FAILED", f"Không thể kết nối đến máy chủ MySQL từ xa tại {host}:{port}. Vui lòng kiểm tra kết nối mạng."
 
-            # Attempt local Windows Service discovery and start
-            svc_name, svc_status = find_mysql_windows_service()
+            cfg_svc = self.env.get("MYSQL_SERVICE_NAME", "").strip()
+            svc_name, svc_status, candidates = find_matching_mysql_service(cfg_svc)
+
+            if svc_status == "MULTIPLE":
+                log_startup("MYSQL_MULTIPLE_SERVICES", f"Found multiple services: {candidates}", level="ERROR")
+                return False, "FAILED", (
+                    f"Phát hiện nhiều dịch vụ MySQL trên máy: {', '.join(candidates)}.\n"
+                    "  Vui lòng cấu hình biến MYSQL_SERVICE_NAME trong backend\\.env để chỉ định dịch vụ mong muốn,\n"
+                    "  hoặc khởi động dịch vụ tương ứng thủ công trước."
+                )
+
             if not svc_name:
                 log_startup("MYSQL_SERVICE_NOT_FOUND", f"Local MySQL port {port} closed and no Windows service found", level="ERROR")
                 return False, "FAILED", (
-                    f"MySQL cục bộ chưa chạy (cổng {port} chưa mở) và không tìm thấy Windows Service MySQL.\n"
+                    f"MySQL cục bộ chưa chạy (cổng {port} chưa mở) và không tìm thấy Windows Service phù hợp.\n"
                     "  Vui lòng khởi động MySQL qua XAMPP, Laragon, Services hoặc Docker rồi thử lại."
                 )
 
@@ -432,11 +563,12 @@ class Launcher:
         port = 8000
         health_url = f"http://127.0.0.1:{port}/"
 
-        # Check if already running and healthy
+        # Check if already running and healthy (Double-startup safety)
         p_pid = get_port_listener_pid(port)
         if p_pid:
-            saved_pid = self.state.get("backend", {}).get("pid")
-            if (saved_pid and saved_pid == p_pid) or verify_process_ownership(p_pid, "backend"):
+            saved_be = self.state.get("backend", {})
+            is_our_backend, _ = verify_process_ownership(p_pid, "backend", saved_be)
+            if is_our_backend:
                 try:
                     with urllib.request.urlopen(health_url, timeout=2) as resp:
                         if resp.status == 200:
@@ -459,7 +591,6 @@ class Launcher:
             "--port", str(port)
         ]
 
-        # Use CREATE_NEW_PROCESS_GROUP so it doesn't terminate with launcher
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         proc = subprocess.Popen(
             cmd,
@@ -476,7 +607,6 @@ class Launcher:
         for _ in range(30):
             time.sleep(1)
             if proc.poll() is not None:
-                # Exited prematurely
                 break
             try:
                 with urllib.request.urlopen(health_url, timeout=1.5) as resp:
@@ -490,7 +620,6 @@ class Launcher:
             log_startup("BACKEND_HEALTHY", f"Backend healthcheck passed at {health_url}")
             return True, "RUNNING", pid, health_url
 
-        # Failure: capture last lines from backend log
         tail_lines = ""
         try:
             lines = BACKEND_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -502,8 +631,6 @@ class Launcher:
         return False, "FAILED", 0, f"Backend không sẵn sàng sau 30s.\n  Chi tiết:\n    {tail_lines}"
 
     def check_smtp_and_worker(self) -> tuple[bool, str, str]:
-        # Worker is integrated into FastAPI backend lifecycle (app/email_outbox.py: start_email_worker)
-        # It is ALWAYS running as part of the backend process!
         host = self.env.get("SMTP_HOST", "").strip()
         port = int(self.env.get("SMTP_PORT", "587").strip() or 587)
         user = self.env.get("SMTP_USERNAME", "").strip()
@@ -517,12 +644,10 @@ class Launcher:
             log_startup("SMTP_CHECK", "SMTP is not configured. Email worker running in idle mode.")
             return True, "NOT CONFIGURED", "RUNNING (Idle - In-Process)"
 
-        # Check DNS & TCP connectivity
         if not is_tcp_open(host, port, timeout=min(timeout, 4.0)):
             log_startup("SMTP_UNREACHABLE", f"Cannot connect to SMTP server {host}:{port}", level="WARNING")
             return True, f"CONFIGURED / UNREACHABLE (Port {port})", "RUNNING (In-Process)"
 
-        # Verify handshake & auth without sending email
         smtp_status = "CONFIGURED / CONNECTIVITY OK"
         try:
             if use_ssl:
@@ -551,11 +676,12 @@ class Launcher:
         port = 3000
         frontend_url = f"http://localhost:{port}"
 
-        # Check if already running and healthy
+        # Check if already running and healthy (Double-startup safety)
         p_pid = get_port_listener_pid(port)
         if p_pid:
-            saved_pid = self.state.get("frontend", {}).get("pid")
-            if (saved_pid and saved_pid == p_pid) or verify_process_ownership(p_pid, "frontend"):
+            saved_fe = self.state.get("frontend", {})
+            is_our_frontend, _ = verify_process_ownership(p_pid, "frontend", saved_fe)
+            if is_our_frontend:
                 try:
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}", timeout=2) as resp:
                         if resp.status == 200:
@@ -610,7 +736,6 @@ class Launcher:
             log_startup("FRONTEND_HEALTHY", f"Frontend healthcheck passed at {frontend_url}")
             return True, "RUNNING", pid, frontend_url
 
-        # Failure: capture last lines from frontend log
         tail_lines = ""
         try:
             lines = FRONTEND_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -624,7 +749,7 @@ class Launcher:
     def run_startup(self) -> int:
         self.print_banner()
 
-        # Step 1: Check environment
+        # Step 1: Check environment (.env precheck & dependencies)
         sys.stdout.write("[1/5] Checking environment...     ")
         sys.stdout.flush()
         env_ok, env_msg = self.check_environment()
@@ -690,12 +815,22 @@ class Launcher:
             return 1
         print("OK")
 
-        # Save active launcher state
+        # Save active launcher state with creation_time for safe ownership verification
         already_opened = self.state.get("browser_opened", False)
         new_state = {
             "started_at": get_current_timestamp(),
-            "backend": {"pid": be_pid, "port": 8000, "url": "http://127.0.0.1:8000"},
-            "frontend": {"pid": fe_pid, "port": 3000, "url": "http://localhost:3000"},
+            "backend": {
+                "pid": be_pid,
+                "creation_time": get_process_creation_time(be_pid),
+                "port": 8000,
+                "url": "http://127.0.0.1:8000",
+            },
+            "frontend": {
+                "pid": fe_pid,
+                "creation_time": get_process_creation_time(fe_pid),
+                "port": 3000,
+                "url": "http://localhost:3000",
+            },
             "mysql": {"status": mysql_status_badge},
             "smtp": {"status": smtp_badge},
             "worker": {"status": worker_badge},
@@ -734,39 +869,43 @@ class Launcher:
         print("=========================================")
 
         state = load_state()
-        fe_pid = state.get("frontend", {}).get("pid") or get_port_listener_pid(3000)
-        be_pid = state.get("backend", {}).get("pid") or get_port_listener_pid(8000)
+        fe_info = state.get("frontend")
+        be_info = state.get("backend")
 
         # 1. Stop Frontend
         sys.stdout.write("Stopping Frontend...              ")
         sys.stdout.flush()
-        if fe_pid and is_pid_alive(fe_pid):
-            if verify_process_ownership(fe_pid, "frontend"):
-                kill_process_tree(fe_pid)
-                log_startup("FRONTEND_STOPPED", f"Frontend PID {fe_pid} terminated")
-                print(f"STOPPED (PID {fe_pid})")
+        if fe_info and fe_info.get("pid"):
+            fe_pid = fe_info["pid"]
+            if is_pid_alive(fe_pid):
+                ok, reason = kill_process_tree(fe_pid, "frontend", fe_info)
+                if ok:
+                    print(f"STOPPED (PID {fe_pid})")
+                else:
+                    print(f"SKIPPED ({reason})")
             else:
-                log_startup("FRONTEND_PRESERVED", f"PID {fe_pid} does not match frontend ownership; skipped", level="WARNING")
-                print("SKIPPED (Foreign process)")
+                print("NOT RUNNING")
         else:
-            print("NOT RUNNING")
+            print("NOT RUNNING (Không có tiến trình trong launcher state)")
 
         # 2. Stop Backend
         sys.stdout.write("Stopping Backend...               ")
         sys.stdout.flush()
-        if be_pid and is_pid_alive(be_pid):
-            if verify_process_ownership(be_pid, "backend"):
-                kill_process_tree(be_pid)
-                log_startup("BACKEND_STOPPED", f"Backend PID {be_pid} terminated")
-                print(f"STOPPED (PID {be_pid})")
+        if be_info and be_info.get("pid"):
+            be_pid = be_info["pid"]
+            if is_pid_alive(be_pid):
+                ok, reason = kill_process_tree(be_pid, "backend", be_info)
+                if ok:
+                    print(f"STOPPED (PID {be_pid})")
+                else:
+                    print(f"SKIPPED ({reason})")
             else:
-                log_startup("BACKEND_PRESERVED", f"PID {be_pid} does not match backend ownership; skipped", level="WARNING")
-                print("SKIPPED (Foreign process)")
+                print("NOT RUNNING")
         else:
-            print("NOT RUNNING")
+            print("NOT RUNNING (Không có tiến trình trong launcher state)")
 
         # 3. MySQL state preserved
-        print("MySQL:                            PRESERVED (Running service unchanged)")
+        print("MySQL:                            PRESERVED (Dịch vụ MySQL dùng chung không bị tắt)")
 
         # Clear state
         clear_state()
