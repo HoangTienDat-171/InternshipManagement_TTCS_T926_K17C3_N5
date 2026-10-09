@@ -624,6 +624,7 @@ class SupportRequestCreate(BaseModel):
     loai_yeu_cau: SupportRequestType
     noi_dung: str = Field(min_length=1, max_length=2000)
     ma_ho_so: Optional[int] = Field(default=None, gt=0)
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
 
     @field_validator("noi_dung")
     @classmethod

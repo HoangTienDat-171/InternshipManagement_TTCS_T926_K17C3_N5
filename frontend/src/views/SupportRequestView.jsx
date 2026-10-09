@@ -97,8 +97,8 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   const [createContent, setCreateContent] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [fileError, setFileError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [successNotice, setSuccessNotice] = useState(false);
   const fileInputRef = useRef(null);
 
   // State: Detail / Review Modal
@@ -144,8 +144,39 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   }, [isIntern, isHR, page, pageSize, filterStatus, filterType, searchQuery, onShowToast]);
 
   useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+    let isMounted = true;
+    const loadData = async () => {
+      if (!isIntern && !isHR) return;
+      try {
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('page_size', String(pageSize));
+        if (filterStatus) params.set('trang_thai', filterStatus);
+        if (filterType) params.set('loai_yeu_cau', filterType);
+        if (isHR && searchQuery.trim()) params.set('search', searchQuery.trim());
+
+        const url = isIntern
+          ? `/api/support-requests/my?${params.toString()}`
+          : `/api/support-requests?${params.toString()}`;
+
+        const res = await apiFetch(url);
+        const data = await readJsonResponse(res);
+        if (!isMounted) return;
+        if (!res.ok) {
+          onShowToast?.(data.detail || 'Không thể tải danh sách yêu cầu hỗ trợ.', 'error');
+          return;
+        }
+        setRequests(data.items || []);
+        setTotalCount(data.total || 0);
+      } catch (err) {
+        if (isMounted) onShowToast?.('Lỗi kết nối máy chủ: ' + err.message, 'error');
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    loadData();
+    return () => { isMounted = false; };
+  }, [isIntern, isHR, page, pageSize, filterStatus, filterType, searchQuery, onShowToast]);
 
   // Open Request Detail
   const handleOpenDetail = async (req) => {
@@ -200,15 +231,20 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
     }
     setSubmitting(true);
     try {
+      const idempotencyKey = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `sr-${Date.now()}-${Math.random()}`;
       const formData = new FormData();
       formData.append('loai_yeu_cau', createType);
       formData.append('noi_dung', createContent.trim());
+      formData.append('idempotency_key', idempotencyKey);
       if (selectedFile) {
         formData.append('file', selectedFile);
       }
 
       const res = await apiFetch('/api/support-requests', {
         method: 'POST',
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+        },
         body: formData,
       });
       const data = await readJsonResponse(res);
@@ -219,7 +255,6 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       }
 
       onShowToast?.('Đã gửi thành công và chờ xử lý', 'success');
-      setSuccessNotice(true);
       setCreateContent('');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -415,8 +450,30 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
               <div className="support-field">
                 <label>Tệp đính kèm (Tùy chọn)</label>
                 <div
-                  className={`support-dropzone ${submitting ? 'is-disabled' : ''}`}
+                  className={`support-dropzone ${isDragging ? 'is-dragging' : ''} ${submitting ? 'is-disabled' : ''}`}
                   onClick={() => !submitting && fileInputRef.current?.click()}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!submitting) setIsDragging(true);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                    if (submitting) return;
+                    const dropped = e.dataTransfer?.files?.[0];
+                    if (dropped) handleFileChange(dropped);
+                  }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {

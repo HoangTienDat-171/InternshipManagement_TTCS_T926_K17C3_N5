@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import sqlite3
 from typing import Any, Optional
 
 from fastapi import HTTPException, status
@@ -27,6 +28,19 @@ STATUS_LABELS = {
 class SupportRequestService:
     def __init__(self, db):
         self.db = db
+
+    def _begin_write(self, intern_user_id: int):
+        if isinstance(self.db, sqlite3.Connection):
+            if not self.db.in_transaction:
+                self.db.execute("BEGIN IMMEDIATE")
+        else:
+            try:
+                self.db.execute(
+                    "SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? FOR UPDATE",
+                    (intern_user_id,),
+                )
+            except Exception:
+                pass
 
     def _format_request(self, item: dict, include_attachments: bool = True) -> dict:
         d = dict(item)
@@ -138,6 +152,24 @@ class SupportRequestService:
             if profile_row:
                 profile_id = profile_row[0]
 
+        # Bắt đầu khóa giao dịch để chống tranh chấp đồng thời
+        self._begin_write(intern_user_id)
+
+        # Lấy idempotency_key nếu có
+        idempotency_key = (payload.get("idempotency_key") or "").strip()
+        idempotency_key = idempotency_key[:128] if idempotency_key else None
+
+        # Nếu có idempotency_key, kiểm tra xem thao tác này đã từng được thực hiện chưa
+        if idempotency_key:
+            existing_same_key = self.db.execute("""
+                SELECT id FROM YEU_CAU_HO_TRO
+                WHERE ma_nguoi_dung = ? AND idempotency_key = ?
+                LIMIT 1
+            """, (intern_user_id, idempotency_key)).fetchone()
+            if existing_same_key:
+                req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
+                return self._get_request_row(req_id)
+
         # Kiểm tra chống duplicate submit: nếu đã có yêu cầu PENDING cùng loại và nội dung
         existing_pending = self.db.execute("""
             SELECT id FROM YEU_CAU_HO_TRO
@@ -150,12 +182,25 @@ class SupportRequestService:
                 detail="Bạn đã có một yêu cầu hỗ trợ tương tự đang chờ xử lý. Vui lòng không gửi trùng lặp."
             )
 
-        cursor = self.db.execute("""
-            INSERT INTO YEU_CAU_HO_TRO
-                (ma_nguoi_dung, ma_ho_so, loai_yeu_cau, noi_dung, trang_thai)
-            VALUES (?, ?, ?, ?, 'PENDING')
-        """, (intern_user_id, profile_id, loai, noi_dung))
-        request_id = cursor.lastrowid
+        try:
+            cursor = self.db.execute("""
+                INSERT INTO YEU_CAU_HO_TRO
+                    (ma_nguoi_dung, ma_ho_so, loai_yeu_cau, noi_dung, trang_thai, idempotency_key)
+                VALUES (?, ?, ?, ?, 'PENDING', ?)
+            """, (intern_user_id, profile_id, loai, noi_dung, idempotency_key))
+            request_id = cursor.lastrowid
+        except Exception:
+            self.db.rollback()
+            if idempotency_key:
+                existing_same_key = self.db.execute("""
+                    SELECT id FROM YEU_CAU_HO_TRO
+                    WHERE ma_nguoi_dung = ? AND idempotency_key = ?
+                    LIMIT 1
+                """, (intern_user_id, idempotency_key)).fetchone()
+                if existing_same_key:
+                    req_id = existing_same_key["id"] if isinstance(existing_same_key, dict) else existing_same_key[0]
+                    return self._get_request_row(req_id)
+            raise
 
         if attachments:
             for att in attachments:

@@ -566,10 +566,12 @@ def init_mysql_db():
             phan_hoi_hr TEXT NULL,
             nguoi_xu_ly INT NULL,
             thoi_gian_xu_ly DATETIME NULL,
+            idempotency_key VARCHAR(128) NULL,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             CONSTRAINT chk_support_request_type CHECK (loai_yeu_cau IN ('CERTIFICATE', 'DOCUMENT', 'OTHER')),
             CONSTRAINT chk_support_request_status CHECK (trang_thai IN ('PENDING', 'RESOLVED', 'REJECTED')),
+            UNIQUE KEY uq_support_request_idempotency (ma_nguoi_dung, idempotency_key),
             KEY idx_yeu_cau_ho_tro_user (ma_nguoi_dung, trang_thai, created_at),
             KEY idx_yeu_cau_ho_tro_status (trang_thai, created_at),
             KEY idx_yeu_cau_ho_tro_loai (loai_yeu_cau, trang_thai),
@@ -1206,8 +1208,10 @@ def init_db():
         phan_hoi_hr TEXT NULL,
         nguoi_xu_ly INTEGER NULL,
         thoi_gian_xu_ly DATETIME NULL,
+        idempotency_key TEXT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (ma_nguoi_dung, idempotency_key),
         FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE SET NULL,
         FOREIGN KEY (nguoi_xu_ly) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
@@ -1216,6 +1220,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_user ON YEU_CAU_HO_TRO(ma_nguoi_dung, trang_thai, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_status ON YEU_CAU_HO_TRO(trang_thai, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_loai ON YEU_CAU_HO_TRO(loai_yeu_cau, trang_thai)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_idempotency ON YEU_CAU_HO_TRO(ma_nguoi_dung, idempotency_key)")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS YEU_CAU_HO_TRO_TEP (

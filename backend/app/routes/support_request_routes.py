@@ -23,6 +23,9 @@ from .document_routes import valid_file_content
 router = APIRouter(tags=["Support Requests - US27/US28"])
 
 MAX_SUPPORT_FILE_SIZE = 5 * 1024 * 1024
+MAX_SUPPORT_FILES = 5
+MAX_TOTAL_SUPPORT_FILE_SIZE = 15 * 1024 * 1024
+MAX_TOTAL_REQUEST_SIZE = 20 * 1024 * 1024
 SUPPORT_FILE_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -58,14 +61,31 @@ async def create_support_request(request: Request, db=Depends(get_db)):
     saved_paths = []
     prepared = []
 
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_TOTAL_REQUEST_SIZE:
+                raise HTTPException(status_code=400, detail="Dung lượng yêu cầu vượt quá giới hạn cho phép.")
+        except ValueError:
+            pass
+
     try:
         content_type = request.headers.get("content-type", "").lower()
         if content_type.startswith("multipart/form-data"):
             async with request.form() as form:
+                idempotency_key = (
+                    request.headers.get("idempotency-key")
+                    or form.get("idempotency_key")
+                    or None
+                )
+                if idempotency_key:
+                    idempotency_key = str(idempotency_key).strip()[:128]
+
                 payload = {
                     "loai_yeu_cau": form.get("loai_yeu_cau"),
                     "noi_dung": form.get("noi_dung"),
                     "ma_ho_so": form.get("ma_ho_so") if form.get("ma_ho_so") else None,
+                    "idempotency_key": idempotency_key,
                 }
                 try:
                     data = SupportRequestCreate.model_validate(payload)
@@ -76,6 +96,13 @@ async def create_support_request(request: Request, db=Depends(get_db)):
                     value for key, value in form.multi_items()
                     if key in ("files", "file") and hasattr(value, "read") and hasattr(value, "filename")
                 ]
+
+                if len(uploads) > MAX_SUPPORT_FILES:
+                    raise HTTPException(status_code=400, detail=f"Mỗi yêu cầu chỉ được đính kèm tối đa {MAX_SUPPORT_FILES} tệp.")
+
+                total_size = 0
+                root = _support_file_root()
+                root.mkdir(parents=True, exist_ok=True)
 
                 for upload in uploads:
                     original_name = PurePosixPath((upload.filename or "").replace("\\", "/")).name
@@ -89,50 +116,64 @@ async def create_support_request(request: Request, db=Depends(get_db)):
                     if not mime_type:
                         raise HTTPException(status_code=400, detail="Chỉ hỗ trợ PNG, JPG, JPEG, PDF, DOC hoặc DOCX.")
 
-                    content = await upload.read(MAX_SUPPORT_FILE_SIZE + 1)
-                    if not content or len(content) > MAX_SUPPORT_FILE_SIZE:
+                    storage_key = f"{uuid4().hex}{extension}"
+                    target_path = root / storage_key
+                    saved_paths.append(target_path)
+
+                    file_size = 0
+                    first_chunk = True
+                    with target_path.open("xb") as stored:
+                        while True:
+                            chunk = await upload.read(64 * 1024)
+                            if not chunk:
+                                break
+                            file_size += len(chunk)
+                            total_size += len(chunk)
+                            if file_size > MAX_SUPPORT_FILE_SIZE:
+                                raise HTTPException(status_code=400, detail="Mỗi tệp đính kèm phải có dung lượng từ 1 byte đến 5 MB.")
+                            if total_size > MAX_TOTAL_SUPPORT_FILE_SIZE:
+                                raise HTTPException(status_code=400, detail="Tổng dung lượng các tệp đính kèm không được vượt quá 15 MB.")
+                            if first_chunk:
+                                first_chunk = False
+                                valid = chunk.startswith(b"\xff\xd8\xff") if extension in {".jpg", ".jpeg"} else valid_file_content(extension, chunk)
+                                if not valid:
+                                    raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
+                            stored.write(chunk)
+
+                    if file_size == 0:
                         raise HTTPException(status_code=400, detail="Mỗi tệp đính kèm phải có dung lượng từ 1 byte đến 5 MB.")
 
-                    valid = content.startswith(b"\xff\xd8\xff") if extension in {".jpg", ".jpeg"} else valid_file_content(extension, content)
-                    if not valid:
-                        raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
-
-                    storage_key = f"{uuid4().hex}{extension}"
                     prepared.append({
                         "storage_key": storage_key,
                         "original_filename": original_name,
                         "mime_type": mime_type,
-                        "file_size": len(content),
-                        "content": content,
+                        "file_size": file_size,
                     })
-
-                if prepared:
-                    root = _support_file_root()
-                    root.mkdir(parents=True, exist_ok=True)
-                    for att in prepared:
-                        path = root / att["storage_key"]
-                        saved_paths.append(path)
-                        with path.open("xb") as stored:
-                            stored.write(att.pop("content"))
         else:
             try:
                 payload = await request.json()
+                if not payload.get("idempotency_key") and request.headers.get("idempotency-key"):
+                    payload["idempotency_key"] = request.headers.get("idempotency-key").strip()[:128]
                 data = SupportRequestCreate.model_validate(payload)
             except ValidationError as exc:
                 raise RequestValidationError(exc.errors()) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail="Dữ liệu yêu cầu hỗ trợ không hợp lệ.") from exc
 
-        metadata = [
-            {k: v for k, v in item.items() if k != "content"}
-            for item in prepared
-        ]
-
-        return SupportRequestService(db).create_request(
+        res = SupportRequestService(db).create_request(
             intern_user_id=intern["ma_nguoi_dung"],
             payload=data.model_dump(),
-            attachments=metadata,
+            attachments=prepared,
         )
+
+        # Dọn dẹp tệp nếu là kết quả idempotency trả về bản ghi cũ đã có từ trước
+        if saved_paths and prepared:
+            returned_keys = {att["storage_key"] for att in res.get("attachments", [])}
+            if prepared[0]["storage_key"] not in returned_keys:
+                for path in saved_paths:
+                    path.unlink(missing_ok=True)
+
+        return res
     except Exception:
         db.rollback()
         for path in saved_paths:
