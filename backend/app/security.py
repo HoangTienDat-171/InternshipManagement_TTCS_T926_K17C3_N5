@@ -32,12 +32,19 @@ def get_session_user(token: str) -> dict[str, Any] | None:
         conn.close()
 
 
-def require_role(request: Request, *roles: str) -> dict[str, Any]:
+def require_role(request: Request, *roles: Any) -> dict[str, Any]:
     user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Phiên đăng nhập không hợp lệ.")
-    if roles and user["vai_tro"] not in roles:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn không có quyền thực hiện thao tác này.")
+    if roles:
+        flattened = set()
+        for r in roles:
+            if isinstance(r, (list, tuple, set)):
+                flattened.update(r)
+            else:
+                flattened.add(r)
+        if user["vai_tro"] not in flattened:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn không có quyền thực hiện thao tác này.")
     return user
 
 

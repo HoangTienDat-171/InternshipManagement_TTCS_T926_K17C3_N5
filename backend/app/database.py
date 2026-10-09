@@ -555,6 +555,43 @@ def init_mysql_db():
             FOREIGN KEY (updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
             FOREIGN KEY (xac_nhan_boi) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+
+        statements.append("""CREATE TABLE IF NOT EXISTS YEU_CAU_HO_TRO (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            ma_nguoi_dung INT NOT NULL,
+            ma_ho_so INT NULL,
+            loai_yeu_cau VARCHAR(32) NOT NULL,
+            noi_dung TEXT NOT NULL,
+            trang_thai VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+            phan_hoi_hr TEXT NULL,
+            nguoi_xu_ly INT NULL,
+            thoi_gian_xu_ly DATETIME NULL,
+            idempotency_key VARCHAR(128) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT chk_support_request_type CHECK (loai_yeu_cau IN ('CERTIFICATE', 'DOCUMENT', 'OTHER')),
+            CONSTRAINT chk_support_request_status CHECK (trang_thai IN ('PENDING', 'RESOLVED', 'REJECTED')),
+            UNIQUE KEY uq_support_request_idempotency (ma_nguoi_dung, idempotency_key),
+            KEY idx_yeu_cau_ho_tro_user (ma_nguoi_dung, trang_thai, created_at),
+            KEY idx_yeu_cau_ho_tro_status (trang_thai, created_at),
+            KEY idx_yeu_cau_ho_tro_loai (loai_yeu_cau, trang_thai),
+            FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
+            FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE SET NULL,
+            FOREIGN KEY (nguoi_xu_ly) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+
+        statements.append("""CREATE TABLE IF NOT EXISTS YEU_CAU_HO_TRO_TEP (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            support_request_id BIGINT NOT NULL,
+            storage_key VARCHAR(64) NOT NULL UNIQUE,
+            original_filename VARCHAR(255) NOT NULL,
+            mime_type VARCHAR(127) NOT NULL,
+            file_size BIGINT UNSIGNED NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_support_request_file (support_request_id, id),
+            CONSTRAINT fk_support_request_file FOREIGN KEY (support_request_id)
+                REFERENCES YEU_CAU_HO_TRO(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
 
@@ -1159,6 +1196,45 @@ def init_db():
     );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_leave_attachment_request ON YEU_CAU_NGHI_PHEP_TEP(leave_request_id, id)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS YEU_CAU_HO_TRO (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_nguoi_dung INTEGER NOT NULL,
+        ma_ho_so INTEGER NULL,
+        loai_yeu_cau TEXT NOT NULL CHECK(loai_yeu_cau IN ('CERTIFICATE', 'DOCUMENT', 'OTHER')),
+        noi_dung TEXT NOT NULL,
+        trang_thai TEXT NOT NULL DEFAULT 'PENDING' CHECK(trang_thai IN ('PENDING', 'RESOLVED', 'REJECTED')),
+        phan_hoi_hr TEXT NULL,
+        nguoi_xu_ly INTEGER NULL,
+        thoi_gian_xu_ly DATETIME NULL,
+        idempotency_key TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (ma_nguoi_dung, idempotency_key),
+        FOREIGN KEY (ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE CASCADE,
+        FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE SET NULL,
+        FOREIGN KEY (nguoi_xu_ly) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_user ON YEU_CAU_HO_TRO(ma_nguoi_dung, trang_thai, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_status ON YEU_CAU_HO_TRO(trang_thai, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_loai ON YEU_CAU_HO_TRO(loai_yeu_cau, trang_thai)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_yeu_cau_ho_tro_idempotency ON YEU_CAU_HO_TRO(ma_nguoi_dung, idempotency_key)")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS YEU_CAU_HO_TRO_TEP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        support_request_id INTEGER NOT NULL,
+        storage_key TEXT NOT NULL UNIQUE,
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL CHECK(file_size > 0),
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (support_request_id) REFERENCES YEU_CAU_HO_TRO(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_support_request_file ON YEU_CAU_HO_TRO_TEP(support_request_id, id)")
 
     cursor.execute("""CREATE TABLE IF NOT EXISTS PHU_CAP_THUC_TAP (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
