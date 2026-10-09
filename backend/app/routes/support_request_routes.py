@@ -3,6 +3,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Optional
 from uuid import uuid4
+import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -135,13 +136,27 @@ async def create_support_request(request: Request, db=Depends(get_db)):
                                 raise HTTPException(status_code=400, detail="Tổng dung lượng các tệp đính kèm không được vượt quá 15 MB.")
                             if first_chunk:
                                 first_chunk = False
-                                valid = chunk.startswith(b"\xff\xd8\xff") if extension in {".jpg", ".jpeg"} else valid_file_content(extension, chunk)
+                                if extension == ".docx":
+                                    valid = chunk.startswith(b"PK\x03\x04")
+                                elif extension in {".jpg", ".jpeg"}:
+                                    valid = chunk.startswith(b"\xff\xd8\xff")
+                                else:
+                                    valid = valid_file_content(extension, chunk)
                                 if not valid:
                                     raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
                             stored.write(chunk)
 
                     if file_size == 0:
                         raise HTTPException(status_code=400, detail="Mỗi tệp đính kèm phải có dung lượng từ 1 byte đến 5 MB.")
+
+                    if extension == ".docx":
+                        try:
+                            with zipfile.ZipFile(target_path) as archive:
+                                names = set(archive.namelist())
+                                if not ("[Content_Types].xml" in names and "word/document.xml" in names):
+                                    raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
+                        except (OSError, zipfile.BadZipFile):
+                            raise HTTPException(status_code=400, detail="Nội dung tệp không khớp định dạng đã chọn.")
 
                     prepared.append({
                         "storage_key": storage_key,

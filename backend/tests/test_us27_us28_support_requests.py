@@ -8,6 +8,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import zipfile
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -345,6 +346,58 @@ class SupportRequestTests(unittest.TestCase):
             disk_path = root / att["storage_key"]
             self.assertTrue(disk_path.is_file())
             self.assertEqual(disk_path.stat().st_size, att["file_size"])
+
+    def test_file_upload_valid_docx_multipart_success(self):
+        """TTS gửi yêu cầu hỗ trợ kèm file DOCX thực tế (>64KB) qua multipart thành công 201"""
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("[Content_Types].xml", "<Types></Types>")
+            zf.writestr("word/document.xml", "A" * 100000)
+        docx_bytes = buf.getvalue()
+
+        req = fake_request(
+            user=self.users["intern1"],
+            form_fields={
+                "loai_yeu_cau": "DOCUMENT",
+                "noi_dung": "Gửi kèm file báo cáo word docx.",
+                "ma_ho_so": str(self.profile1_id),
+            },
+            form_files=[FakeUpload("bao_cao.docx", docx_bytes)],
+        )
+
+        res = asyncio.run(support_request_routes.create_support_request(req, db=self.conn))
+        self.assertEqual(res["trang_thai"], "PENDING")
+        self.assertEqual(len(res["attachments"]), 1)
+        self.assertEqual(res["attachments"][0]["original_filename"], "bao_cao.docx")
+
+    def test_file_upload_docx_spoofed_text_rejected(self):
+        """File .docx giả mạo (không phải zip header PK) bị từ chối 400"""
+        req = fake_request(
+            user=self.users["intern1"],
+            form_fields={"loai_yeu_cau": "DOCUMENT", "noi_dung": "Tệp giả mạo"},
+            form_files=[FakeUpload("fake.docx", b"This is just plain text, not docx")],
+        )
+        with self.assertRaises(HTTPException) as cm:
+            asyncio.run(support_request_routes.create_support_request(req, db=self.conn))
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertIn("Nội dung tệp không khớp định dạng đã chọn", cm.exception.detail)
+
+    def test_file_upload_docx_invalid_zip_missing_xml_rejected(self):
+        """File .docx là zip nhưng không chứa word/document.xml bị từ chối 400"""
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("some_other_file.txt", "hello")
+        bad_zip = buf.getvalue()
+
+        req = fake_request(
+            user=self.users["intern1"],
+            form_fields={"loai_yeu_cau": "DOCUMENT", "noi_dung": "Zip không phải docx"},
+            form_files=[FakeUpload("invalid.docx", bad_zip)],
+        )
+        with self.assertRaises(HTTPException) as cm:
+            asyncio.run(support_request_routes.create_support_request(req, db=self.conn))
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertIn("Nội dung tệp không khớp định dạng đã chọn", cm.exception.detail)
 
     def test_file_upload_invalid_extension_rejected(self):
         """File có đuôi mở rộng không được hỗ trợ (.exe, .sh) bị từ chối 400"""
