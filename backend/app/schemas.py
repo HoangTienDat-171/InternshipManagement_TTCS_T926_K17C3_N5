@@ -610,3 +610,54 @@ class LeaveRequestReview(BaseModel):
         if self.trang_thai == "TuChoi" and not self.ly_do_tu_choi:
             raise ValueError("Cần cung cấp lý do từ chối đơn nghỉ phép.")
         return self
+
+
+# ==================== US27 & US28 - YÊU CẦU HỖ TRỢ ====================
+
+SupportRequestType = Literal["CERTIFICATE", "DOCUMENT", "OTHER"]
+SupportRequestStatus = Literal["PENDING", "RESOLVED", "REJECTED"]
+
+
+class SupportRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    loai_yeu_cau: SupportRequestType
+    noi_dung: str = Field(min_length=1, max_length=2000)
+    ma_ho_so: Optional[int] = Field(default=None, gt=0)
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
+
+    @field_validator("noi_dung")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Nội dung yêu cầu không được để trống.")
+        return trimmed
+
+
+class SupportRequestResolve(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    phan_hoi_hr: Optional[str] = Field(default=None, max_length=2000)
+    noi_dung_phan_hoi: Optional[str] = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def resolve_note(self):
+        note = (self.phan_hoi_hr or self.noi_dung_phan_hoi or "").strip()
+        self.phan_hoi_hr = note or "Đã giải quyết yêu cầu hỗ trợ."
+        return self
+
+
+class SupportRequestReject(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    ly_do_tu_choi: Optional[str] = Field(default=None, max_length=2000)
+    noi_dung_phan_hoi: Optional[str] = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_reason(self):
+        reason = (self.ly_do_tu_choi or self.noi_dung_phan_hoi or "").strip()
+        if not reason:
+            raise ValueError("Vui lòng nhập lý do từ chối yêu cầu.")
+        self.ly_do_tu_choi = reason
+        return self

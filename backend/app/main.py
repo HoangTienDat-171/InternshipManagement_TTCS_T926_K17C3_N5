@@ -6,13 +6,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, intern_routes, leave_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, task_routes, weekly_report_routes, work_shift_routes
+from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, intern_routes, leave_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
     description="Backend API phục vụ Quản lý Thực tập sinh với Kiến trúc Bảo mật 3 Giai đoạn",
     version="1.1.0"
 )
+
+app.add_middleware(support_request_routes.SupportRequestBodyLimitMiddleware)
 
 # Giai đoạn 1: Bảo mật khi truyền tải (In Transit Security Middleware)
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -114,6 +116,7 @@ app.include_router(work_shift_routes.router)
 app.include_router(attendance_routes.router)
 app.include_router(leave_routes.router)
 app.include_router(allowance_routes.router)
+app.include_router(support_request_routes.router)
 
 
 @app.websocket("/api/auth/events")

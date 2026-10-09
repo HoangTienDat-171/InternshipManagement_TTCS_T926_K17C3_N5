@@ -13,3 +13,7 @@ frontend/dist/
 .env
 .env.*
 !.env.example
+
+# Runtime logs and launcher metadata
+logs/
+.launcher/

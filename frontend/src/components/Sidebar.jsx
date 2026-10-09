@@ -15,7 +15,8 @@ import {
   ClipboardCheck,
   LogOut,
   X,
-  Wallet
+  Wallet,
+  LifeBuoy
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout, isOpen = false, isCollapsed = false, onClose }) {
@@ -74,6 +75,16 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
       id: 'allowances',
       label: canManage ? 'Quản lý phụ cấp' : 'Lịch sử phụ cấp',
       icon: <Wallet size={18} />
+    }] : []),
+    ...(canManage ? [{
+      id: 'support-requests',
+      label: 'Quản lý yêu cầu hỗ trợ',
+      icon: <LifeBuoy size={18} />
+    }] : []),
+    ...(isIntern ? [{
+      id: 'support-requests',
+      label: 'Yêu cầu hỗ trợ',
+      icon: <LifeBuoy size={18} />
     }] : []),
     // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
     ...(isAdmin ? [{
