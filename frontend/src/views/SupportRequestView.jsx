@@ -95,7 +95,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   // State: Create Form (Intern)
   const [createType, setCreateType] = useState('CERTIFICATE');
   const [createContent, setCreateContent] = useState('');
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [fileError, setFileError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -202,24 +202,52 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
   };
 
   // File selection & validation
-  const handleFileChange = (file) => {
+  const MAX_SUPPORT_FILES = 5;
+  const MAX_FILE_SIZE = 5 * 1024 * 1024;
+  const MAX_TOTAL_FILES_SIZE = 15 * 1024 * 1024;
+
+  const handleFilesChange = (incomingFiles) => {
     setFileError('');
-    if (!file) {
-      setSelectedFile(null);
-      return;
-    }
-    const maxSizeBytes = 5 * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-      setFileError('Kích thước tệp vượt quá 5MB. Vui lòng chọn tệp nhỏ hơn.');
-      return;
-    }
-    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!incomingFiles || incomingFiles.length === 0) return;
+
     const allowed = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg'];
-    if (!allowed.includes(ext)) {
-      setFileError('Định dạng tệp không được hỗ trợ (chỉ chấp nhận PDF, DOC, DOCX, PNG, JPG).');
-      return;
+    const updated = [...selectedFiles];
+
+    for (const file of incomingFiles) {
+      if (updated.some((f) => f.name === file.name && f.size === file.size)) {
+        continue;
+      }
+      if (updated.length >= MAX_SUPPORT_FILES) {
+        setFileError(`Mỗi yêu cầu chỉ được đính kèm tối đa ${MAX_SUPPORT_FILES} tệp.`);
+        break;
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!allowed.includes(ext)) {
+        setFileError(`Tệp "${file.name}" không hợp lệ. Chỉ chấp nhận PDF, DOC, DOCX, PNG, JPG.`);
+        return;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        setFileError(`Tệp "${file.name}" vượt quá 5MB. Vui lòng chọn tệp nhỏ hơn.`);
+        return;
+      }
+      if (file.size === 0) {
+        setFileError(`Tệp "${file.name}" rỗng (0 byte).`);
+        return;
+      }
+      const currentTotal = updated.reduce((acc, f) => acc + f.size, 0);
+      if (currentTotal + file.size > MAX_TOTAL_FILES_SIZE) {
+        setFileError('Tổng dung lượng các tệp đính kèm vượt quá 15MB.');
+        return;
+      }
+      updated.push(file);
     }
-    setSelectedFile(file);
+    setSelectedFiles(updated);
+  };
+
+  const handleRemoveFile = (indexToRemove) => {
+    setFileError('');
+    setSelectedFiles((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   // Submit Create Request (Intern)
@@ -236,8 +264,8 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
       formData.append('loai_yeu_cau', createType);
       formData.append('noi_dung', createContent.trim());
       formData.append('idempotency_key', idempotencyKey);
-      if (selectedFile) {
-        formData.append('file', selectedFile);
+      for (const file of selectedFiles) {
+        formData.append('files', file);
       }
 
       const res = await apiFetch('/api/support-requests', {
@@ -256,7 +284,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
 
       onShowToast?.('Đã gửi thành công và chờ xử lý', 'success');
       setCreateContent('');
-      setSelectedFile(null);
+      setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
       setPage(1);
       fetchRequests();
@@ -471,8 +499,8 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                     e.stopPropagation();
                     setIsDragging(false);
                     if (submitting) return;
-                    const dropped = e.dataTransfer?.files?.[0];
-                    if (dropped) handleFileChange(dropped);
+                    const dropped = Array.from(e.dataTransfer?.files || []);
+                    if (dropped.length) handleFilesChange(dropped);
                   }}
                   role="button"
                   tabIndex={0}
@@ -486,16 +514,20 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                   <input
                     ref={fileInputRef}
                     type="file"
+                    multiple
                     accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
                     style={{ display: 'none' }}
-                    onChange={(e) => handleFileChange(e.target.files?.[0])}
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length) handleFilesChange(files);
+                    }}
                     disabled={submitting}
                   />
                   <span className="support-dropzone-icon">
                     <UploadCloud size={22} />
                   </span>
-                  <strong>Chọn hoặc kéo thả tệp vào đây</strong>
-                  <small>Định dạng: PDF, DOC, DOCX, PNG, JPG (Tối đa 5MB)</small>
+                  <strong>Chọn hoặc kéo thả tệp vào đây (Tối đa 5 tệp)</strong>
+                  <small>Định dạng: PDF, DOC, DOCX, PNG, JPG (Tối đa 5MB/tệp, tổng dung lượng 15MB)</small>
                 </div>
 
                 {fileError && (
@@ -505,27 +537,32 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                   </p>
                 )}
 
-                {selectedFile && (
-                  <div className="support-file-preview">
-                    <div className="support-file-info">
-                      <Paperclip size={18} color="var(--primary-600)" />
-                      <div>
-                        <strong>{selectedFile.name}</strong>
-                        <small>{formatBytes(selectedFile.size)}</small>
-                      </div>
+                {selectedFiles.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Đã chọn: <strong>{selectedFiles.length}/5</strong> tệp</span>
+                      <span>Tổng: <strong>{formatBytes(selectedFiles.reduce((acc, f) => acc + f.size, 0))} / 15MB</strong></span>
                     </div>
-                    <button
-                      type="button"
-                      className="support-file-remove-btn"
-                      title="Gỡ tệp"
-                      onClick={() => {
-                        setSelectedFile(null);
-                        if (fileInputRef.current) fileInputRef.current.value = '';
-                      }}
-                      disabled={submitting}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    {selectedFiles.map((file, idx) => (
+                      <div key={`${file.name}-${idx}`} className="support-file-preview" style={{ marginTop: 6 }}>
+                        <div className="support-file-info">
+                          <Paperclip size={18} color="var(--primary-600)" />
+                          <div>
+                            <strong>{file.name}</strong>
+                            <small>{formatBytes(file.size)}</small>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="support-file-remove-btn"
+                          title="Gỡ tệp"
+                          onClick={() => handleRemoveFile(idx)}
+                          disabled={submitting}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
