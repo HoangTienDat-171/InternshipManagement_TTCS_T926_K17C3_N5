@@ -416,6 +416,8 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
         departments={departments}
         sessionNotice={sessionNotice}
+        theme={theme}
+        onToggleTheme={() => setTheme((currentTheme) => currentTheme === 'dark' ? 'light' : 'dark')}
       />
     );
   }

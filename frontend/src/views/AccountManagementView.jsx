@@ -327,7 +327,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
         }}>
           <Shield size={26} />
         </div>
-        <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>
+        <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-main)' }}>
           Quyền truy cập bị từ chối
         </h3>
         <p style={{ color: '#64748b', marginTop: '6px', fontSize: '14px' }}>
@@ -341,7 +341,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>Quản trị Người dùng & Phân quyền</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Quản trị Người dùng & Phân quyền</h2>
           <p style={{ fontSize: '13px', color: '#64748b' }}>
             {isAdmin 
               ? 'Tài khoản Admin: Bạn có toàn quyền phân quyền các vai trò và kích hoạt tài khoản bên dưới'
@@ -406,7 +406,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
                     <tr key={u.ma_nguoi_dung}>
                       <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>#{u.ma_nguoi_dung}</td>
                       <td>
-                        <div style={{ fontWeight: 600, color: '#0f172a' }}>{u.ho_ten}</div>
+                        <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{u.ho_ten}</div>
                         <div style={{ fontSize: '11px', color: '#64748b' }}>{u.ten_phong_ban || 'Chưa phân phòng'}</div>
                       </td>
                       <td>
