@@ -1,0 +1,300 @@
+/* MonthYearPicker styles */
+.month-year-picker {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.month-year-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1; /* border-slate-300 */
+  border-radius: 12px; /* rounded-xl */
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.month-year-trigger.is-empty .month-year-value {
+  color: #94a3b8;
+}
+
+.month-year-trigger:hover:not(:disabled) {
+  border-color: #94a3b8;
+}
+
+.month-year-trigger:focus-visible,
+.month-year-trigger.is-open {
+  border-color: #6366f1; /* border-indigo-500 */
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15); /* ring-2 ring-indigo-100 */
+}
+
+.month-year-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #f8fafc;
+}
+
+.month-year-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.month-year-trigger-icons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.month-year-clear-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #94a3b8;
+  transition: all 0.15s ease;
+}
+
+.month-year-clear-icon:hover {
+  background: #f1f5f9;
+  color: #ef4444;
+}
+
+.month-year-calendar-icon {
+  color: #64748b;
+}
+
+/* Popover Modal / Dropdown */
+.month-year-popover {
+  position: fixed;
+  z-index: 1200;
+  background: #ffffff;
+  border-radius: 16px; /* rounded-2xl */
+  border: 1px solid #f1f5f9; /* border border-slate-100 */
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.06); /* shadow-xl */
+  padding: 16px; /* p-4 */
+  min-width: 280px;
+  animation: monthYearPopIn 0.15s ease-out;
+}
+
+@keyframes monthYearPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Navigator Header */
+.month-year-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.month-year-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -0.01em;
+}
+
+.month-year-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.month-year-nav-btn:hover {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+/* 3x4 Month Grid */
+.month-year-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.month-year-cell {
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px; /* rounded-lg */
+  background: #f8fafc;
+  color: #334155;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.month-year-cell:hover:not(.is-selected) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.month-year-cell.is-current:not(.is-selected) {
+  border-color: #c7d2fe;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+.month-year-cell.is-selected {
+  background: #4f46e5; /* bg-indigo-600 */
+  color: #ffffff; /* text-white */
+  font-weight: 600; /* font-medium/semibold */
+  box-shadow: 0 1px 3px 0 rgba(79, 70, 229, 0.35); /* shadow-sm */
+}
+
+/* Footer Ghost Buttons */
+.month-year-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.month-year-action-btn {
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #64748b; /* text-slate-500 */
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.month-year-action-btn:hover {
+  color: #4f46e5; /* hover:text-indigo-600 */
+  background: rgba(99, 102, 241, 0.08);
+}
+
+/* ==========================================================================
+   DARK THEME OVERRIDES
+   ========================================================================== */
+:root[data-theme='dark'] .month-year-trigger {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+
+:root[data-theme='dark'] .month-year-trigger.is-empty .month-year-value {
+  color: #64748b;
+}
+
+:root[data-theme='dark'] .month-year-trigger:hover:not(:disabled) {
+  border-color: #475569;
+}
+
+:root[data-theme='dark'] .month-year-trigger:focus-visible,
+:root[data-theme='dark'] .month-year-trigger.is-open {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+:root[data-theme='dark'] .month-year-calendar-icon {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .month-year-clear-icon:hover {
+  background: #1e293b;
+  color: #f87171;
+}
+
+:root[data-theme='dark'] .month-year-popover {
+  background: #1e293b;
+  border-color: #334155;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme='dark'] .month-year-title {
+  color: #f1f5f9;
+}
+
+:root[data-theme='dark'] .month-year-nav-btn {
+  border-color: #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+}
+
+:root[data-theme='dark'] .month-year-nav-btn:hover {
+  background: #1e293b;
+  color: #ffffff;
+  border-color: #475569;
+}
+
+:root[data-theme='dark'] .month-year-cell {
+  background: #0f172a;
+  color: #cbd5e1;
+}
+
+:root[data-theme='dark'] .month-year-cell:hover:not(.is-selected) {
+  background: #334155;
+  color: #ffffff;
+}
+
+:root[data-theme='dark'] .month-year-cell.is-current:not(.is-selected) {
+  border-color: #4338ca;
+  color: #818cf8;
+}
+
+:root[data-theme='dark'] .month-year-cell.is-selected {
+  background: #6366f1;
+  color: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(99, 102, 241, 0.5);
+}
+
+:root[data-theme='dark'] .month-year-footer {
+  border-top-color: #334155;
+}
+
+:root[data-theme='dark'] .month-year-action-btn {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .month-year-action-btn:hover {
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.15);
+}
+

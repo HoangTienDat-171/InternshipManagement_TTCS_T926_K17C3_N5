@@ -43,6 +43,7 @@ STATE_FILE = LOGS_DIR / "launcher_state.json"
 STARTUP_LOG = LOGS_DIR / "startup.log"
 BACKEND_LOG = LOGS_DIR / "backend.log"
 FRONTEND_LOG = LOGS_DIR / "frontend.log"
+STARTUP_LOCK_FILE = ROOT_DIR / ".launcher" / "startup.lock"
 
 
 def get_current_timestamp() -> str:
@@ -67,6 +68,52 @@ def log_startup(event: str, details: str = "", level: str = "INFO"):
             f.write(log_line)
     except Exception:
         pass
+
+
+def acquire_startup_lock(timeout_seconds: int = 120):
+    """Serialize launcher start/stop operations so duplicate clicks cannot race."""
+    STARTUP_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = STARTUP_LOCK_FILE.open("a+b")
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() == 0:
+        lock_file.write(b"\0")
+        lock_file.flush()
+
+    deadline = time.monotonic() + timeout_seconds
+    waiting = False
+    while True:
+        try:
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock_file, None
+        except OSError:
+            if not waiting:
+                print("Một launcher khác đang xử lý hệ thống; đang đợi lượt...")
+                waiting = True
+            if time.monotonic() >= deadline:
+                lock_file.close()
+                return None, "Đã chờ 120 giây nhưng launcher khác vẫn chưa hoàn tất."
+            time.sleep(0.25)
+
+
+def release_startup_lock(lock_file) -> None:
+    try:
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except Exception as exc:
+        log_startup("LIFECYCLE_LOCK_RELEASE_FAILED", sanitize_text(str(exc)), level="ERROR")
+    finally:
+        lock_file.close()
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -565,6 +612,21 @@ class Launcher:
             return False
 
     @staticmethod
+    def _is_spawned_backend_process(pid: int, owner_token: str) -> bool:
+        """Recognize Uvicorn's Windows child process using this launch's token."""
+        if pid <= 0 or not is_pid_alive(pid):
+            return False
+        cmdline = get_process_cmdline(pid).lower()
+        process_name = Path(get_process_name(pid)).name.lower()
+        return (
+            process_name in ("python.exe", "pythonw.exe")
+            and f"ims_launcher_owner={owner_token}" in cmdline
+            and f"ims_launcher_root={_root_fingerprint()}" in cmdline
+            and "uvicorn.run" in cmdline
+            and "backend.app.main:app" in cmdline
+        )
+
+    @staticmethod
     def _frontend_is_healthy(url: str) -> bool:
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
@@ -760,7 +822,18 @@ class Launcher:
         if p_pid:
             saved_be = self.state.get("backend", {})
             is_our_backend, _ = verify_process_ownership(p_pid, "backend", saved_be)
-            if is_our_backend:
+            saved_parent_pid = saved_be.get("pid") if isinstance(saved_be, dict) else None
+            parent_is_ours = (
+                isinstance(saved_parent_pid, int)
+                and not isinstance(saved_parent_pid, bool)
+                and saved_parent_pid > 0
+                and verify_process_ownership(saved_parent_pid, "backend", saved_be)[0]
+            )
+            is_our_backend_child = (
+                parent_is_ours
+                and self._is_spawned_backend_process(p_pid, saved_be.get("owner_token", ""))
+            )
+            if is_our_backend or is_our_backend_child:
                 if self._backend_is_healthy(health_url):
                     self.managed_processes["backend"] = saved_be
                     log_startup("BACKEND_REUSED", f"Managed backend already running on PID {p_pid}")
@@ -809,7 +882,12 @@ class Launcher:
             time.sleep(1)
             if proc.poll() is not None:
                 break
-            if get_port_listener_pid(port) == pid and self._backend_is_healthy(health_url):
+            listener_pid = get_port_listener_pid(port)
+            owns_listener = (
+                listener_pid == pid
+                or self._is_spawned_backend_process(listener_pid or 0, owner_token)
+            )
+            if owns_listener and self._backend_is_healthy(health_url):
                 healthy = True
                 break
 
@@ -949,6 +1027,28 @@ class Launcher:
         return False, "FAILED", 0, f"Frontend không sẵn sàng sau 30s.\n  Chi tiết:\n    {tail_lines}"
 
     def run_startup(self) -> int:
+        try:
+            lock_file, lock_error = acquire_startup_lock()
+        except Exception as exc:
+            detail = sanitize_text(str(exc))
+            log_startup("STARTUP_LOCK_FAILED", detail, level="ERROR")
+            print("Không thể tạo khóa khởi động hệ thống.")
+            print(detail)
+            return 1
+        if lock_file is None:
+            log_startup("STARTUP_LOCK_TIMEOUT", lock_error, level="ERROR")
+            print(lock_error)
+            return 1
+
+        try:
+            # A launcher that waited for another startup must read its newly saved
+            # process ownership state before deciding whether to reuse the services.
+            self.state = load_state()
+            return self._run_startup_locked()
+        finally:
+            release_startup_lock(lock_file)
+
+    def _run_startup_locked(self) -> int:
         self.print_banner()
 
         # Step 1: Check environment (.env precheck & dependencies)
@@ -1062,6 +1162,25 @@ class Launcher:
         return 0
 
     def run_shutdown(self) -> int:
+        try:
+            lock_file, lock_error = acquire_startup_lock()
+        except Exception as exc:
+            detail = sanitize_text(str(exc))
+            log_startup("SHUTDOWN_LOCK_FAILED", detail, level="ERROR")
+            print("Không thể tạo khóa dừng hệ thống.")
+            print(detail)
+            return 1
+        if lock_file is None:
+            log_startup("SHUTDOWN_LOCK_TIMEOUT", lock_error, level="ERROR")
+            print(lock_error)
+            return 1
+
+        try:
+            return self._run_shutdown_locked()
+        finally:
+            release_startup_lock(lock_file)
+
+    def _run_shutdown_locked(self) -> int:
         print("=========================================")
         print(" INTERNSHIP MANAGEMENT - SERVER SHUTDOWN")
         print("=========================================")

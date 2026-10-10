@@ -169,25 +169,34 @@
 }
 
 .btn-ghost.allowance-clear-btn {
-  background: transparent;
-  color: #64748b;
-  border: 1px solid transparent;
-  padding: 8px 12px;
+  background: #ffffff;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  padding: 0 16px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 12px;
   font-weight: 500;
-  font-size: 13px;
+  font-size: 13.5px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.btn-ghost.allowance-clear-btn svg {
+  transition: transform 0.3s ease;
 }
 
 .btn-ghost.allowance-clear-btn:hover {
-  background: var(--surface-card-hover, #f1f5f9);
-  color: #1e293b;
-  border-color: var(--border-color, #e2e8f0);
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.btn-ghost.allowance-clear-btn:hover svg {
+  transform: rotate(-45deg);
 }
 
 /* ==========================================================================
@@ -252,19 +261,20 @@
 }
 
 .allowance-table th {
-  background: var(--surface-card-hover, #f8fafc);
+  background: rgba(248, 250, 252, 0.85);
   text-align: left;
-  color: var(--text-body, #334155);
-  font-size: 12.5px;
-  font-weight: 650;
-  padding: 14px 18px;
-  letter-spacing: 0.2px;
-  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 12px 18px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .allowance-table td {
-  padding: 16px 18px;
-  border-top: 1px solid var(--border-color, #e2e8f0);
+  padding: 14px 18px;
+  border-bottom: 1px solid #f1f5f9;
   font-size: 13.5px;
   vertical-align: middle;
   overflow-wrap: anywhere;
@@ -289,7 +299,7 @@
 }
 
 .allowance-table tbody tr:hover {
-  background: rgba(99, 102, 241, 0.035);
+  background: rgba(248, 250, 252, 0.65);
 }
 
 .allowance-period-badge {
@@ -928,12 +938,18 @@
 }
 
 :root[data-theme='dark'] .allowance-table th {
-  background: #1e293b;
-  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.7);
+  color: #94a3b8;
+  border-bottom-color: #1e293b;
+}
+
+:root[data-theme='dark'] .allowance-table td {
+  border-bottom-color: #1e293b;
+  color: #f1f5f9;
 }
 
 :root[data-theme='dark'] .allowance-table tbody tr:hover {
-  background: rgba(99, 102, 241, 0.08);
+  background: rgba(30, 41, 59, 0.5);
 }
 
 :root[data-theme='dark'] .allowance-badge-count {
@@ -1254,11 +1270,11 @@
   width: fit-content;
   max-width: 100%;
   gap: 4px;
-  padding: 5px;
+  padding: 4px;
   overflow-x: auto;
-  border: 1px solid var(--border-color, #e2e8f0);
-  border-radius: 13px;
-  background: var(--surface-card, #fff);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 12px;
+  background: rgba(241, 245, 249, 0.85);
 }
 
 .allowance-receipt-filter button {
@@ -1266,28 +1282,29 @@
   min-height: 34px;
   align-items: center;
   justify-content: center;
-  padding: 6px 11px;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
   background: transparent;
   color: #64748b;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
-  transition: background .16s ease, color .16s ease, border-color .16s ease;
+  transition: all .15s ease;
 }
 
-.allowance-receipt-filter button:hover {
-  background: #f8fafc;
-  color: #334155;
+.allowance-receipt-filter button:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.5);
+  color: #1e293b;
 }
 
 .allowance-receipt-filter button.is-active {
-  border-color: #c7d2fe;
-  background: #eef2ff;
-  color: #4338ca;
+  background: #ffffff;
+  color: #4f46e5;
+  font-weight: 600;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
 }
 
 .allowance-receipt-badge,
@@ -1298,36 +1315,36 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 5px 9px;
+  padding: 4px 10px;
   border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 650;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
 }
 
 .allowance-receipt-badge.is-choxacnhan {
-  border-color: #fde68a;
+  border-color: rgba(253, 230, 138, 0.6);
   background: #fffbeb;
-  color: #a16207;
+  color: #b45309;
 }
 
 .allowance-receipt-badge.is-danhan {
-  border-color: #a7f3d0;
+  border-color: rgba(167, 243, 208, 0.6);
   background: #ecfdf5;
   color: #047857;
 }
 
 .allowance-receipt-badge.is-chuanhanduoc {
-  border-color: #fed7aa;
-  background: #fff7ed;
-  color: #c2410c;
+  border-color: rgba(254, 205, 211, 0.6);
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .allowance-receipt-badge.is-dangxuly,
 .allowance-report-status.is-dangxuly {
-  border-color: #bfdbfe;
+  border-color: rgba(191, 219, 254, 0.6);
   background: #eff6ff;
   color: #1d4ed8;
 }
@@ -1979,10 +1996,65 @@
 
 :root[data-theme='dark'] .allowance-intern-combobox-control,
 :root[data-theme='dark'] .allowance-intern-options,
-:root[data-theme='dark'] .allowance-receipt-filter,
 :root[data-theme='dark'] .allowance-report-inbox {
   border-color: #334155;
   background: #0f172a;
+}
+
+:root[data-theme='dark'] .allowance-receipt-filter {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(51, 65, 85, 0.6);
+}
+
+:root[data-theme='dark'] .allowance-receipt-filter button {
+  color: #94a3b8;
+}
+
+:root[data-theme='dark'] .allowance-receipt-filter button:hover:not(.is-active) {
+  background: rgba(51, 65, 85, 0.5);
+  color: #f1f5f9;
+}
+
+:root[data-theme='dark'] .allowance-receipt-filter button.is-active {
+  background: #334155;
+  color: #818cf8;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+:root[data-theme='dark'] .allowance-receipt-badge.is-danhan {
+  background: rgba(6, 78, 59, 0.3);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+:root[data-theme='dark'] .allowance-receipt-badge.is-choxacnhan {
+  background: rgba(120, 53, 15, 0.3);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+:root[data-theme='dark'] .allowance-receipt-badge.is-chuanhanduoc {
+  background: rgba(136, 19, 55, 0.3);
+  color: #fb7185;
+  border-color: rgba(251, 113, 133, 0.3);
+}
+
+:root[data-theme='dark'] .allowance-receipt-badge.is-dangxuly {
+  background: rgba(30, 58, 138, 0.3);
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+:root[data-theme='dark'] .btn-ghost.allowance-clear-btn {
+  border-color: #334155;
+  background: #1e293b;
+  color: #cbd5e1;
+  box-shadow: none;
+}
+
+:root[data-theme='dark'] .btn-ghost.allowance-clear-btn:hover {
+  background: #334155;
+  color: #ffffff;
 }
 
 :root[data-theme='dark'] .allowance-intern-combobox-control input,
@@ -2001,8 +2073,7 @@
 :root[data-theme='dark'] .allowance-intern-option:hover,
 :root[data-theme='dark'] .allowance-intern-option:focus-visible,
 :root[data-theme='dark'] .allowance-intern-option[aria-selected="true"],
-:root[data-theme='dark'] .allowance-intern-combobox-control > button:hover,
-:root[data-theme='dark'] .allowance-receipt-filter button.is-active {
+:root[data-theme='dark'] .allowance-intern-combobox-control > button:hover {
   background: rgba(79, 70, 229, .22);
   color: #c7d2fe;
 }
