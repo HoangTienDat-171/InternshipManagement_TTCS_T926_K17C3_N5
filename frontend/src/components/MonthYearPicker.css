@@ -259,9 +259,9 @@
 }
 
 :root[data-theme='dark'] .month-year-nav-btn:hover {
-  background: #1e293b;
-  color: #ffffff;
-  border-color: #475569;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
+  border-color: #52647c;
 }
 
 :root[data-theme='dark'] .month-year-cell {
@@ -270,8 +270,8 @@
 }
 
 :root[data-theme='dark'] .month-year-cell:hover:not(.is-selected) {
-  background: #334155;
-  color: #ffffff;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .month-year-cell.is-current:not(.is-selected) {

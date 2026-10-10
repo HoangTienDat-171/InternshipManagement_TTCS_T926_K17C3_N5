@@ -840,9 +840,9 @@
 }
 
 :root[data-theme='dark'] .support-refresh-btn:hover:not(:disabled) {
-  border-color: #475569;
-  background: #334155;
-  color: #ffffff;
+  border-color: #52647c;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .support-card {
@@ -971,9 +971,9 @@
 }
 
 :root[data-theme='dark'] .support-action-btn:hover {
-  border-color: #475569;
-  background: #334155;
-  color: #ffffff;
+  border-color: #52647c;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .support-action-btn.is-primary {
@@ -998,9 +998,9 @@
 }
 
 :root[data-theme='dark'] .support-page-btn:hover:not(:disabled) {
-  border-color: #475569;
-  background: #334155;
-  color: #ffffff;
+  border-color: #52647c;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .support-page-btn:disabled {
@@ -1023,8 +1023,8 @@
 }
 
 :root[data-theme='dark'] .support-modal-close-btn:hover {
-  background: #334155;
-  color: #ffffff;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .support-detail-text,
@@ -1047,6 +1047,6 @@
 }
 
 :root[data-theme='dark'] .support-download-btn:hover {
-  background: #334155;
-  color: #ffffff;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }

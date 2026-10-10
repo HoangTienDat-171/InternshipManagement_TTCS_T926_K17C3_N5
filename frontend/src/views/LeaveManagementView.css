@@ -279,6 +279,62 @@
 
 .leave-date-field.is-open { z-index: 25; }
 
+/* Keep manager leave cards readable and calm when the app uses dark mode. */
+:root[data-theme='dark'] .leave-manager-table thead th { color: var(--text-body); }
+:root[data-theme='dark'] .leave-manager-table tbody td,
+:root[data-theme='dark'] .leave-manager-table .leave-intern-cell strong,
+:root[data-theme='dark'] .leave-manager-table .leave-program-cell strong,
+:root[data-theme='dark'] .leave-manager-table .leave-reviewer-cell strong,
+:root[data-theme='dark'] .leave-manager-table .leave-date-cell > span { color: var(--text-main); }
+:root[data-theme='dark'] .leave-manager-table .leave-intern-cell small,
+:root[data-theme='dark'] .leave-manager-table .leave-program-cell small,
+:root[data-theme='dark'] .leave-manager-table .leave-reviewer-cell small,
+:root[data-theme='dark'] .leave-manager-table .leave-reviewer-cell .leave-muted,
+:root[data-theme='dark'] .leave-manager-table tbody td::before { color: var(--text-muted); }
+:root[data-theme='dark'] .leave-manager-table .leave-date-cell > small.leave-duration-badge {
+  border: 1px solid #3a4b62;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
+}
+:root[data-theme='dark'] .leave-manager-table tbody tr:hover,
+:root[data-theme='dark'] .leave-manager-table tbody tr:hover > td { background: var(--surface-card-hover); }
+:root[data-theme='dark'] .leave-manager-table .leave-details-button {
+  border-color: #475569;
+  background: #1e293b;
+  color: #cbd5e1;
+}
+:root[data-theme='dark'] .leave-manager-table .leave-details-button:hover {
+  border-color: #52647c;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
+}
+:root[data-theme='dark'] .leave-manager-table .leave-approve-button {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+:root[data-theme='dark'] .leave-manager-table .leave-approve-button:hover:not(:disabled) {
+  border-color: #4b755f;
+  background: #23382e;
+  color: #c3e4cd;
+}
+:root[data-theme='dark'] .leave-manager-table .leave-reject-button {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+:root[data-theme='dark'] .leave-manager-table .leave-reject-button:hover:not(:disabled) {
+  border-color: #744250;
+  background: #35252e;
+  color: #f5bac0;
+}
+:root[data-theme='dark'] .leave-manager-table .leave-details-button:focus-visible,
+:root[data-theme='dark'] .leave-manager-table .leave-approve-button:focus-visible,
+:root[data-theme='dark'] .leave-manager-table .leave-reject-button:focus-visible {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}
+
 .leave-evidence-field { display: grid; gap: 8px; }
 .leave-evidence-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .leave-evidence-label-row label { color: var(--text-body); font-size: 13px; font-weight: 700; }

@@ -2053,8 +2053,8 @@
 }
 
 :root[data-theme='dark'] .btn-ghost.allowance-clear-btn:hover {
-  background: #334155;
-  color: #ffffff;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
 }
 
 :root[data-theme='dark'] .allowance-intern-combobox-control input,
