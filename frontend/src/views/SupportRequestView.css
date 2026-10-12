@@ -787,3 +787,126 @@
   margin: 0;
   font-size: 13.5px;
 }
+
+/* Keep every support-request surface readable when the app uses dark theme. */
+:root[data-theme='dark'] .support-page {
+  --support-surface-raised: #172337;
+  --support-accent-soft: rgb(99 102 241 / 13%);
+}
+
+:root[data-theme='dark'] .support-dropzone,
+:root[data-theme='dark'] .support-file-preview,
+:root[data-theme='dark'] .support-filter-bar,
+:root[data-theme='dark'] .support-table th,
+:root[data-theme='dark'] .support-detail-text,
+:root[data-theme='dark'] .support-attachment-row,
+:root[data-theme='dark'] .support-modal-actions {
+  background: var(--support-surface-raised);
+  color: var(--text-body);
+}
+
+:root[data-theme='dark'] .support-dropzone:hover:not(.is-disabled),
+:root[data-theme='dark'] .support-dropzone.is-dragging,
+:root[data-theme='dark'] .support-action-btn:hover,
+:root[data-theme='dark'] .support-action-btn.is-primary,
+:root[data-theme='dark'] .support-action-btn.is-primary:hover,
+:root[data-theme='dark'] .support-page-btn:hover:not(:disabled),
+:root[data-theme='dark'] .support-download-btn:hover {
+  background: var(--support-accent-soft);
+  border-color: var(--primary-500);
+  color: var(--primary-800);
+}
+
+:root[data-theme='dark'] .support-dropzone-icon {
+  background: rgb(99 102 241 / 18%);
+  color: #a5b4fc;
+}
+
+:root[data-theme='dark'] .support-table tr:hover td {
+  background: rgb(148 163 184 / 6%);
+}
+
+:root[data-theme='dark'] .support-status-badge.is-warning {
+  background: rgb(245 158 11 / 12%);
+  color: #fbbf24;
+  border-color: rgb(251 191 36 / 30%);
+}
+
+:root[data-theme='dark'] .support-status-badge.is-success {
+  background: rgb(34 197 94 / 12%);
+  color: #86efac;
+  border-color: rgb(74 222 128 / 28%);
+}
+
+:root[data-theme='dark'] .support-status-badge.is-danger {
+  background: rgb(244 63 94 / 12%);
+  color: #fda4af;
+  border-color: rgb(251 113 133 / 28%);
+}
+
+:root[data-theme='dark'] .support-type-tag {
+  background: rgb(99 102 241 / 15%);
+  color: #c7d2fe;
+}
+
+:root[data-theme='dark'] .support-file-remove-btn {
+  color: #fda4af;
+}
+
+:root[data-theme='dark'] .support-file-remove-btn:hover,
+:root[data-theme='dark'] .support-modal-close-btn:hover {
+  background: rgb(148 163 184 / 10%);
+  color: var(--text-main);
+}
+
+:root[data-theme='dark'] .support-download-btn {
+  background: #202d43;
+  border-color: rgb(129 140 248 / 35%);
+  color: #c7d2fe;
+}
+
+:root[data-theme='dark'] .support-response-box.is-resolved {
+  background: rgb(34 197 94 / 10%);
+  border-color: rgb(74 222 128 / 25%);
+}
+
+:root[data-theme='dark'] .support-response-box.is-rejected {
+  background: rgb(244 63 94 / 10%);
+  border-color: rgb(251 113 133 / 25%);
+}
+
+:root[data-theme='dark'] .support-response-box.is-pending {
+  background: rgb(245 158 11 / 10%);
+  border-color: rgb(251 191 36 / 25%);
+}
+
+:root[data-theme='dark'] .support-response-box.is-resolved .support-response-header { color: #86efac; }
+:root[data-theme='dark'] .support-response-box.is-rejected .support-response-header { color: #fda4af; }
+:root[data-theme='dark'] .support-response-box.is-pending .support-response-header { color: #fcd34d; }
+
+:root[data-theme='dark'] .support-btn-resolve {
+  background: #166534;
+  color: #dcfce7;
+}
+
+:root[data-theme='dark'] .support-btn-resolve:hover:not(:disabled) {
+  background: #1b7540;
+}
+
+:root[data-theme='dark'] .support-btn-reject {
+  background: #9f2639;
+  color: #ffe4e8;
+}
+
+:root[data-theme='dark'] .support-btn-reject:hover:not(:disabled) {
+  background: #b83249;
+}
+
+:root[data-theme='dark'] .support-page :is(button, select, input, textarea):focus-visible {
+  outline: 2px solid rgb(165 180 252 / 70%);
+  outline-offset: 2px;
+}
+
+:root[data-theme='dark'] .support-page :is(button, select, input, textarea):disabled {
+  opacity: .55;
+}

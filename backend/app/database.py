@@ -207,6 +207,20 @@ def has_password_change_column(db) -> bool:
     return any(row["name"] == "must_change_password" for row in db.execute("PRAGMA table_info(NGUOI_DUNG)").fetchall())
 
 
+def has_temporary_password_metadata(db) -> bool:
+    """Return whether the configured schema supports expiring, one-use passwords."""
+    required_columns = {"temporary_password_expires_at", "temporary_password_consumed_at"}
+    if DATABASE_BACKEND == "mysql":
+        rows = db.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NGUOI_DUNG'
+              AND COLUMN_NAME IN ('temporary_password_expires_at', 'temporary_password_consumed_at')
+        """).fetchall()
+        return required_columns.issubset({row["COLUMN_NAME"] for row in rows})
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(NGUOI_DUNG)").fetchall()}
+    return required_columns.issubset(columns)
+
+
 def init_mysql_db():
     conn = get_db_connection()
     try:
@@ -225,6 +239,14 @@ def init_mysql_db():
                 id INT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(254) NOT NULL,
                 ip_address VARCHAR(64), thanh_cong TINYINT NOT NULL,
                 thong_tin TEXT, thoi_gian DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS ADMIN_PASSWORD_RESET_AUDIT (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                actor_user_id INT NOT NULL,
+                target_user_id INT NOT NULL,
+                outcome VARCHAR(24) NOT NULL,
+                created_at DATETIME(6) NOT NULL,
+                KEY idx_admin_password_reset_target_created (target_user_id, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (
                 ma_nguoi_dung INT PRIMARY KEY, chuyen_mon VARCHAR(255),
@@ -747,6 +769,9 @@ def init_mysql_db():
         user_column_names = {row["COLUMN_NAME"] for row in user_columns}
         if "must_change_password" not in user_column_names:
             conn.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER mat_khau")
+        for name in ("temporary_password_expires_at", "temporary_password_consumed_at"):
+            if name not in user_column_names:
+                conn.execute(f"ALTER TABLE NGUOI_DUNG ADD COLUMN {name} DATETIME NULL")
 
         outbox_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -864,6 +889,8 @@ def init_db():
         email TEXT UNIQUE NOT NULL,
         mat_khau TEXT NOT NULL,
         must_change_password INTEGER NOT NULL DEFAULT 0,
+        temporary_password_expires_at DATETIME NULL,
+        temporary_password_consumed_at DATETIME NULL,
         so_dien_thoai TEXT,
         vai_tro TEXT NOT NULL CHECK(vai_tro IN ('Admin', 'HR', 'Mentor', 'ThucTapSinh')),
         trang_thai TEXT DEFAULT 'ChoDuyet' CHECK(trang_thai IN ('HoatDong', 'Khoa', 'ChoDuyet')),
@@ -875,6 +902,9 @@ def init_db():
     user_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NGUOI_DUNG)")}
     if "must_change_password" not in user_columns:
         cursor.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    for name in ("temporary_password_expires_at", "temporary_password_consumed_at"):
+        if name not in user_columns:
+            cursor.execute(f"ALTER TABLE NGUOI_DUNG ADD COLUMN {name} DATETIME NULL")
 
     # One active opaque session per account. Tokens themselves are never stored.
     cursor.execute("""
@@ -1540,6 +1570,20 @@ def init_db():
         thong_tin TEXT,
         thoi_gian DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ADMIN_PASSWORD_RESET_AUDIT (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_user_id INTEGER NOT NULL,
+        target_user_id INTEGER NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('SMTP_ACCEPTED', 'SMTP_FAILED', 'REJECTED')),
+        created_at DATETIME NOT NULL
+    );
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_admin_password_reset_target_created
+        ON ADMIN_PASSWORD_RESET_AUDIT(target_user_id, created_at)
     """)
 
     # Seed master data if empty

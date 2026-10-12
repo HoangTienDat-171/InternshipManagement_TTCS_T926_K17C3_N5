@@ -192,5 +192,7 @@ def send_email_direct(
             smtp.starttls(context=ssl.create_default_context())
         if config["username"]:
             smtp.login(config["username"], config["password"])
-        smtp.send_message(message)
+        refused_recipients = smtp.send_message(message)
+        if refused_recipients:
+            raise smtplib.SMTPRecipientsRefused(refused_recipients)
     return True
