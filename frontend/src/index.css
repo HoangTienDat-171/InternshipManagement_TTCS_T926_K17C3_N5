@@ -3937,3 +3937,53 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .mentor-unassign-confirm { padding: 22px 18px; }
   .mentor-unassign-confirm .confirm-actions .btn { flex: 1; justify-content: center; }
 }
+
+.password-input-control { position: relative; }
+.password-input-control .form-control { padding-right: 46px; }
+.password-visibility-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color .16s ease, color .16s ease;
+}
+.password-visibility-toggle:hover { background: var(--surface-card-hover); color: var(--text-main); }
+.password-visibility-toggle:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 1px; }
+.password-reset-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px 24px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--info-border);
+  border-radius: 12px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.password-reset-notice svg { flex: 0 0 auto; margin-top: 1px; }
+.admin-password-reset-confirm { width: min(100%, 520px); }
+.admin-password-reset-confirm .confirm-actions .btn:last-child {
+  max-width: 255px;
+  white-space: normal;
+  line-height: 1.3;
+}
+:root[data-theme='dark'] .password-reset-notice {
+  border-color: var(--info-border);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+@media (max-width: 560px) {
+  .password-reset-notice { margin: 14px 16px 0; }
+  .admin-password-reset-confirm .confirm-actions .btn:last-child { max-width: none; }
+}

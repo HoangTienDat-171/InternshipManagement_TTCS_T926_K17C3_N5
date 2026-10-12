@@ -62,8 +62,13 @@ async def validate_api_session(request: Request, call_next):
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Phiên đăng nhập đã hết hạn hoặc được thay thế trên thiết bị khác."})
         request.state.current_user = user
-        password_change_path = path == "/api/auth/me" or path == "/api/auth/logout" or (
-            path.startswith("/api/auth/users/") and path.endswith("/password")
+        password_change_path = (
+            (request.method == "GET" and path == "/api/auth/me")
+            or (request.method == "POST" and path == "/api/auth/logout")
+            or (
+                request.method == "PUT"
+                and path == f"/api/auth/users/{user['ma_nguoi_dung']}/password"
+            )
         )
         if user.get("must_change_password") and not password_change_path:
             return JSONResponse(status_code=403, content={
