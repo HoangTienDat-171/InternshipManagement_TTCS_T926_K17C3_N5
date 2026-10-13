@@ -227,7 +227,7 @@ export default function InternManagementView({
       {/* Header and Actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>Danh sách Thực tập sinh</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Danh sách Thực tập sinh</h2>
           <p style={{ fontSize: '13px', color: '#64748b' }}>
             Quản lý hồ sơ, thông tin đào tạo và trạng thái thực tập của sinh viên
           </p>
@@ -377,7 +377,7 @@ export default function InternManagementView({
                       #{intern.ma_ho_so}
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: '#0f172a' }}>{intern.ho_ten}</div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{intern.ho_ten}</div>
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>

@@ -253,7 +253,7 @@ export default function MentorManagementView({ departments, onShowToast, current
     <div className="mentor-management-page">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>Quản lý Mentor</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Quản lý Mentor</h2>
           <p style={{ fontSize: '13px', color: '#64748b' }}>
             Danh sách và quản lý thông tin người hướng dẫn thực tập sinh
           </p>

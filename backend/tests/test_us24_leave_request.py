@@ -286,9 +286,13 @@ class LeaveRequestTests(unittest.TestCase):
             [self.app_a1_id],
         )
 
-        status_code, response = self._asgi_request(
-            "GET", "/api/interns/me/leave-programs", user=self.intern_a
-        )
+        # The fixed "future" fixture starts on October 9; keep the API clock
+        # aligned with the service checks rather than the machine's current day.
+        with patch("app.leave_service.date") as clock:
+            clock.today.return_value = date(2026, 10, 8)
+            status_code, response = self._asgi_request(
+                "GET", "/api/interns/me/leave-programs", user=self.intern_a
+            )
         self.assertEqual(status_code, 200)
         self.assertEqual([item["ma_ung_tuyen"] for item in response], [self.app_a1_id])
 

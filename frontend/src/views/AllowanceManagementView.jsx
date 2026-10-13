@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
+import MonthYearPicker from '../components/MonthYearPicker';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { apiFetch, apiUploadWithProgress, readJsonResponse } from '../utils/api';
 import './AllowanceManagementView.css';
@@ -478,16 +479,12 @@ function AllowanceForm({ record, onSaved, onClose }) {
                 <span className="allowance-field-label">
                   Kỳ phụ cấp <span className="allowance-required">*</span>
                 </span>
-                <div className="allowance-input-wrap">
-                  <Calendar size={16} className="allowance-field-icon" />
-                  <input
-                    id="allowance-period"
-                    type="month"
-                    required
-                    value={form.ky}
-                    onChange={(e) => setForm({ ...form, ky: e.target.value })}
-                  />
-                </div>
+                <MonthYearPicker
+                  id="allowance-period"
+                  value={form.ky}
+                  onChange={(val) => setForm({ ...form, ky: val })}
+                  placeholder="Chọn kỳ phụ cấp (tháng/năm)"
+                />
               </label>
 
               <label className="allowance-field" htmlFor="allowance-amount">
@@ -1163,10 +1160,12 @@ export default function AllowanceManagementView({ currentUser, onShowToast, requ
 
           <label className="allowance-filter-field">
             <span className="allowance-filter-label">Kỳ phụ cấp</span>
-            <div className="allowance-input-wrap">
-              <Calendar size={16} className="allowance-field-icon" />
-              <input type="month" value={filters.ky} onChange={(e) => changeFilter('ky', e.target.value)} />
-            </div>
+            <MonthYearPicker
+              id="allowance-filter-ky"
+              value={filters.ky}
+              onChange={(val) => changeFilter('ky', val)}
+              placeholder="Chọn kỳ phụ cấp (tháng/năm)"
+            />
           </label>
 
           <div className="allowance-filter-actions">

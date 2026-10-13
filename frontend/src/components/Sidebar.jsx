@@ -1,101 +1,83 @@
 import React from 'react';
 import {
-  UserCheck,
+  Award,
+  BadgeDollarSign,
+  Briefcase,
   Calendar,
   CalendarDays,
-  Award,
-  FolderUp,
-  ShieldCheck,
-  GraduationCap,
-  LayoutDashboard,
-  UsersRound,
-  ClipboardList,
-  FileText,
-  Clock3,
+  CalendarOff,
   ClipboardCheck,
+  FileCheck,
+  FileSpreadsheet,
+  FileText,
+  FolderKanban,
+  FolderOpen,
+  GraduationCap,
+  HelpCircle,
+  LayoutDashboard,
+  LifeBuoy,
   LogOut,
-  X,
+  ShieldCheck,
+  SquareCheck,
+  UserCheck,
+  Users,
   Wallet,
-  LifeBuoy
+  X,
+  Clock,
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout, isOpen = false, isCollapsed = false, onClose }) {
-  const isAdmin = currentUser?.vai_tro === 'Admin';
-  const canManage = isAdmin || currentUser?.vai_tro === 'HR';
-  const canViewPrograms = canManage || currentUser?.vai_tro === 'ThucTapSinh';
-  const isIntern = currentUser?.vai_tro === 'ThucTapSinh';
-  const isMentor = currentUser?.vai_tro === 'Mentor';
+const MENU_CONFIG = [
+  // Intern / TTS
+  { id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: LayoutDashboard, roles: ['intern'] },
+  { id: 'intern-schedule', label: 'Lịch thực tập', icon: Calendar, roles: ['intern'] },
+  { id: 'intern-attendance', label: 'Chấm công hôm nay', icon: Clock, roles: ['intern'] },
+  { id: 'tasks', label: 'Nhiệm vụ của tôi', icon: SquareCheck, roles: ['intern'] },
+  { id: 'weekly-reports', label: 'Báo cáo tuần', icon: FileText, roles: ['intern'] },
+  { id: 'my-evaluations', label: 'Đánh giá của tôi', icon: Award, roles: ['intern'] },
+  { id: 'programs', label: 'Chương trình đang mở', icon: FolderOpen, roles: ['intern'] },
+  { id: 'leave-requests', label: 'Đăng ký nghỉ phép', icon: CalendarOff, roles: ['intern'] },
+  { id: 'allowances', label: 'Lịch sử phụ cấp', icon: Wallet, roles: ['intern'] },
+  { id: 'support-requests', label: 'Yêu cầu hỗ trợ', icon: LifeBuoy, roles: ['intern'] },
 
-  const navItems = [
-    ...(isIntern ? [{ id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: <LayoutDashboard size={18} /> }] : []),
-    ...(isIntern ? [{ id: 'intern-schedule', label: 'Lịch thực tập', icon: <CalendarDays size={18} /> }] : []),
-    ...(isIntern ? [{ id: 'intern-attendance', label: 'Chấm công hôm nay', icon: <ClipboardCheck size={18} /> }] : []),
-    ...(isMentor ? [{ id: 'mentor-workspace', label: 'Nhóm thực tập sinh', icon: <UsersRound size={18} /> }] : []),
-    ...((isMentor || isIntern) ? [{ id: 'tasks', label: isIntern ? 'Nhiệm vụ của tôi' : 'Nhiệm vụ thực tập', icon: <ClipboardList size={18} /> }] : []),
-    ...((isIntern || isMentor) ? [{ id: 'weekly-reports', label: 'Báo cáo tuần', icon: <FileText size={18} /> }] : []),
-    ...(isMentor ? [{ id: 'evaluations', label: 'Đánh giá thực tập sinh', icon: <ClipboardList size={18} /> }] : []),
-    ...(isIntern ? [{ id: 'my-evaluations', label: 'Đánh giá của tôi', icon: <Award size={18} /> }] : []),
-    ...(canManage ? [
-    {
-      id: 'interns',
-      label: 'Quản lý Thực tập sinh',
-      icon: <GraduationCap size={18} />
-    },
-    {
-      id: 'mentors',
-      label: 'Quản lý Mentor',
-      icon: <UserCheck size={18} />
-    }] : []),
-    ...(canViewPrograms ? [{
-      id: 'programs',
-      label: canManage ? 'Chương trình thực tập' : 'Chương trình đang mở',
-      icon: <Calendar size={18} />
-    }] : []),
-    ...(canManage ? [{
-      id: 'documents',
-      label: 'Quản lý Tài liệu',
-      icon: <FolderUp size={18} />
-    }] : []),
-    ...(canManage ? [{
-      id: 'work-shifts',
-      label: 'Quản lý ca làm việc',
-      icon: <Clock3 size={18} />
-    }] : []),
-    ...(canManage ? [{
-      id: 'leave-requests',
-      label: 'Quản lý nghỉ phép',
-      icon: <Calendar size={18} />
-    }] : []),
-    ...(isIntern ? [{
-      id: 'leave-requests',
-      label: 'Đăng ký nghỉ phép',
-      icon: <Calendar size={18} />
-    }] : []),
-    ...((canManage || isIntern) ? [{
-      id: 'allowances',
-      label: canManage ? 'Quản lý phụ cấp' : 'Lịch sử phụ cấp',
-      icon: <Wallet size={18} />
-    }] : []),
-    ...(canManage ? [{
-      id: 'support-requests',
-      label: 'Quản lý yêu cầu hỗ trợ',
-      icon: <LifeBuoy size={18} />
-    }] : []),
-    ...(isIntern ? [{
-      id: 'support-requests',
-      label: 'Yêu cầu hỗ trợ',
-      icon: <LifeBuoy size={18} />
-    }] : []),
-    // Yêu cầu: Chức năng quản trị người dùng chỉ Admin mới được dùng
-    ...(isAdmin ? [{
-      id: 'accounts',
-      label: 'Quản trị Người dùng',
-      icon: <ShieldCheck size={18} />
-    }] : [])
-  ];
+  // HR / Admin / Manager
+  { id: 'interns', label: 'Quản lý Thực tập sinh', icon: Users, roles: ['manager'] },
+  { id: 'mentors', label: 'Quản lý Mentor', icon: UserCheck, roles: ['manager'] },
+  { id: 'programs', label: 'Chương trình thực tập', icon: Briefcase, roles: ['manager'] },
+  { id: 'documents', label: 'Quản lý Tài liệu', icon: FolderKanban, roles: ['manager'] },
+  { id: 'work-shifts', label: 'Quản lý ca làm việc', icon: CalendarDays, roles: ['manager'] },
+  { id: 'leave-requests', label: 'Quản lý nghỉ phép', icon: FileSpreadsheet, roles: ['manager'] },
+  { id: 'allowances', label: 'Quản lý phụ cấp', icon: BadgeDollarSign, roles: ['manager'] },
+  { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },
+  { id: 'accounts', label: 'Quản trị Người dùng', icon: ShieldCheck, roles: ['manager'], adminOnly: true },
+
+  // Mentor
+  { id: 'mentor-workspace', label: 'Danh sách TTS hướng dẫn', icon: Users, roles: ['mentor'] },
+  { id: 'evaluations', label: 'Đánh giá TTS', icon: ClipboardCheck, roles: ['mentor'] },
+  { id: 'tasks', label: 'Giao nhiệm vụ / Task', icon: SquareCheck, roles: ['mentor'] },
+  { id: 'weekly-reports', label: 'Duyệt báo cáo', icon: FileCheck, roles: ['mentor'] },
+];
+
+function getRoleFamily(role) {
+  const normalizedRole = String(role || '').trim().toUpperCase();
+
+  if (['THUCTAPSINH', 'INTERN', 'TTS'].includes(normalizedRole)) return 'intern';
+  if (['ADMIN', 'HR', 'MANAGER'].includes(normalizedRole)) return 'manager';
+  if (normalizedRole === 'MENTOR') return 'mentor';
+  return null;
+}
+
+export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout, isOpen = false, isCollapsed = false, onClose }) {
+  const role = String(currentUser?.vai_tro || '').trim().toUpperCase();
+  const roleFamily = getRoleFamily(role);
+  const navItems = MENU_CONFIG.filter((item) => (
+    item.roles.includes(roleFamily) && (!item.adminOnly || role === 'ADMIN')
+  ));
 
   return (
-    <aside id="app-navigation" className={`app-sidebar${isOpen ? ' is-open' : ''}`} aria-hidden={isCollapsed ? 'true' : undefined}>
+    <aside
+      id="app-navigation"
+      className={`app-sidebar${isOpen ? ' is-open' : ''}${isCollapsed ? ' is-collapsed' : ''}`}
+    >
       <div className="sidebar-header">
         <div className="brand-icon">
           <GraduationCap size={22} strokeWidth={2} />
@@ -109,24 +91,38 @@ export default function Sidebar({ activeTab, onTabChange, currentUser, onLogout,
         </button>
       </div>
 
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" aria-label="Danh mục chức năng">
         <div className="nav-section-title">Danh mục quản lý</div>
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => { onTabChange(item.id); onClose?.(); }}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </button>
-        ))}
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+
+          return (
+            <button
+              key={`${item.id}-${item.label}`}
+              type="button"
+              className={`nav-item${isActive ? ' active' : ''}`}
+              title={isCollapsed ? item.label : undefined}
+              aria-label={isCollapsed ? item.label : undefined}
+              aria-current={isActive ? 'page' : undefined}
+              onClick={() => { onTabChange(item.id); onClose?.(); }}
+            >
+              <Icon size={20} strokeWidth={1.9} aria-hidden="true" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       <div className="sidebar-footer">
-        <button type="button" className="sidebar-logout-button" onClick={onLogout}>
-          <LogOut size={18} aria-hidden="true" />
+        <button
+          type="button"
+          className="sidebar-logout-button"
+          onClick={onLogout}
+          title={isCollapsed ? 'Đăng xuất' : undefined}
+          aria-label={isCollapsed ? 'Đăng xuất' : undefined}
+        >
+          <LogOut size={20} aria-hidden="true" />
           <span>Đăng xuất</span>
         </button>
       </div>

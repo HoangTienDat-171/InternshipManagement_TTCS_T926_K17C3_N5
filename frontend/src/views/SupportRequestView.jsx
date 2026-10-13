@@ -13,6 +13,7 @@ import {
   Trash2,
   Search,
   RefreshCw,
+  RotateCcw,
   FileText,
   FileImage,
   File,
@@ -24,6 +25,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CustomSelect from '../components/CustomSelect';
 import './SupportRequestView.css';
 
 const TYPE_OPTIONS = [
@@ -417,8 +419,9 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
           className="support-refresh-btn"
           disabled={loading}
           onClick={() => { setPage(1); fetchRequests(); }}
+          title="Làm mới danh sách"
         >
-          <RefreshCw size={15} className={loading ? 'icon-spin' : ''} />
+          <RotateCcw size={15} className={loading ? 'icon-spin' : ''} />
           Làm mới
         </button>
       </div>
@@ -444,9 +447,9 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                   <label htmlFor="support-type">
                     Loại yêu cầu <span className="required">*</span>
                   </label>
-                  <select
+                  <CustomSelect
                     id="support-type"
-                    className="support-select"
+                    className="support-select-custom"
                     value={createType}
                     onChange={(e) => setCreateType(e.target.value)}
                     disabled={submitting}
@@ -456,7 +459,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                         {opt.label}
                       </option>
                     ))}
-                  </select>
+                  </CustomSelect>
                 </div>
               </div>
 
@@ -613,8 +616,8 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
             </div>
           )}
 
-          <select
-            className="support-filter-select"
+          <CustomSelect
+            className="support-filter-custom-select"
             value={filterStatus}
             onChange={(e) => {
               setFilterStatus(e.target.value);
@@ -625,10 +628,10 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
             <option value="PENDING">Chờ xử lý</option>
             <option value="RESOLVED">Đã giải quyết</option>
             <option value="REJECTED">Đã từ chối</option>
-          </select>
+          </CustomSelect>
 
-          <select
-            className="support-filter-select"
+          <CustomSelect
+            className="support-filter-custom-select"
             value={filterType}
             onChange={(e) => {
               setFilterType(e.target.value);
@@ -641,7 +644,7 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
                 {opt.label}
               </option>
             ))}
-          </select>
+          </CustomSelect>
         </div>
 
         {/* Table Content */}

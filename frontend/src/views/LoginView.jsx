@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight, ArrowLeft, KeyRound, UploadCloud, FileText } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Building2, AlertCircle, CheckCircle2, ArrowRight, KeyRound, UploadCloud, FileText, Moon, Sun, LogIn, LoaderCircle } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
+import './LoginView.css';
 
 async function readApiResponse(response) {
   const responseText = await response.text();
@@ -44,7 +45,7 @@ function getRequestError(error) {
   return error.message || 'Đã xảy ra lỗi. Vui lòng thử lại.';
 }
 
-export default function LoginView({ onLoginSuccess, sessionNotice }) {
+export default function LoginView({ onLoginSuccess, sessionNotice, theme = 'light', onToggleTheme = () => {} }) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   
   // Login Form State
@@ -232,345 +233,217 @@ export default function LoginView({ onLoginSuccess, sessionNotice }) {
   };
 
   return (
-    <main className="auth-page">
-      <div className={`auth-card ${isRegisterMode ? 'register-mode' : ''}`}>
-        <section className="auth-form-panel">
+    <main className="auth-page ims-login-page">
+      <div className="auth-background-grid" aria-hidden="true" />
+      <button
+        type="button"
+        className="auth-theme-toggle"
+        onClick={onToggleTheme}
+        aria-label={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}
+        title={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}
+      >
+        {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
+
+      <section className={`auth-card ims-login-card ${isRegisterMode ? 'is-register-mode' : ''}`}>
+        <header className="auth-brand-header">
+          <div className="auth-brand-lockup">
+            <span className="auth-brand-mark"><Building2 size={22} strokeWidth={2.1} /></span>
+            <span className="auth-brand-name">IMS PORTAL</span>
+          </div>
+          <h1>{isForgotMode ? 'Khôi phục mật khẩu' : isRegisterMode ? 'Tạo tài khoản thực tập sinh' : 'Hệ thống Quản lý Thực tập sinh'}</h1>
+          <p>{isForgotMode
+            ? 'Khôi phục quyền truy cập vào tài khoản của bạn.'
+            : isRegisterMode
+              ? 'Đăng ký để bắt đầu hành trình thực tập của bạn.'
+              : 'Đăng nhập để quản lý và theo dõi quá trình thực tập của bạn.'}</p>
+        </header>
+
         <div className="auth-form-content">
-        {/* Brand Header */}
-        <div className="auth-brand-header">
-          <div style={{
-            width: '46px',
-            height: '46px',
-            borderRadius: '12px',
-            background: 'linear-gradient(135deg, #6b63ee, #4f46d8)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'white',
-            marginBottom: '14px',
-            boxShadow: '0 4px 10px rgba(79, 70, 216, 0.2)'
-          }}>
-            <Building2 size={24} />
-          </div>
-          <div className="auth-brand-name">IMS PORTAL</div>
-          <h1>Hệ thống Quản lý Thực tập sinh</h1>
-          <p style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>
-            {isForgotMode
-              ? 'Khôi phục quyền truy cập vào tài khoản của bạn'
-              : isRegisterMode
-                ? 'Đăng ký tài khoản Thực tập sinh'
-                : 'Đăng nhập để vào hệ thống làm việc'}
-          </p>
-        </div>
-
-        {/* Thông báo lỗi / thành công */}
-        {!isForgotMode && !isRegisterMode && sessionNotice && (
-          <div className="alert-banner error auth-alert" role="alert">
-            <AlertCircle size={16} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '13px' }}>{sessionNotice}</span>
-          </div>
-        )}
-        {errorMsg && (
-          <div className="alert-banner error auth-alert" role="alert">
-            <AlertCircle size={16} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '13px' }}>{errorMsg}</span>
-          </div>
-        )}
-
-        {regSuccessMsg && (
-          <div className="alert-banner success auth-alert" role="status">
-            <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '13px' }}>{regSuccessMsg}</span>
-          </div>
-        )}
-
-        {forgotSuccessMsg && (
-          <div className="alert-banner success auth-alert" role="status">
-            <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: '13px' }}>{forgotSuccessMsg}</span>
-          </div>
-        )}
-
-        {/* Form Đăng nhập & Quên mật khẩu */}
-        {isForgotMode ? (
-          <form noValidate onSubmit={handleForgotSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{
-              background: '#eff6ff',
-              padding: '12px 14px',
-              borderRadius: '10px',
-              border: '1px solid #bfdbfe',
-              fontSize: '13px',
-              color: '#1e40af',
-              lineHeight: 1.5
-            }}>
-              Nhập địa chỉ email của bạn. Hệ thống sẽ tạo mật khẩu tạm thời 8 ký tự và gửi qua email để bạn đăng nhập và đổi mật khẩu mới.
+          {!isForgotMode && !isRegisterMode && sessionNotice && (
+            <div className="alert-banner error auth-alert" role="alert">
+              <AlertCircle size={17} aria-hidden="true" />
+              <span>{sessionNotice}</span>
             </div>
+          )}
+          {errorMsg && (
+            <div className="alert-banner error auth-alert" role="alert">
+              <AlertCircle size={17} aria-hidden="true" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+          {regSuccessMsg && (
+            <div className="alert-banner success auth-alert" role="status">
+              <CheckCircle2 size={17} aria-hidden="true" />
+              <span>{regSuccessMsg}</span>
+            </div>
+          )}
+          {forgotSuccessMsg && (
+            <div className="alert-banner success auth-alert" role="status">
+              <CheckCircle2 size={17} aria-hidden="true" />
+              <span>{forgotSuccessMsg}</span>
+            </div>
+          )}
 
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>
-                Địa chỉ Email
-              </label>
-              <div style={{ position: 'relative' }}>
+          {isForgotMode ? (
+            <form noValidate onSubmit={handleForgotSubmit} className="auth-form">
+              <div className="auth-info-note">
+                Nhập email đã đăng ký. Hệ thống sẽ gửi mật khẩu tạm thời để bạn đăng nhập và đổi mật khẩu mới.
+              </div>
+              <div className="auth-field">
+                <label htmlFor="forgot-email" className="form-label">Địa chỉ email</label>
+                <div className="auth-input-wrap">
+                  <Mail size={18} aria-hidden="true" />
+                  <input
+                    id="forgot-email"
+                    type="email"
+                    className="form-control"
+                    placeholder="Nhập địa chỉ email"
+                    required
+                    value={forgotEmail || email}
+                    onChange={(event) => {
+                      setForgotEmail(event.target.value);
+                      setEmail(event.target.value);
+                    }}
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+              <button type="submit" className="btn btn-primary auth-submit-button" disabled={forgotLoading}>
+                {forgotLoading ? <LoaderCircle className="auth-spinner" size={17} /> : <KeyRound size={17} />}
+                <span>{forgotLoading ? 'Đang gửi yêu cầu…' : 'Gửi mật khẩu mới'}</span>
+              </button>
+            </form>
+          ) : !isRegisterMode ? (
+            <form noValidate onSubmit={handleLoginSubmit} className="auth-form">
+              <div className="auth-field">
+                <label htmlFor="login-email" className="form-label">Email</label>
+                <div className="auth-input-wrap">
+                  <Mail size={18} aria-hidden="true" />
+                  <input
+                    id="login-email"
+                    type="email"
+                    className="form-control"
+                    placeholder="Nhập địa chỉ email"
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    autoComplete="username"
+                  />
+                </div>
+              </div>
+
+              <div className="auth-field">
+                <div className="auth-label-row">
+                  <label htmlFor="login-password" className="form-label">Mật khẩu</label>
+                  <button type="button" className="auth-text-button" onClick={openForgotMode}>Quên mật khẩu?</button>
+                </div>
+                <div className="auth-input-wrap">
+                  <Lock size={18} aria-hidden="true" />
+                  <input
+                    id="login-password"
+                    type={showPassword ? 'text' : 'password'}
+                    className="form-control"
+                    placeholder="Nhập mật khẩu"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    className="auth-password-toggle"
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                    aria-pressed={showPassword}
+                    title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              <button type="submit" className="btn btn-primary auth-submit-button" disabled={loading}>
+                {loading ? <LoaderCircle className="auth-spinner" size={17} /> : <LogIn size={17} />}
+                <span>{loading ? 'Đang xử lý…' : 'Đăng nhập'}</span>
+                {!loading && <ArrowRight size={17} className="auth-submit-arrow" />}
+              </button>
+            </form>
+          ) : (
+            <form noValidate onSubmit={handleRegisterSubmit} className="auth-form auth-register-form">
+              <div className="auth-field">
+                <label htmlFor="register-name" className="form-label">Họ và tên</label>
                 <input
+                  id="register-name"
+                  type="text"
+                  className="form-control"
+                  placeholder="Nguyễn Văn A"
+                  required
+                  value={regForm.ho_ten}
+                  onChange={(event) => setRegForm({ ...regForm, ho_ten: event.target.value })}
+                />
+              </div>
+              <div className="auth-field">
+                <label htmlFor="register-email" className="form-label">Email sinh viên</label>
+                <input
+                  id="register-email"
                   type="email"
                   className="form-control"
-                  placeholder="admin@internship.vn"
+                  placeholder="sinhvien@example.com"
                   required
-                  value={forgotEmail || email}
-                  onChange={(e) => {
-                    setForgotEmail(e.target.value);
-                    setEmail(e.target.value);
-                  }}
-                  autoComplete="email"
-                  style={{ paddingRight: '38px' }}
+                  value={regForm.email}
+                  onChange={(event) => setRegForm({ ...regForm, email: event.target.value })}
                 />
-                <Mail size={16} color="#94a3b8" style={{ position: 'absolute', right: '12px', top: '12px' }} />
               </div>
-            </div>
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', padding: '11px', fontSize: '14px', marginTop: '4px' }}
-              disabled={forgotLoading}
-            >
-              <KeyRound size={15} />
-              <span>{forgotLoading ? 'Đang gửi yêu cầu...' : 'Gửi mật khẩu mới'}</span>
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ width: '100%', padding: '10px', fontSize: '13px' }}
-              onClick={backToLogin}
-            >
-              <ArrowLeft size={15} />
-              <span>Quay lại đăng nhập</span>
-            </button>
-          </form>
-        ) : !isRegisterMode ? (
-          <form noValidate onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>
-                Email
-              </label>
-              <div style={{ position: 'relative' }}>
+              <div className="auth-field auth-phone-field">
+                <PhoneField id="register-phone" value={regForm.so_dien_thoai} onChange={(value) => setRegForm((prev) => ({ ...prev, so_dien_thoai: value }))} />
+              </div>
+              <div className="auth-field">
+                <label htmlFor="register-cv" className="form-label">CV <span>(không bắt buộc)</span></label>
                 <input
-                  type="email"
-                  className="form-control"
-                  placeholder="admin@internship.vn"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="username"
-                  style={{ paddingRight: '38px' }}
+                  id="register-cv"
+                  className="auth-file-input"
+                  type="file"
+                  accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png"
+                  onChange={(event) => setRegCv(event.target.files?.[0] || null)}
                 />
-                <Mail size={16} color="#94a3b8" style={{ position: 'absolute', right: '12px', top: '12px' }} />
-              </div>
-            </div>
-
-            <div className="form-group">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label className="form-label" style={{ fontSize: '13px' }}>
-                  Mật khẩu
+                <label htmlFor="register-cv" className="auth-file-picker">
+                  {regCv ? <FileText size={17} /> : <UploadCloud size={17} />}
+                  <span>{regCv?.name || 'Chọn CV PDF, DOCX hoặc PNG'}</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={openForgotMode}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#4f46d8',
-                    fontSize: '12px',
-                    cursor: 'pointer',
-                    padding: 0,
-                    fontWeight: 600,
-                  }}
-                >
-                  Quên mật khẩu?
-                </button>
+                <small className="auth-helper-text">Tối đa 15 MB. Có thể nộp sau khi tài khoản được duyệt.</small>
               </div>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="form-control"
-                  placeholder="••••••••"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  style={{ paddingRight: '38px' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '10px',
-                    background: 'none',
-                    border: 'none',
-                    color: '#94a3b8',
-                    cursor: 'pointer',
-                    padding: '2px'
-                  }}
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+              <div className="auth-account-note">
+                <strong>Vai trò mặc định: Thực tập sinh</strong>
+                <span>Hồ sơ sẽ được gửi duyệt. Sau khi được duyệt, mật khẩu đăng nhập sẽ được gửi về email.</span>
+              </div>
+              <button type="submit" className="btn btn-primary auth-submit-button" disabled={regLoading}>
+                {regLoading ? <LoaderCircle className="auth-spinner" size={17} /> : <ArrowRight size={17} />}
+                <span>{regLoading ? 'Đang gửi thông tin…' : 'Đăng ký tài khoản'}</span>
+              </button>
+            </form>
+          )}
+
+          {import.meta.env.DEV && !isRegisterMode && !isForgotMode && (
+            <div className="auth-demo-accounts">
+              <div className="auth-demo-heading">Tài khoản demo <span>Chọn để điền nhanh</span></div>
+              <div className="auth-demo-buttons">
+                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('admin@internship.vn', '123456')}>Admin</button>
+                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('hr@internship.vn', '123456')}>Quản lý</button>
+                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('mentor@internship.vn', '123456')}>Mentor</button>
+                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('tuan.lm@internship.vn', '123456')}>TTS</button>
               </div>
             </div>
+          )}
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', padding: '11px', fontSize: '14px', marginTop: '4px' }}
-              disabled={loading}
-            >
-              <Lock size={15} />
-              <span>{loading ? 'Đang xử lý...' : 'Đăng nhập'}</span>
+          <footer className="auth-form-footer">
+            <span>{isForgotMode ? 'Đã nhớ lại mật khẩu?' : isRegisterMode ? 'Đã có tài khoản IMS Portal?' : 'Chưa có tài khoản?'}</span>
+            <button type="button" className="auth-text-button" onClick={isForgotMode ? backToLogin : toggleAuthMode}>
+              {isForgotMode ? 'Quay lại đăng nhập' : isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'}
             </button>
-          </form>
-        ) : (
-          /* Form Đăng ký tài khoản (Mặc định là Thực tập sinh) */
-          <form noValidate onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>Họ và tên</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Nguyễn Văn A"
-                required
-                value={regForm.ho_ten}
-                onChange={(e) => setRegForm({ ...regForm, ho_ten: e.target.value })}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>Email sinh viên</label>
-              <input
-                type="email"
-                className="form-control"
-                placeholder="sinhvien@example.com"
-                required
-                value={regForm.email}
-                onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
-              />
-            </div>
-
-            <PhoneField id="register-phone" value={regForm.so_dien_thoai} onChange={(value) => setRegForm((prev) => ({ ...prev, so_dien_thoai: value }))} />
-
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '13px' }}>CV (không bắt buộc)</label>
-              <label htmlFor="register-cv" className="btn btn-secondary" style={{ minHeight: 44, justifyContent: 'flex-start', gap: 10, overflow: 'hidden' }}>
-                {regCv ? <FileText size={16} /> : <UploadCloud size={16} />}
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{regCv?.name || 'Chọn CV PDF, DOCX hoặc PNG'}</span>
-              </label>
-              <input id="register-cv" type="file" accept=".pdf,.docx,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png" style={{ display: 'none' }} onChange={(event) => setRegCv(event.target.files?.[0] || null)} />
-              <small style={{ color: '#64748b', fontSize: 11 }}>Tối đa 15 MB. Có thể nộp sau khi tài khoản được duyệt.</small>
-            </div>
-
-            <div style={{
-              background: '#f8fafc',
-              padding: '10px 12px',
-              borderRadius: '8px',
-              border: '1px solid #e2e8f0',
-              fontSize: '12px',
-              color: '#475569'
-            }} className="auth-account-note">
-              <div><strong>Vai trò:</strong> Thực tập sinh (Mặc định)</div>
-              <div style={{ marginTop: '2px', color: '#64748b' }}>
-                Hồ sơ sẽ được gửi duyệt. Sau khi được duyệt, mật khẩu đăng nhập sẽ được gửi về email để bạn đăng nhập và đổi mật khẩu mới.
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', padding: '11px', marginTop: '6px' }}
-              disabled={regLoading}
-            >
-              <span>{regLoading ? 'Đang gửi thông tin...' : 'Đăng ký tài khoản'}</span>
-            </button>
-          </form>
-        )}
-
-        {/* Chọn nhanh tài khoản test mẫu */}
-        {!isRegisterMode && !isForgotMode && (
-          <div className="auth-demo-accounts" style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
-            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, marginBottom: '8px', textAlign: 'center' }}>
-              Tài khoản mẫu:
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: '11px', padding: '5px 4px' }}
-                onClick={() => handleQuickLogin('admin@internship.vn', '123456')}
-              >
-                Admin
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: '11px', padding: '5px 4px' }}
-                onClick={() => handleQuickLogin('hr@internship.vn', '123456')}
-              >
-                Quản lý
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: '11px', padding: '5px 4px' }}
-                onClick={() => handleQuickLogin('mentor@internship.vn', '123456')}
-              >
-                Mentor
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: '11px', padding: '5px 4px' }}
-                onClick={() => handleQuickLogin('tuan.lm@internship.vn', '123456')}
-              >
-                TTS
-              </button>
-            </div>
-          </div>
-        )}
-
+          </footer>
         </div>
-        </section>
-
-        <aside className={`auth-welcome-panel ${isRegisterMode ? 'is-register-mode' : ''}`}>
-          <div className="auth-welcome-brand"><Building2 size={18} /> IMS PORTAL</div>
-          <div className="auth-welcome-copy">
-            <span className="auth-welcome-kicker">HỆ THỐNG QUẢN LÝ THỰC TẬP</span>
-            <h2>{isForgotMode ? 'Khôi phục mật khẩu' : isRegisterMode ? 'Bắt đầu hành trình của bạn' : 'Chào mừng trở lại!'}</h2>
-            <p>{isForgotMode
-              ? 'Hệ thống sẽ cấp lại mật khẩu tạm thời 8 ký tự và gửi qua email để bạn đăng nhập an toàn.'
-              : isRegisterMode
-                ? 'Tạo tài khoản để theo dõi hồ sơ và cập nhật quá trình thực tập của bạn.'
-                : 'Quản lý hồ sơ, chương trình và tiến độ thực tập trên cùng một nền tảng.'}</p>
-            <div className="auth-feature-list">
-              <span><CheckCircle2 size={17} /> Cấp lại mật khẩu an toàn qua email</span>
-              <span><CheckCircle2 size={17} /> Mật khẩu tạm thời rút gọn 8 ký tự</span>
-              <span><CheckCircle2 size={17} /> Đổi mật khẩu ngay sau khi đăng nhập</span>
-            </div>
-          </div>
-          <div className="auth-welcome-action">
-            <p>{isForgotMode ? 'Đã nhớ lại mật khẩu?' : isRegisterMode ? 'Đã có tài khoản IMS Portal?' : 'Bạn chưa có tài khoản?'}</p>
-            <button type="button" className="auth-switch-button" onClick={isForgotMode ? backToLogin : toggleAuthMode}>
-              {isForgotMode ? 'Đăng nhập ngay' : isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'} <ArrowRight size={16} />
-            </button>
-          </div>
-        </aside>
-      </div>
-      <div className="auth-mobile-switch">
-        <span>{isForgotMode ? 'Đã nhớ lại mật khẩu?' : isRegisterMode ? 'Đã có tài khoản?' : 'Bạn chưa có tài khoản?'}</span>
-        <button type="button" onClick={isForgotMode ? backToLogin : toggleAuthMode}>
-          {isForgotMode ? 'Đăng nhập' : isRegisterMode ? 'Đăng nhập' : 'Đăng ký ngay'}
-        </button>
-      </div>
+      </section>
     </main>
   );
 }
