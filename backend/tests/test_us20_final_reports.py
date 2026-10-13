@@ -46,8 +46,15 @@ class FinalReportTests(unittest.TestCase):
         cls.intern_a, cls.intern_b = map(dict, interns)
         programs = db.execute("SELECT ma_chuong_trinh FROM CHUONG_TRINH_THUC_TAP ORDER BY ma_chuong_trinh LIMIT 2").fetchall()
         if not programs:
-            db.close()
-            raise RuntimeError("US20 fixtures require an internship program.")
+            dept = db.execute("SELECT ma_phong_ban FROM PHONG_BAN ORDER BY ma_phong_ban LIMIT 1").fetchone()
+            dept_id = dept["ma_phong_ban"] if dept else 1
+            db.execute("""
+                INSERT INTO CHUONG_TRINH_THUC_TAP (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                VALUES ('CT-US20-1', 'Chương trình 2026-1', ?, '2026-01-01', '2026-06-30', 20, 'DangMo'),
+                       ('CT-US20-2', 'Chương trình 2026-2', ?, '2026-07-01', '2026-12-31', 20, 'DangMo')
+            """, (dept_id, dept_id))
+            db.commit()
+            programs = db.execute("SELECT ma_chuong_trinh FROM CHUONG_TRINH_THUC_TAP ORDER BY ma_chuong_trinh LIMIT 2").fetchall()
         cls.program_id = programs[0]["ma_chuong_trinh"]
         cls.other_program_id = programs[-1]["ma_chuong_trinh"]
 
