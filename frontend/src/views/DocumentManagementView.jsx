@@ -218,7 +218,7 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
   return (
     <div className="document-management-page">
       <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>Quản lý Tài liệu Hồ sơ</h2>
+        <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Quản lý Tài liệu Hồ sơ</h2>
         <p style={{ fontSize: '13px', color: '#64748b' }}>Tài liệu được lưu cùng hồ sơ thực tập sinh và có thể xem lại sau khi tải lên.</p>
       </div>
 
@@ -253,7 +253,7 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
             if (droppedFile) setSelectedFile(droppedFile);
           }}>
             <span className="upload-icon-circle"><UploadCloud size={24} /></span>
-            <span style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px', color: '#0f172a' }}>
+            <span style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px', color: 'var(--text-main)' }}>
               {selectedFile ? `Đã chọn: ${selectedFile.name}` : 'Kéo thả tệp vào đây hoặc nhấn để chọn file'}
             </span>
             <span style={{ fontSize: '12px', color: '#64748b' }}>Hỗ trợ PDF, DOCX, PNG · Tối đa 15 MB</span>
@@ -286,7 +286,7 @@ export default function DocumentManagementView({ currentUser, onShowToast }) {
                 : errorMsg ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: '#b91c1c' }}>Không thể xác nhận danh sách tài liệu. Hãy thử làm mới.</td></tr>
                   : documents.length === 0 ? <tr><td colSpan="7" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>Chưa có tài liệu được lưu trữ.</td></tr>
                     : documents.map((item) => <tr key={item.ma_tai_lieu}>
-                    <td><div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><FileText size={16} color="var(--primary-600)" /><span style={{ fontWeight: 500, color: '#0f172a' }}>{item.ten_file}</span></div></td>
+                    <td><div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><FileText size={16} color="var(--primary-600)" /><span style={{ fontWeight: 500, color: 'var(--text-main)' }}>{item.ten_file}</span></div></td>
                     <td>{item.thuc_tap_sinh}</td>
                     <td><span className="badge badge-info">{typeLabels[item.loai_tai_lieu] || item.loai_tai_lieu}</span></td>
                     <td style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{formatSize(item.kich_thuoc)}</td>

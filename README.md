@@ -99,8 +99,8 @@ Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, 
 ### Sprint 3 — US25/US26 phụ cấp
 
 - Màn hình `/allowances`: HR/Admin thêm, sửa, tìm kiếm và phân trang; TTS chỉ xem lịch sử của mình. Mentor không có quyền truy cập.
-- Một nguồn dữ liệu `PHU_CAP_THUC_TAP`, UNIQUE `(ma_ho_so, ky)` với kỳ `YYYY-MM`. Liên kết `ma_ung_tuyen` xác định đúng chương trình đã được duyệt, kể cả chương trình lịch sử. Sửa phụ cấp giữ nguyên hồ sơ/đơn tham gia; có thể sửa kỳ nếu không trùng.
-- Schema hiện có một hồ sơ/TTS và nhiều đơn tham gia chương trình. Không tạo thêm loại hồ sơ hoặc thay đổi quy tắc này. Hai chương trình của cùng hồ sơ trong cùng tháng vẫn dùng chung business key bắt buộc.
+- Một nguồn dữ liệu `PHU_CAP_THUC_TAP` với kỳ `YYYY-MM`; một hồ sơ có thể nhận nhiều khoản phụ cấp trong cùng kỳ, mỗi khoản có ID và lịch sử riêng. Liên kết `ma_ung_tuyen` xác định đúng chương trình đã được duyệt. Sửa phụ cấp giữ nguyên hồ sơ/đơn tham gia; có thể sửa kỳ của khoản chưa được TTS xác nhận nhận.
+- Schema hiện có một hồ sơ/TTS và nhiều đơn tham gia chương trình. Chỉ tạo khoản mới cho hồ sơ và đơn tham gia đã được duyệt, trong chương trình đang mở và đang diễn ra. Khoản lịch sử vẫn được lưu khi chương trình đã đóng.
 - `so_tien_minor` lưu số nguyên VNĐ × 100; API nhận/trả `so_tien` dạng chuỗi thập phân, từ `0` đến `9999999999999.99`. Không tính theo ngày công hoặc đánh dấu đã thanh toán.
 - API quản lý `/api/allowances`, danh sách hồ sơ `/api/allowances/profiles`; self-service `/api/interns/me/allowances`. Danh sách dùng `page`, `page_size`, `program_id`, `ky`, `year`; HR có thêm `search`. Người tạo/cập nhật và timestamps UTC được server ghi, không nhận từ client.
 - Migration `migrations/20261008_us25_us26_allowances.sql` và `init_db()` cùng tạo bảng an toàn khi chạy lại. Sao lưu trước khi áp dụng trên MySQL hiện có. FK RESTRICT giữ lịch sử phụ cấp khi có yêu cầu xóa hồ sơ, đơn tham gia hoặc actor đã được ledger tham chiếu.
