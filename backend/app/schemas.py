@@ -661,3 +661,83 @@ class SupportRequestReject(BaseModel):
             raise ValueError("Vui lòng nhập lý do từ chối yêu cầu.")
         self.ly_do_tu_choi = reason
         return self
+
+
+# ==============================================================================
+# US20 — HR TỔNG HỢP ĐÁNH GIÁ THÀNH BÁO CÁO CUỐI KỲ
+# ==============================================================================
+
+
+class FinalReportEvaluationSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    evaluation_period: Literal["MIDTERM", "FINAL"]
+    professional_skill_score: int = Field(ge=1, le=5)
+    work_quality_score: int = Field(ge=1, le=5)
+    initiative_score: int = Field(ge=1, le=5)
+    communication_teamwork_score: int = Field(ge=1, le=5)
+    attitude_discipline_score: int = Field(ge=1, le=5)
+    average_score: float
+    overall_comment: str
+    evaluated_at: str
+    evaluator_id: int
+    evaluator_name: str
+    evaluator_email: Optional[str] = None
+
+
+class FinalReportSummaryMetrics(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    total_reports: int = 0
+    complete_count: int = 0
+    incomplete_count: int = 0
+
+
+class FinalReportItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    internship_profile_id: int
+    intern_user_id: int
+    intern_name: str
+    intern_email: str
+    intern_phone: Optional[str] = None
+    university_name: Optional[str] = None
+    major: Optional[str] = None
+    department_name: Optional[str] = None
+    internship_status: Optional[str] = None
+    program_id: int
+    program_name: str
+    program_start_date: Optional[str] = None
+    program_end_date: Optional[str] = None
+    program_status: Optional[str] = None
+    mentor_id: Optional[int] = None
+    mentor_name: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_phone: Optional[str] = None
+    has_mentor: bool
+    has_final_evaluation: bool
+    has_midterm_evaluation: bool
+    final_average_score: Optional[float] = None
+    midterm_average_score: Optional[float] = None
+    final_evaluated_at: Optional[str] = None
+    data_status: Literal["DU_DU_LIEU", "CHUA_DU_LIEU"]
+    missing_requirements: list[str] = Field(default_factory=list)
+    status_message: str
+
+
+class FinalReportDetail(FinalReportItem):
+    final_evaluation: Optional[FinalReportEvaluationSummary] = None
+    midterm_evaluation: Optional[FinalReportEvaluationSummary] = None
+
+
+class FinalReportListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[FinalReportItem]
+    total_items: int
+    page: int
+    page_size: int
+    total_pages: int
+    summary: FinalReportSummaryMetrics
+
