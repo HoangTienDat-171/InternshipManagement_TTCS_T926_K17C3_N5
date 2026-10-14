@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Award,
+  BarChart3,
   BadgeDollarSign,
   Briefcase,
   Calendar,
@@ -46,6 +47,7 @@ const MENU_CONFIG = [
   { id: 'documents', label: 'Quản lý Tài liệu', icon: FolderKanban, roles: ['manager'] },
   { id: 'work-shifts', label: 'Quản lý ca làm việc', icon: CalendarDays, roles: ['manager'] },
   { id: 'final-reports', label: 'Báo cáo cuối kỳ', icon: FileText, roles: ['manager'] },
+  { id: 'statistics', label: 'Thống kê thực tập sinh', icon: BarChart3, roles: ['manager'] },
   { id: 'leave-requests', label: 'Quản lý nghỉ phép', icon: FileSpreadsheet, roles: ['manager'] },
   { id: 'allowances', label: 'Quản lý phụ cấp', icon: BadgeDollarSign, roles: ['manager'] },
   { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },

@@ -1,10 +1,13 @@
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from openpyxl import load_workbook
+from pypdf import PdfReader
 
 from app import database
 from app.evaluation_service import InternEvaluationService
@@ -265,6 +268,31 @@ class FinalReportTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             self.report_service.get_final_report(profile_id=99999, program_id=99999)
         self.assertEqual(cm.exception.status_code, 404)
+
+    def test_us34_export_uses_us20_filter_and_role_guard(self):
+        request = request_for({"vai_tro": "HR"})
+        filtered = self.report_service.list_final_reports(program_id=self.program_id)
+        response = final_report_routes.export_final_reports(
+            request, "xlsx", program_id=self.program_id,
+            internship_profile_id=None, status="ALL", search=None, db=self.db,
+        )
+        workbook = load_workbook(BytesIO(response.body), read_only=True)
+        rows = [row for row in workbook.active.values if row and isinstance(row[0], int)]
+        self.assertEqual(len(rows), filtered["total_items"])
+        workbook.close()
+
+        pdf_response = final_report_routes.export_final_reports(
+            request, "pdf", program_id=self.program_id,
+            internship_profile_id=None, status="ALL", search=None, db=self.db,
+        )
+        reader = PdfReader(BytesIO(pdf_response.body))
+        self.assertIn("Báo cáo đánh giá cuối kỳ", reader.pages[0].extract_text())
+
+        with self.assertRaises(HTTPException) as denied:
+            final_report_routes.export_final_reports(
+                request_for({"vai_tro": "Mentor"}), "xlsx", db=self.db,
+            )
+        self.assertEqual(denied.exception.status_code, 403)
 
 
 if __name__ == "__main__":
