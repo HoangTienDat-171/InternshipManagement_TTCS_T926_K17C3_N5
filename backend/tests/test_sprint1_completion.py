@@ -251,6 +251,77 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual((response["totalItems"], response["totalPages"], response["page"], response["items"]), (0, 0, 1, []))
 
+    def test_department_creation_normalizes_names_checks_permissions_and_serializes_duplicates(self):
+        hr_token, _ = self.login("hr@internship.vn")
+        intern_token, _ = self.login("tuan.lm@internship.vn")
+        name = f"Department QA {time.time_ns()}"
+        normalized_name = f"{name} Operations"
+
+        status_code, unauthenticated, _ = self.json_request(
+            "/api/master/departments", "POST", data={"ten_phong_ban": normalized_name},
+        )
+        self.assertEqual(status_code, 401, unauthenticated)
+
+        status_code, denied, _ = self.json_request(
+            "/api/master/departments", "POST", intern_token,
+            {"ten_phong_ban": normalized_name},
+        )
+        self.assertEqual(status_code, 403, denied)
+
+        status_code, created, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": f"  {name}   Operations  "},
+        )
+        self.assertEqual(status_code, 201, created)
+        self.assertEqual(created["ten_phong_ban"], normalized_name)
+
+        status_code, departments, _ = self.json_request("/api/master/departments", token=hr_token)
+        self.assertEqual(status_code, 200)
+        self.assertIn(created, departments)
+
+        status_code, duplicate, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": normalized_name.swapcase()},
+        )
+        self.assertEqual(status_code, 409, duplicate)
+
+        status_code, blank, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": "   \t  "},
+        )
+        self.assertEqual(status_code, 422, blank)
+
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, admin_created, _ = self.json_request(
+            "/api/master/departments", "POST", admin_token,
+            {"ten_phong_ban": f"Admin Department QA {time.time_ns()}"},
+        )
+        self.assertEqual(status_code, 201, admin_created)
+
+        concurrent_name = f"Concurrent Department QA {time.time_ns()}"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(
+                lambda _: self.json_request(
+                    "/api/master/departments", "POST", hr_token,
+                    {"ten_phong_ban": concurrent_name},
+                )[0],
+                range(4),
+            ))
+        self.assertEqual(results.count(201), 1, results)
+        self.assertEqual(results.count(409), 3, results)
+
+        with sqlite3.connect(self.db_path) as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM PHONG_BAN WHERE LOWER(ten_phong_ban) = LOWER(?)",
+                (concurrent_name,),
+            ).fetchone()[0]
+            assignments = db.execute(
+                "SELECT COUNT(*) FROM NGUOI_DUNG WHERE ma_phong_ban = ?",
+                (created["ma_phong_ban"],),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+        self.assertEqual(assignments, 0)
+
     def test_registration_duplicate_phone_returns_conflict_instead_of_server_error(self):
         with sqlite3.connect(self.db_path) as db:
             db.execute("""

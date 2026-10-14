@@ -145,6 +145,23 @@ class Department(BaseModel):
     ten_phong_ban: str
     mo_ta: Optional[str] = None
 
+class DepartmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ten_phong_ban: str = Field(min_length=1, max_length=100)
+
+    @field_validator("ten_phong_ban", mode="before")
+    @classmethod
+    def normalize_department_name(cls, value):
+        if not isinstance(value, str):
+            return value
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        if len(normalized) > 100:
+            raise ValueError("Tên phòng ban không được vượt quá 100 ký tự.")
+        return normalized
+
 class University(BaseModel):
     ma_truong: int
     ten_truong: str

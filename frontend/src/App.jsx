@@ -151,6 +151,25 @@ export default function App() {
     }, 3500);
   };
 
+  const createDepartment = async (departmentName) => {
+    const response = await apiFetch('/api/master/departments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ten_phong_ban: departmentName }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.detail || 'Không thể lưu phòng ban mới.');
+    }
+
+    setDepartments((previous) => [
+      ...previous.filter((item) => item.ma_phong_ban !== result.ma_phong_ban),
+      result,
+    ].sort((left, right) => left.ma_phong_ban - right.ma_phong_ban));
+    showToast(`Đã thêm phòng ban “${result.ten_phong_ban}”.`);
+    return result;
+  };
+
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   useEffect(() => {
@@ -493,6 +512,7 @@ export default function App() {
               departments={departments}
               universities={universities}
               onShowToast={showToast}
+              onCreateDepartment={createDepartment}
             />
           )}
 
