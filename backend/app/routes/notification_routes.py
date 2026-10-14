@@ -21,6 +21,19 @@ def list_notifications(request: Request, db: sqlite3.Connection = Depends(get_db
     return [dict(row) for row in rows]
 
 
+@router.get("/unread-count")
+def get_unread_notification_count(request: Request, db: sqlite3.Connection = Depends(get_db)):
+    user = require_role(request)
+    row = db.execute("""
+        SELECT COUNT(*) AS unread_count
+        FROM THONG_BAO
+        WHERE ma_nguoi_dung = ?
+          AND COALESCE(da_doc, 0) = 0
+          AND (loai IS NULL OR loai <> 'mailbox_message')
+    """, (user["ma_nguoi_dung"],)).fetchone()
+    return {"unread_count": int(row["unread_count"] if row else 0)}
+
+
 @router.get("/email-outbox")
 def list_email_outbox(request: Request, db: sqlite3.Connection = Depends(get_db)):
     """Expose delivery diagnostics only to staff; never return message bodies or credentials."""
