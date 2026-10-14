@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Check, Clock3, Download, ExternalLink, Plus, RefreshCw, Search, Send, Trash2, Users, X } from 'lucide-react';
+import { CalendarDays, Check, Clock3, ExternalLink, Plus, RefreshCw, Search, Send, Trash2, Users, X } from 'lucide-react';
 import MeetingCalendarView from '../components/MeetingCalendarView';
 import { MeetingDatePicker, MeetingTimePicker } from '../components/MeetingCalendarControls';
 import { apiFetch, readJsonResponse } from '../utils/api';
 import {
-  addLocalMinutes, buildGoogleCalendarTemplateUrl, buildIcsContent, composeLocalDateTime,
+  addLocalMinutes, composeLocalDateTime,
   formatVietnamDateKey, getVietnamDateKey, localMinuteDifference, meetingDisplayStatus,
   toUtcIsoFromVietnamLocal, toVietnamDateTimeLocal,
 } from '../utils/meetingCalendar';
@@ -35,19 +35,6 @@ function formatDate(value) {
 function nextQuarterHourStart() {
   const local = toVietnamDateTimeLocal(new Date());
   return addLocalMinutes(local, 15 - (Number(local.slice(-2)) % 15));
-}
-
-function downloadMeetingCalendar(meeting) {
-  const content = buildIcsContent(meeting, window.location.href);
-  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'ims-meeting-' + String(meeting.id || 'event') + '.ics';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function roleLabel(role) {
@@ -211,6 +198,9 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     }));
     return form.attendee_ids.map((id) => byId.get(Number(id))).filter(Boolean);
   }, [detail, form.attendee_ids, meetings, participants]);
+  const durationMinutes = localMinuteDifference(form.start_at, form.end_at);
+  const durationOptions = [15, 30, 45, 60, 90, 120];
+  const hasPresetDuration = durationOptions.includes(durationMinutes);
 
   const startCreate = (selectedDate, selectedTime) => {
     setDetail(null);
@@ -345,7 +335,7 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
 
   return <section className="meetings-page">
     <header className="meetings-heading">
-      <div><span className="meetings-eyebrow">IMS PORTAL · US35 / US36</span><h2>Lịch họp</h2>
+      <div><h2>Lịch họp</h2>
         <p>{isManager ? 'Tạo lịch, mời người tham gia và theo dõi email thông báo.' : 'Các cuộc họp được mời tham gia sẽ hiển thị tại đây.'}</p>
       </div>
       <div className="meetings-heading-actions">
@@ -375,12 +365,13 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
             <label className="meeting-field meeting-field-full"><span>Tiêu đề <b>*</b></span><input className="form-control" maxLength={200} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required placeholder="Ví dụ: Trao đổi tiến độ thực tập" /></label>
             <div className="meeting-form-grid">
               <div className="meeting-field"><span>Ngày bắt đầu <b>*</b></span><MeetingDatePicker value={form.start_at.split('T')[0] || ''} onChange={updateStartDate} disabled={saving} /></div>
-              <div className="meeting-field"><span>Giờ bắt đầu <b>*</b><small>Định dạng 24 giờ, múi giờ Việt Nam (GMT+7).</small></span><MeetingTimePicker value={form.start_at.split('T')[1] || ''} onChange={updateStartTime} label="bắt đầu" disabled={saving} /></div>
-              <label className="meeting-field"><span>Thời lượng</span><select className="form-control" value={[15, 30, 45, 60, 90, 120].includes(localMinuteDifference(form.start_at, form.end_at)) ? String(localMinuteDifference(form.start_at, form.end_at)) : 'CUSTOM'} onChange={(event) => { if (event.target.value !== 'CUSTOM') updateDuration(event.target.value); }}>
-                <option value="15">15 phút</option><option value="30">30 phút</option><option value="45">45 phút</option><option value="60">1 giờ</option><option value="90">1 giờ 30 phút</option><option value="120">2 giờ</option><option value="CUSTOM">Tùy chỉnh</option>
-              </select></label>
-              {!([15, 30, 45, 60, 90, 120].includes(localMinuteDifference(form.start_at, form.end_at))) && <label className="meeting-field"><span>Phút tùy chỉnh</span><input className="form-control" type="number" min="1" max="1440" step="1" value={localMinuteDifference(form.start_at, form.end_at) || 60} onChange={(event) => updateDuration(event.target.value)} /></label>}
-              <div className="meeting-field"><span>Kết thúc dự kiến</span><div className="meeting-end-display"><CalendarDays size={15} /><strong>{formatVietnamDateKey(form.end_at.split('T')[0] || '', { day: 'numeric', month: 'short', year: 'numeric' })}</strong><Clock3 size={15} /><strong>{form.end_at.split('T')[1] || '—'}</strong></div><small>Tự tính theo giờ bắt đầu và thời lượng.</small></div>
+              <div className="meeting-field"><span>Giờ bắt đầu <b>*</b></span><MeetingTimePicker value={form.start_at.split('T')[1] || ''} onChange={updateStartTime} label="bắt đầu" disabled={saving} /><small>Định dạng 24 giờ, múi giờ Việt Nam (GMT+7).</small></div>
+              <div className="meeting-duration-summary-grid">
+                <label className="meeting-field"><span>Thời lượng</span><div className={'meeting-duration-controls' + (hasPresetDuration ? '' : ' is-custom')}><select className="form-control" value={hasPresetDuration ? String(durationMinutes) : 'CUSTOM'} onChange={(event) => updateDuration(event.target.value === 'CUSTOM' ? 75 : event.target.value)}>
+                  <option value="15">15 phút</option><option value="30">30 phút</option><option value="45">45 phút</option><option value="60">1 giờ</option><option value="90">1 giờ 30 phút</option><option value="120">2 giờ</option><option value="CUSTOM">Tùy chỉnh</option>
+                </select>{!hasPresetDuration && <input className="form-control" type="number" min="1" max="1440" step="1" aria-label="Thời lượng tùy chỉnh, tính bằng phút" value={durationMinutes || 60} onChange={(event) => updateDuration(event.target.value)} />}</div></label>
+                <div className="meeting-field"><span>Kết thúc dự kiến</span><div className="meeting-end-display"><CalendarDays size={15} /><strong>{formatVietnamDateKey(form.end_at.split('T')[0] || '', { day: 'numeric', month: 'short', year: 'numeric' })}</strong><Clock3 size={15} /><strong>{form.end_at.split('T')[1] || '—'}</strong></div><small>Tự tính theo giờ bắt đầu và thời lượng.</small></div>
+              </div>
               <label className="meeting-field"><span>Địa điểm</span><input className="form-control" maxLength={500} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="Phòng họp hoặc địa chỉ" /></label>
               <label className="meeting-field"><span>Link họp online</span><input className="form-control" type="url" maxLength={2000} value={form.meeting_url} onChange={(event) => setForm({ ...form, meeting_url: event.target.value })} placeholder="https://…" /></label>
             </div>
@@ -419,12 +410,6 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
               {modalDetail.location && <div><dt>Địa điểm</dt><dd>{modalDetail.location}</dd></div>}{modalDetail.meeting_url && <div><dt>Link họp</dt><dd><a href={modalDetail.meeting_url} target="_blank" rel="noreferrer">Mở link họp <ExternalLink size={13} /></a></dd></div>}
               <div className="meeting-detail-full"><dt>Nội dung</dt><dd>{modalDetail.content || 'Không có nội dung bổ sung.'}</dd></div>
             </dl>
-            <section className="meeting-calendar-export" aria-label="Thêm vào lịch cá nhân">
-              <strong>Thêm vào lịch cá nhân</strong>
-              <div><a className="btn btn-secondary btn-sm" href={buildGoogleCalendarTemplateUrl(modalDetail, window.location.href)} target="_blank" rel="noreferrer"><CalendarDays size={15} /> Mở Google Calendar <ExternalLink size={12} /></a>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadMeetingCalendar(modalDetail)}><Download size={15} /> Tải file .ics</button></div>
-              <p>Đồng bộ tự động chưa được cấu hình. Liên kết Google Calendar chỉ điền sẵn bản nháp; hãy lưu sự kiện trong Google Calendar. Thay đổi sau này và lời mời người tham gia không được đồng bộ tự động.</p>
-            </section>
             <div className="meeting-detail-attendees"><strong><Users size={16} />Người tham gia ({modalDetail.attendees?.filter((person) => person.status === 'INVITED').length || 0})</strong>
               {modalDetail.attendees?.map((person) => <span key={person.user_id} className={person.status === 'REMOVED' ? 'is-removed' : ''}>{person.ho_ten}<small>{person.email} · {roleLabel(person.vai_tro)}{person.status === 'REMOVED' ? ' · Đã gỡ' : ''}</small></span>)}
             </div>

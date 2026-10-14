@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Plus, Send, Users } from 'lucide-react';
 import { formatVietnamDateKey, getVietnamDateKey, getVietnamParts, meetingDisplayStatus, toVietnamTime } from '../utils/meetingCalendar';
 import './MeetingCalendarView.css';
@@ -72,16 +72,20 @@ function MonthGrid({ date, meetings, onOpen, onCreateAt }) {
   </div>;
 }
 
-function TimeGrid({ date, view, meetings, onOpen, onCreateAt }) {
+function TimeGrid({ date, view, meetings, onOpen, onCreateAt, scrollPositionRef }) {
+  const scrollElementRef = useRef(null);
+  useLayoutEffect(() => {
+    if (scrollElementRef.current) scrollElementRef.current.scrollTop = scrollPositionRef.current ?? 8 * 64;
+  }, [scrollPositionRef]);
   const days = view === 'DAY' ? [date] : Array.from({ length: 7 }, (_, index) => shiftDate(mondayOf(date), index));
   const today = getVietnamDateKey(new Date());
   const now = new Date();
   const nowParts = getVietnamParts(now);
   const nowMinute = Number(nowParts?.hour || 0) * 60 + Number(nowParts?.minute || 0);
-  const hours = Array.from({ length: 17 }, (_, index) => index + 6);
-  const gridHeight = hours.length * 62;
+  const hours = Array.from({ length: 24 }, (_, index) => index);
+  const gridHeight = hours.length * 64;
 
-  return <div className="meeting-time-grid-scroll">
+  return <div ref={scrollElementRef} className="meeting-time-grid-scroll" onScroll={(event) => { scrollPositionRef.current = event.currentTarget.scrollTop; }}>
     <div className={'meeting-time-grid' + (view === 'DAY' ? ' is-day' : '')} style={{ '--meeting-day-count': days.length, '--meeting-grid-height': gridHeight + 'px' }}>
       <div className="meeting-time-grid-head"><span className="meeting-time-zone">GMT+7</span>{days.map((day) => <div className={'meeting-day-heading' + (day === today ? ' is-today' : '')} key={day}>
         <small>{dateHeading(day, { weekday: 'short' })}</small><strong>{Number(day.slice(-2))}</strong>
@@ -94,15 +98,16 @@ function TimeGrid({ date, view, meetings, onOpen, onCreateAt }) {
             {hours.map((hour) => <button type="button" className="meeting-hour-slot" key={hour} aria-label={'Tạo cuộc họp ' + day + ' ' + pad(hour) + ':00'} onClick={() => onCreateAt(day, pad(hour) + ':00')} />)}
             {dayMeetings.map((meeting) => {
               const start = localMinutes(meeting.start_at);
-              const end = localMinutes(meeting.end_at) || start + 30;
-              const top = Math.max(0, (start - 360) / 60 * 62);
-              const bottom = Math.min(gridHeight, (end - 360) / 60 * 62);
+              const duration = (new Date(meeting.end_at).getTime() - new Date(meeting.start_at).getTime()) / 60000;
+              const end = Number.isFinite(duration) && duration > 0 ? start + duration : start + 30;
+              const top = Math.max(0, start / 60 * 64);
+              const bottom = Math.min(gridHeight, end / 60 * 64);
               if (bottom <= 0 || top >= gridHeight) return null;
               return <button type="button" key={meeting.id} className={'meeting-grid-event is-' + meetingDisplayStatus(meeting).toLowerCase()} style={{ top: Math.max(0, top), height: Math.max(28, bottom - top) }} onClick={() => onOpen(meeting.id)} title={meeting.title}>
                 <strong>{meeting.title}</strong><span>{toVietnamTime(meeting.start_at)}–{toVietnamTime(meeting.end_at)}</span>
               </button>;
             })}
-            {day === today && nowMinute >= 360 && nowMinute <= 1320 && <div className="meeting-now-line" style={{ top: ((nowMinute - 360) / 60) * 62 }}><i /></div>}
+            {day === today && nowMinute <= 1440 && <div className="meeting-now-line" style={{ top: (nowMinute / 60) * 64 }}><i /></div>}
           </div>;
         })}
       </div>
@@ -113,6 +118,7 @@ function TimeGrid({ date, view, meetings, onOpen, onCreateAt }) {
 export default function MeetingCalendarView({ meetings, onOpenMeeting, onCreateAt, isManager, emailSummaryText }) {
   const [view, setView] = useState('WEEK');
   const [date, setDate] = useState(() => getVietnamDateKey(new Date()));
+  const timeGridScrollPositionRef = useRef(null);
   const startOfWeek = mondayOf(date);
   const endOfWeek = shiftDate(startOfWeek, 6);
   const visibleMeetings = useMemo(() => meetings.filter((meeting) => getVietnamDateKey(meeting.start_at)).sort((a, b) => new Date(a.start_at) - new Date(b.start_at)), [meetings]);
@@ -152,7 +158,7 @@ export default function MeetingCalendarView({ meetings, onOpenMeeting, onCreateA
     {view === 'MONTH' ? <MonthGrid date={date} meetings={visibleMeetings} onOpen={onOpenMeeting} onCreateAt={onCreateAt} />
       : view === 'LIST' ? <div className="meetings-list meeting-calendar-list">{visibleMeetings.length ? visibleMeetings.map((meeting) => <MeetingCard key={meeting.id} meeting={meeting} onOpen={onOpenMeeting} isManager={isManager} emailSummaryText={emailSummaryText} />)
         : <div className="meetings-state meetings-empty"><span><CalendarDays size={23} /></span><strong>Chưa có lịch họp</strong><p>Các cuộc họp trong hệ thống sẽ xuất hiện tại đây.</p></div>}</div>
-        : <TimeGrid date={date} view={view} meetings={visibleMeetings} onOpen={onOpenMeeting} onCreateAt={onCreateAt} />}
+        : <TimeGrid date={date} view={view} meetings={visibleMeetings} onOpen={onOpenMeeting} onCreateAt={onCreateAt} scrollPositionRef={timeGridScrollPositionRef} />}
     <footer className="meeting-calendar-footer"><span><i className="is-upcoming" /> Sắp diễn ra</span><span><i className="is-progress" /> Đang diễn ra</span><span><i className="is-completed" /> Đã kết thúc</span><span><i className="is-cancelled" /> Đã hủy</span><button type="button" onClick={() => onCreateAt(date, '09:00')}><Plus size={15} /> Tạo lịch vào ngày đang xem</button></footer>
   </section>;
 }
