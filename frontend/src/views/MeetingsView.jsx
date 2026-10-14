@@ -1,6 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Check, Clock3, Edit3, ExternalLink, MapPin, Plus, RefreshCw, Search, Send, Trash2, Users, Video, X } from 'lucide-react';
+import { CalendarDays, Check, Clock3, Download, ExternalLink, Plus, RefreshCw, Search, Send, Trash2, Users, X } from 'lucide-react';
+import MeetingCalendarView from '../components/MeetingCalendarView';
+import { MeetingDatePicker, MeetingTimePicker } from '../components/MeetingCalendarControls';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import {
+  addLocalMinutes, buildGoogleCalendarTemplateUrl, buildIcsContent, composeLocalDateTime,
+  formatVietnamDateKey, getVietnamDateKey, localMinuteDifference, meetingDisplayStatus,
+  toUtcIsoFromVietnamLocal, toVietnamDateTimeLocal,
+} from '../utils/meetingCalendar';
 import './MeetingsView.css';
 
 const emptyForm = {
@@ -14,19 +21,33 @@ async function readChecked(response, fallback) {
 }
 
 function toLocalDateTime(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (part) => String(part).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return toVietnamDateTimeLocal(value);
 }
 
 function formatDate(value) {
   if (!value) return 'Chưa có thời gian';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('vi-VN', {
-    dateStyle: 'medium', timeStyle: 'short',
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh',
   }).format(date);
+}
+
+function nextQuarterHourStart() {
+  const local = toVietnamDateTimeLocal(new Date());
+  return addLocalMinutes(local, 15 - (Number(local.slice(-2)) % 15));
+}
+
+function downloadMeetingCalendar(meeting) {
+  const content = buildIcsContent(meeting, window.location.href);
+  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'ims-meeting-' + String(meeting.id || 'event') + '.ics';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function roleLabel(role) {
@@ -48,6 +69,7 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
   const [participantSearch, setParticipantSearch] = useState('');
   const [meetingSearch, setMeetingSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -163,13 +185,18 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [cancelTarget, closeDetail, detail, detailLoading, formOpen, requestedMeetingId, saving]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const visibleMeetings = useMemo(() => meetings.filter((meeting) => {
-    const matchesStatus = statusFilter === 'ALL' || meeting.status === statusFilter;
+    const matchesStatus = statusFilter === 'ALL' || meetingDisplayStatus(meeting, currentTime) === statusFilter;
     const search = meetingSearch.trim().toLocaleLowerCase('vi');
     const matchesSearch = !search || [meeting.title, meeting.content, meeting.location, meeting.organizer_name]
       .some((value) => String(value || '').toLocaleLowerCase('vi').includes(search));
     return matchesStatus && matchesSearch;
-  }), [meetings, meetingSearch, statusFilter]);
+  }), [currentTime, meetings, meetingSearch, statusFilter]);
 
   const selectedParticipants = useMemo(() => {
     const byId = new Map();
@@ -185,10 +212,13 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     return form.attendee_ids.map((id) => byId.get(Number(id))).filter(Boolean);
   }, [detail, form.attendee_ids, meetings, participants]);
 
-  const startCreate = () => {
+  const startCreate = (selectedDate, selectedTime) => {
     setDetail(null);
     setEditingMeeting(null);
-    setForm(emptyForm);
+    const start = selectedDate && selectedTime
+      ? composeLocalDateTime(selectedDate, selectedTime)
+      : nextQuarterHourStart();
+    setForm({ ...emptyForm, start_at: start, end_at: addLocalMinutes(start, 60) });
     setFormError('');
     setParticipantSearch('');
     requestKeyRef.current = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -220,11 +250,31 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     }));
   };
 
+  const updateStartDate = (date) => {
+    const time = form.start_at.split('T')[1] || '09:00';
+    const start = composeLocalDateTime(date, time);
+    const duration = localMinuteDifference(form.start_at, form.end_at);
+    setForm((current) => ({ ...current, start_at: start, end_at: addLocalMinutes(start, duration > 0 ? duration : 60) }));
+  };
+
+  const updateStartTime = (time) => {
+    const date = form.start_at.split('T')[0] || getVietnamDateKey(new Date());
+    const start = composeLocalDateTime(date, time);
+    const duration = localMinuteDifference(form.start_at, form.end_at);
+    setForm((current) => ({ ...current, start_at: start, end_at: addLocalMinutes(start, duration > 0 ? duration : 60) }));
+  };
+
+  const updateDuration = (minutes) => {
+    const duration = Number(minutes);
+    if (!Number.isFinite(duration) || duration < 1 || duration > 1440) return;
+    setForm((current) => ({ ...current, end_at: addLocalMinutes(current.start_at, duration) }));
+  };
+
   const saveMeeting = async (event) => {
     event.preventDefault();
     setFormError('');
     if (!form.title.trim()) return setFormError('Vui lòng nhập tiêu đề cuộc họp.');
-    if (!form.start_at || !form.end_at || new Date(form.end_at) <= new Date(form.start_at)) {
+    if (!form.start_at || !form.end_at || localMinuteDifference(form.start_at, form.end_at) <= 0) {
       return setFormError('Thời gian kết thúc phải sau thời gian bắt đầu.');
     }
     if (!form.location.trim() && !form.meeting_url.trim()) return setFormError('Vui lòng nhập địa điểm hoặc link họp.');
@@ -240,7 +290,7 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     try {
       const payload = {
         title: form.title.trim(), content: form.content.trim(),
-        start_at: new Date(form.start_at).toISOString(), end_at: new Date(form.end_at).toISOString(),
+        start_at: toUtcIsoFromVietnamLocal(form.start_at), end_at: toUtcIsoFromVietnamLocal(form.end_at),
         location: form.location.trim() || null, meeting_url: form.meeting_url.trim() || null,
         attendee_ids: form.attendee_ids,
       };
@@ -307,7 +357,7 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     <div className="meetings-toolbar">
       <label className="meeting-search"><Search size={17} /><input value={meetingSearch} onChange={(event) => setMeetingSearch(event.target.value)} placeholder="Tìm theo tiêu đề, nội dung, địa điểm…" aria-label="Tìm lịch họp" /></label>
       <label className="meeting-filter"><span>Trạng thái</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-        <option value="ALL">Tất cả</option><option value="SCHEDULED">Đã lên lịch</option><option value="CANCELLED">Đã hủy</option>
+        <option value="ALL">Tất cả</option><option value="UPCOMING">Sắp diễn ra</option><option value="IN_PROGRESS">Đang diễn ra</option><option value="COMPLETED">Đã kết thúc</option><option value="CANCELLED">Đã hủy</option>
       </select></label>
     </div>
 
@@ -315,40 +365,22 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     {loading ? <div className="meetings-state" role="status"><RefreshCw size={19} className="meeting-spin" /> Đang tải lịch họp…</div>
       : visibleMeetings.length === 0 ? <div className="meetings-state meetings-empty"><span><CalendarDays size={23} /></span><strong>{meetings.length ? 'Không có lịch họp phù hợp' : 'Chưa có lịch họp'}</strong>
         <p>{meetings.length ? 'Hãy đổi bộ lọc hoặc từ khóa tìm kiếm.' : isManager ? 'Tạo lịch đầu tiên và chọn đúng những người cần tham dự.' : 'Khi được mời, lịch họp sẽ xuất hiện ở đây.'}</p>
-      </div> : <div className="meetings-list">
-        {visibleMeetings.map((meeting) => <article className={`meeting-card${meeting.status === 'CANCELLED' ? ' is-cancelled' : ''}`} key={meeting.id}>
-          <div className="meeting-card-main">
-            <div className="meeting-card-title"><span className="meeting-icon"><CalendarDays size={19} /></span><div><h3>{meeting.title}</h3><span className={`meeting-status ${meeting.status === 'CANCELLED' ? 'is-cancelled' : 'is-scheduled'}`}><i />{meeting.status === 'CANCELLED' ? 'Đã hủy' : 'Đã lên lịch'}</span></div></div>
-            <p className="meeting-content-preview">{meeting.content || 'Không có nội dung bổ sung.'}</p>
-            <div className="meeting-meta">
-              <span><Clock3 size={15} />{formatDate(meeting.start_at)} – {formatDate(meeting.end_at)}</span>
-              {meeting.location && <span><MapPin size={15} />{meeting.location}</span>}
-              {meeting.meeting_url && <a href={meeting.meeting_url} target="_blank" rel="noreferrer"><Video size={15} />Mở link họp<ExternalLink size={12} /></a>}
-            </div>
-            <div className="meeting-card-footer"><span><Users size={15} />{meeting.attendees?.filter((person) => person.status === 'INVITED').length || 0} người tham gia</span>
-              <span>Người tổ chức: {meeting.organizer_name}</span>
-              {isManager && <span className="meeting-email-summary"><Send size={14} />Email: {emailSummaryText(meeting.email_summary)}</span>}
-            </div>
-          </div>
-          <div className="meeting-card-actions">
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(meeting.id)}>Chi tiết</button>
-            {isManager && meeting.status === 'SCHEDULED' && <>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => startEdit(meeting)} aria-label={`Sửa ${meeting.title}`}><Edit3 size={15} />Sửa</button>
-              <button type="button" className="btn btn-danger-soft btn-sm" onClick={() => setCancelTarget(meeting)} aria-label={`Hủy ${meeting.title}`}><Trash2 size={15} />Hủy</button>
-            </>}
-          </div>
-        </article>)}
-      </div>}
+      </div> : <MeetingCalendarView meetings={visibleMeetings} onOpenMeeting={openDetail} onCreateAt={startCreate} isManager={isManager} emailSummaryText={emailSummaryText} />}
 
     {formOpen && <div className="meeting-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}>
       <section className="meeting-dialog meeting-form-dialog" role="dialog" aria-modal="true" aria-labelledby="meeting-form-title">
         <header className="meeting-dialog-header"><div><span className="meetings-eyebrow">THÔNG TIN CUỘC HỌP</span><h3 id="meeting-form-title">{editingMeeting ? 'Sửa lịch họp' : 'Tạo lịch họp mới'}</h3></div><button type="button" className="meeting-icon-button" onClick={() => setFormOpen(false)} disabled={saving} aria-label="Đóng"><X size={19} /></button></header>
-        <form onSubmit={saveMeeting}>
+        <form className="meeting-form-content" onSubmit={saveMeeting}>
           <div className="meeting-dialog-body">
             <label className="meeting-field meeting-field-full"><span>Tiêu đề <b>*</b></span><input className="form-control" maxLength={200} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required placeholder="Ví dụ: Trao đổi tiến độ thực tập" /></label>
             <div className="meeting-form-grid">
-              <label className="meeting-field"><span>Bắt đầu <b>*</b></span><input className="form-control" type="datetime-local" value={form.start_at} onChange={(event) => setForm({ ...form, start_at: event.target.value })} required /></label>
-              <label className="meeting-field"><span>Kết thúc <b>*</b></span><input className="form-control" type="datetime-local" value={form.end_at} onChange={(event) => setForm({ ...form, end_at: event.target.value })} required /></label>
+              <div className="meeting-field"><span>Ngày bắt đầu <b>*</b></span><MeetingDatePicker value={form.start_at.split('T')[0] || ''} onChange={updateStartDate} disabled={saving} /></div>
+              <div className="meeting-field"><span>Giờ bắt đầu <b>*</b><small>Định dạng 24 giờ, múi giờ Việt Nam (GMT+7).</small></span><MeetingTimePicker value={form.start_at.split('T')[1] || ''} onChange={updateStartTime} label="bắt đầu" disabled={saving} /></div>
+              <label className="meeting-field"><span>Thời lượng</span><select className="form-control" value={[15, 30, 45, 60, 90, 120].includes(localMinuteDifference(form.start_at, form.end_at)) ? String(localMinuteDifference(form.start_at, form.end_at)) : 'CUSTOM'} onChange={(event) => { if (event.target.value !== 'CUSTOM') updateDuration(event.target.value); }}>
+                <option value="15">15 phút</option><option value="30">30 phút</option><option value="45">45 phút</option><option value="60">1 giờ</option><option value="90">1 giờ 30 phút</option><option value="120">2 giờ</option><option value="CUSTOM">Tùy chỉnh</option>
+              </select></label>
+              {!([15, 30, 45, 60, 90, 120].includes(localMinuteDifference(form.start_at, form.end_at))) && <label className="meeting-field"><span>Phút tùy chỉnh</span><input className="form-control" type="number" min="1" max="1440" step="1" value={localMinuteDifference(form.start_at, form.end_at) || 60} onChange={(event) => updateDuration(event.target.value)} /></label>}
+              <div className="meeting-field"><span>Kết thúc dự kiến</span><div className="meeting-end-display"><CalendarDays size={15} /><strong>{formatVietnamDateKey(form.end_at.split('T')[0] || '', { day: 'numeric', month: 'short', year: 'numeric' })}</strong><Clock3 size={15} /><strong>{form.end_at.split('T')[1] || '—'}</strong></div><small>Tự tính theo giờ bắt đầu và thời lượng.</small></div>
               <label className="meeting-field"><span>Địa điểm</span><input className="form-control" maxLength={500} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="Phòng họp hoặc địa chỉ" /></label>
               <label className="meeting-field"><span>Link họp online</span><input className="form-control" type="url" maxLength={2000} value={form.meeting_url} onChange={(event) => setForm({ ...form, meeting_url: event.target.value })} placeholder="https://…" /></label>
             </div>
@@ -382,11 +414,17 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
           {(detailLoading || requestedDetailLoading) && <div className="meetings-state"><RefreshCw size={18} className="meeting-spin" />Đang tải chi tiết…</div>}
           {detailError && <p className="meeting-form-error" role="alert">{detailError}</p>}
           {modalDetail && <>
-            <span className={`meeting-status ${modalDetail.status === 'CANCELLED' ? 'is-cancelled' : 'is-scheduled'}`}><i />{modalDetail.status === 'CANCELLED' ? 'Đã hủy' : 'Đã lên lịch'}</span>
+            {(() => { const status = meetingDisplayStatus(modalDetail, currentTime); const labels = { UPCOMING: 'Sắp diễn ra', IN_PROGRESS: 'Đang diễn ra', COMPLETED: 'Đã kết thúc', CANCELLED: 'Đã hủy' }; return <span className={'meeting-status is-' + status.toLowerCase()}><i />{labels[status]}</span>; })()}
             <dl className="meeting-detail-grid"><div><dt>Thời gian</dt><dd>{formatDate(modalDetail.start_at)} – {formatDate(modalDetail.end_at)}</dd></div><div><dt>Người tổ chức</dt><dd>{modalDetail.organizer_name} · {modalDetail.organizer_email}</dd></div>
               {modalDetail.location && <div><dt>Địa điểm</dt><dd>{modalDetail.location}</dd></div>}{modalDetail.meeting_url && <div><dt>Link họp</dt><dd><a href={modalDetail.meeting_url} target="_blank" rel="noreferrer">Mở link họp <ExternalLink size={13} /></a></dd></div>}
               <div className="meeting-detail-full"><dt>Nội dung</dt><dd>{modalDetail.content || 'Không có nội dung bổ sung.'}</dd></div>
             </dl>
+            <section className="meeting-calendar-export" aria-label="Thêm vào lịch cá nhân">
+              <strong>Thêm vào lịch cá nhân</strong>
+              <div><a className="btn btn-secondary btn-sm" href={buildGoogleCalendarTemplateUrl(modalDetail, window.location.href)} target="_blank" rel="noreferrer"><CalendarDays size={15} /> Mở Google Calendar <ExternalLink size={12} /></a>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadMeetingCalendar(modalDetail)}><Download size={15} /> Tải file .ics</button></div>
+              <p>Đồng bộ tự động chưa được cấu hình. Liên kết Google Calendar chỉ điền sẵn bản nháp; hãy lưu sự kiện trong Google Calendar. Thay đổi sau này và lời mời người tham gia không được đồng bộ tự động.</p>
+            </section>
             <div className="meeting-detail-attendees"><strong><Users size={16} />Người tham gia ({modalDetail.attendees?.filter((person) => person.status === 'INVITED').length || 0})</strong>
               {modalDetail.attendees?.map((person) => <span key={person.user_id} className={person.status === 'REMOVED' ? 'is-removed' : ''}>{person.ho_ten}<small>{person.email} · {roleLabel(person.vai_tro)}{person.status === 'REMOVED' ? ' · Đã gỡ' : ''}</small></span>)}
             </div>
