@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, Download, RefreshCw, Search, Users } from 'lucide-react';
+import { BarChart3, Check, Download, RefreshCw, Search, Users } from 'lucide-react';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
 import { apiFetch } from '../utils/api';
 import { downloadReport } from '../utils/reportExport';
+import CompletionStatisticsPanel from './CompletionStatisticsPanel';
 import './StatisticsManagementView.css';
 
 const EMPTY_FILTERS = {
@@ -63,6 +64,7 @@ export default function StatisticsManagementView({ onShowToast }) {
   const [optionsError, setOptionsError] = useState('');
   const [exporting, setExporting] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [activeReport, setActiveReport] = useState('profile');
 
   useEffect(() => {
     let active = true;
@@ -102,10 +104,11 @@ export default function StatisticsManagementView({ onShowToast }) {
   }, [filters, page, pageSize]);
 
   useEffect(() => {
+    if (activeReport !== 'profile') return undefined;
     const controller = new AbortController();
     const timer = window.setTimeout(() => loadReport(controller.signal), 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [loadReport, refreshKey]);
+  }, [activeReport, loadReport, refreshKey]);
 
   const setFilter = (name, value) => {
     setFilters((current) => ({ ...current, [name]: value }));
@@ -151,6 +154,13 @@ export default function StatisticsManagementView({ onShowToast }) {
           <button type="button" className="btn btn-secondary" disabled={loading || exporting !== '' || !summary?.unique_interns} onClick={() => exportFile('pdf')}><Download size={16} /> {exporting === 'pdf' ? 'Đang xuất…' : 'Xuất PDF'}</button>
         </div>
       </header>
+
+      <div className="statistics-report-tabs" role="group" aria-label="Loại thống kê">
+        <button type="button" aria-pressed={activeReport === 'profile'} className={activeReport === 'profile' ? 'is-active' : ''} onClick={() => setActiveReport('profile')}>Theo trường / ngành</button>
+        <button type="button" aria-pressed={activeReport === 'completion'} className={activeReport === 'completion' ? 'is-active' : ''} onClick={() => setActiveReport('completion')}><Check size={15} /> Tỷ lệ hoàn thành</button>
+      </div>
+
+      {activeReport === 'completion' ? <CompletionStatisticsPanel options={options} onShowToast={onShowToast} /> : <>
 
       <section className="statistics-panel statistics-filters" aria-label="Bộ lọc thống kê">
         <label>Chương trình
@@ -210,6 +220,7 @@ export default function StatisticsManagementView({ onShowToast }) {
           </div>
           <TablePagination page={report.page} pageSize={pageSize} totalItems={report.total_items} totalPages={report.total_pages} itemLabel="hồ sơ" disabled={loading} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
         </section>
+      </>}
       </>}
     </div>
   );
