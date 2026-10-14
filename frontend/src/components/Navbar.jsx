@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, Menu, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, LifeBuoy, Menu, Moon, RefreshCw, Sun, Wallet, CalendarDays } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({
@@ -16,6 +16,7 @@ export default function Navbar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState('');
   const userId = currentUser?.ma_nguoi_dung;
@@ -25,9 +26,14 @@ export default function Navbar({
     setNotificationsLoading(true);
     setNotificationsError('');
     try {
-      const response = await apiFetch('/api/notifications');
-      if (!response.ok) throw new Error('Không tải được thông báo.');
-      setNotifications(await response.json());
+      const [response, unreadResponse] = await Promise.all([
+        apiFetch('/api/notifications'),
+        apiFetch('/api/notifications/unread-count'),
+      ]);
+      if (!response.ok || !unreadResponse.ok) throw new Error('Không tải được thông báo.');
+      const [items, unreadData] = await Promise.all([response.json(), unreadResponse.json()]);
+      setNotifications(items);
+      setUnreadCount(Math.max(0, Number(unreadData.unread_count) || 0));
     } catch (error) {
       setNotificationsError(error.message || 'Không tải được thông báo.');
     } finally {
@@ -50,17 +56,21 @@ export default function Navbar({
   }, [loadNotifications]);
 
   const markNotificationRead = async (notificationId) => {
+    const wasUnread = notifications.some((item) => item.ma_thong_bao === notificationId && !item.da_doc);
     try {
       const response = await apiFetch(`/api/notifications/${notificationId}/read`, { method: 'PUT' });
       if (!response.ok) throw new Error('Không thể cập nhật thông báo.');
       setNotifications((items) => items.map((item) => item.ma_thong_bao === notificationId ? { ...item, da_doc: 1 } : item));
+      if (wasUnread) setUnreadCount((count) => Math.max(0, count - 1));
+      return true;
     } catch (error) {
       setNotificationsError(error.message || 'Không thể cập nhật thông báo.');
+      return false;
     }
   };
 
   const openNotification = async (item) => {
-    if (!item.da_doc) await markNotificationRead(item.ma_thong_bao);
+    if (!item.da_doc && !(await markNotificationRead(item.ma_thong_bao))) return;
     if (item.reference_type && item.reference_id) onOpenNotificationReference?.(item);
     setNotificationsOpen(false);
   };
@@ -70,7 +80,9 @@ export default function Navbar({
     if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
     if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
+    if (['meeting_invitation', 'meeting_updated', 'meeting_cancelled', 'meeting_removed'].includes(item.loai)) return { label: 'Lịch họp', icon: <CalendarDays size={15} /> };
     if (['allowance_unreceived_report', 'allowance_report_status', 'allowance_report_acknowledged'].includes(item.loai)) return { label: 'Phụ cấp', icon: <Wallet size={15} /> };
+    if (item.reference_type === 'support_request') return { label: 'Yêu cầu hỗ trợ', icon: <LifeBuoy size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
   };
 
@@ -83,7 +95,6 @@ export default function Navbar({
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
   };
 
-  const unreadCount = notifications.filter((item) => !item.da_doc).length;
   const getRoleBadge = (role) => {
     switch (role) {
       case 'Admin':
@@ -173,7 +184,7 @@ export default function Navbar({
                   <div className="notification-list">
                     {notifications.map((item) => {
                       const meta = notificationMeta(item);
-                      const navigable = ['internship_task', 'weekly_report', 'allowance'].includes(item.reference_type) && item.reference_id;
+                      const navigable = ['internship_task', 'weekly_report', 'allowance', 'support_request', 'meeting'].includes(item.reference_type) && item.reference_id;
                       return <article key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`}>
                         <button type="button" className="notification-item-main" onClick={() => openNotification(item)}>
                           <span className="notification-type-icon">{meta.icon}</span>

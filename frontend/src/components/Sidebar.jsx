@@ -31,6 +31,7 @@ const MENU_CONFIG = [
   // Intern / TTS
   { id: 'intern-dashboard', label: 'Tổng quan thực tập', icon: LayoutDashboard, roles: ['intern'] },
   { id: 'intern-schedule', label: 'Lịch thực tập', icon: Calendar, roles: ['intern'] },
+  { id: 'meetings', label: 'Lịch họp', icon: CalendarDays, roles: ['intern'] },
   { id: 'intern-attendance', label: 'Chấm công hôm nay', icon: Clock, roles: ['intern'] },
   { id: 'tasks', label: 'Nhiệm vụ của tôi', icon: SquareCheck, roles: ['intern'] },
   { id: 'weekly-reports', label: 'Báo cáo tuần', icon: FileText, roles: ['intern'] },
@@ -46,6 +47,7 @@ const MENU_CONFIG = [
   { id: 'programs', label: 'Chương trình thực tập', icon: Briefcase, roles: ['manager'] },
   { id: 'documents', label: 'Quản lý Tài liệu', icon: FolderKanban, roles: ['manager'] },
   { id: 'work-shifts', label: 'Quản lý ca làm việc', icon: CalendarDays, roles: ['manager'] },
+  { id: 'meetings', label: 'Lịch họp', icon: CalendarDays, roles: ['manager'] },
   { id: 'final-reports', label: 'Báo cáo cuối kỳ', icon: FileText, roles: ['manager'] },
   { id: 'statistics', label: 'Thống kê thực tập sinh', icon: BarChart3, roles: ['manager'] },
   { id: 'leave-requests', label: 'Quản lý nghỉ phép', icon: FileSpreadsheet, roles: ['manager'] },
@@ -55,6 +57,7 @@ const MENU_CONFIG = [
 
   // Mentor
   { id: 'mentor-workspace', label: 'Danh sách TTS hướng dẫn', icon: Users, roles: ['mentor'] },
+  { id: 'meetings', label: 'Lịch họp', icon: CalendarDays, roles: ['mentor'] },
   { id: 'evaluations', label: 'Đánh giá TTS', icon: ClipboardCheck, roles: ['mentor'] },
   { id: 'tasks', label: 'Giao nhiệm vụ / Task', icon: SquareCheck, roles: ['mentor'] },
   { id: 'weekly-reports', label: 'Duyệt báo cáo', icon: FileCheck, roles: ['mentor'] },

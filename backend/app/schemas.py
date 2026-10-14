@@ -1,7 +1,8 @@
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
+from urllib.parse import urlsplit
 
 
 class AllowanceUpdate(BaseModel):
@@ -812,3 +813,81 @@ class FinalReportListResponse(BaseModel):
     page_size: int
     total_pages: int
     summary: FinalReportSummaryMetrics
+
+
+class MeetingFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(default="", max_length=10000)
+    start_at: datetime
+    end_at: datetime
+    location: Optional[str] = Field(default=None, max_length=500)
+    meeting_url: Optional[str] = Field(default=None, max_length=2000)
+    attendee_ids: list[StrictInt] = Field(min_length=1, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def trim_title(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Vui lòng nhập tiêu đề cuộc họp.")
+        return value
+
+    @field_validator("content")
+    @classmethod
+    def trim_content(cls, value):
+        return value.strip()
+
+    @field_validator("location")
+    @classmethod
+    def normalize_location(cls, value):
+        value = (value or "").strip()
+        return value or None
+
+    @field_validator("meeting_url")
+    @classmethod
+    def validate_meeting_url(cls, value):
+        value = (value or "").strip()
+        if not value:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+            raise ValueError("Link họp phải là URL HTTP hoặc HTTPS hợp lệ.")
+        return value
+
+    @field_validator("start_at", "end_at")
+    @classmethod
+    def require_timezone(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Thời gian phải có múi giờ rõ ràng.")
+        return value
+
+    @field_validator("attendee_ids")
+    @classmethod
+    def require_unique_attendees(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("Danh sách người tham gia không được trùng lặp.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_meeting_window_and_location(self):
+        if self.end_at <= self.start_at:
+            raise ValueError("Thời gian kết thúc phải sau thời gian bắt đầu.")
+        if not self.location and not self.meeting_url:
+            raise ValueError("Vui lòng nhập địa điểm hoặc link họp online.")
+        return self
+
+
+class MeetingCreate(MeetingFields):
+    pass
+
+
+class MeetingUpdate(MeetingFields):
+    expected_version: StrictInt = Field(gt=0)
+
+
+class MeetingCancel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: StrictInt = Field(gt=0)

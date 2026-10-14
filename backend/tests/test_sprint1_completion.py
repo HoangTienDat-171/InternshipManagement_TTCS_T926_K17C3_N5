@@ -1165,6 +1165,10 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(len(own_notifications), 1)
         self.assertNotIn("email_status", own_notifications[0])
         self.assertEqual(own_notifications[0]["reference_type"], "intern_profile")
+        status_code, unread_count, _ = self.json_request("/api/notifications/unread-count", token=approved_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(unread_count["unread_count"], 1)
+        self.assertEqual(self.json_request("/api/notifications/unread-count")[0], 401)
         status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
         self.assertEqual(status_code, 403)
         status_code, _, _ = self.json_request(
@@ -1172,6 +1176,10 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 200)
         self.assertIsNotNone(self.json_request("/api/notifications", token=approved_token)[1][0]["thoi_gian_doc"])
+        self.assertEqual(
+            self.json_request("/api/notifications/unread-count", token=approved_token)[1]["unread_count"],
+            0,
+        )
 
         self.assertNotIn(rejected_notification, {item["ma_thong_bao"] for item in own_notifications})
         status_code, _, _ = self.json_request(
