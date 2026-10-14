@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Clock3 } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock3 } from 'lucide-react';
 import { formatVietnamDateKey, getVietnamDateKey } from '../utils/meetingCalendar';
 import './MeetingCalendarControls.css';
 
@@ -84,7 +84,7 @@ export function MeetingDatePicker({ value, onChange, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => (value || getVietnamDateKey(new Date())).slice(0, 7) + '-01');
   const close = React.useCallback(() => setOpen(false), []);
-  const position = usePopoverPosition(open, triggerRef, popupRef, 312, 354);
+  const position = usePopoverPosition(open, triggerRef, popupRef, 320, 360);
   useCloseOnOutside(open, triggerRef, popupRef, close);
 
   const days = useMemo(() => {
@@ -97,6 +97,12 @@ export function MeetingDatePicker({ value, onChange, disabled = false }) {
   const moveMonth = (amount) => {
     const date = parseDateKey(month);
     date.setUTCMonth(date.getUTCMonth() + amount);
+    setMonth(dateKey(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))));
+  };
+
+  const moveYear = (amount) => {
+    const date = parseDateKey(month);
+    date.setUTCFullYear(date.getUTCFullYear() + amount);
     setMonth(dateKey(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))));
   };
 
@@ -117,9 +123,15 @@ export function MeetingDatePicker({ value, onChange, disabled = false }) {
     style={{ top: position.top, left: position.left, width: position.width }}
   >
     <div className="meeting-picker-heading">
-      <button type="button" className="meeting-picker-icon" onClick={() => moveMonth(-1)} aria-label="Tháng trước"><ChevronLeft size={17} /></button>
+      <div className="meeting-picker-nav-group">
+        <button type="button" className="meeting-picker-icon" onClick={() => moveYear(-1)} aria-label="Năm trước" title="Năm trước"><ChevronsLeft size={16} /></button>
+        <button type="button" className="meeting-picker-icon" onClick={() => moveMonth(-1)} aria-label="Tháng trước" title="Tháng trước"><ChevronLeft size={16} /></button>
+      </div>
       <strong>{new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(parseDateKey(month))}</strong>
-      <button type="button" className="meeting-picker-icon" onClick={() => moveMonth(1)} aria-label="Tháng sau"><ChevronRight size={17} /></button>
+      <div className="meeting-picker-nav-group">
+        <button type="button" className="meeting-picker-icon" onClick={() => moveMonth(1)} aria-label="Tháng sau" title="Tháng sau"><ChevronRight size={16} /></button>
+        <button type="button" className="meeting-picker-icon" onClick={() => moveYear(1)} aria-label="Năm sau" title="Năm sau"><ChevronsRight size={16} /></button>
+      </div>
     </div>
     <div className="meeting-date-weekdays" aria-hidden="true">{['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((day) => <span key={day}>{day}</span>)}</div>
     <div className="meeting-date-grid" onKeyDown={onCalendarKeyDown}>
@@ -138,7 +150,10 @@ export function MeetingDatePicker({ value, onChange, disabled = false }) {
         >{Number(day.slice(-2))}</button>;
       })}
     </div>
-    <button type="button" className="meeting-date-today" onClick={() => { const today = getVietnamDateKey(new Date()); setMonth(today.slice(0, 7) + '-01'); onChange(today); close(); }}>Hôm nay</button>
+    <div className="meeting-picker-footer">
+      <button type="button" className="meeting-date-clear" onClick={() => { onChange(''); close(); }}>Xóa</button>
+      <button type="button" className="meeting-date-today" onClick={() => { const today = getVietnamDateKey(new Date()); setMonth(today.slice(0, 7) + '-01'); onChange(today); close(); }}>Hôm nay</button>
+    </div>
   </div>, document.body);
 
   return <>

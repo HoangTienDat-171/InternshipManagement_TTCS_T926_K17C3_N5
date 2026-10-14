@@ -159,6 +159,18 @@ export default function MeetingCalendarView({ meetings, onOpenMeeting, onCreateA
       : view === 'LIST' ? <div className="meetings-list meeting-calendar-list">{visibleMeetings.length ? visibleMeetings.map((meeting) => <MeetingCard key={meeting.id} meeting={meeting} onOpen={onOpenMeeting} isManager={isManager} emailSummaryText={emailSummaryText} />)
         : <div className="meetings-state meetings-empty"><span><CalendarDays size={23} /></span><strong>Chưa có lịch họp</strong><p>Các cuộc họp trong hệ thống sẽ xuất hiện tại đây.</p></div>}</div>
         : <TimeGrid date={date} view={view} meetings={visibleMeetings} onOpen={onOpenMeeting} onCreateAt={onCreateAt} scrollPositionRef={timeGridScrollPositionRef} />}
-    <footer className="meeting-calendar-footer"><span><i className="is-upcoming" /> Sắp diễn ra</span><span><i className="is-progress" /> Đang diễn ra</span><span><i className="is-completed" /> Đã kết thúc</span><span><i className="is-cancelled" /> Đã hủy</span><button type="button" onClick={() => onCreateAt(date, '09:00')}><Plus size={15} /> Tạo lịch vào ngày đang xem</button></footer>
+    <footer className="meeting-calendar-footer">
+      <div className="meeting-legend-group">
+        <span className="meeting-legend-item"><i className="is-upcoming" /> Sắp diễn ra</span>
+        <span className="meeting-legend-item"><i className="is-progress" /> Đang diễn ra</span>
+        <span className="meeting-legend-item"><i className="is-completed" /> Đã kết thúc</span>
+        <span className="meeting-legend-item"><i className="is-cancelled" /> Đã hủy</span>
+      </div>
+      {isManager && (
+        <button type="button" className="meeting-footer-create-btn" onClick={() => onCreateAt(date, '09:00')}>
+          <Plus size={15} /> Tạo lịch vào ngày đang xem
+        </button>
+      )}
+    </footer>
   </section>;
 }

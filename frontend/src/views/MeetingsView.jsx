@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Check, Clock3, ExternalLink, Plus, RefreshCw, Search, Send, Trash2, Users, X } from 'lucide-react';
+import { AlertCircle, CalendarDays, Check, Clock3, ExternalLink, MapPin, Plus, RefreshCw, Search, Send, Trash2, Users, Video, X } from 'lucide-react';
+import CustomSelect from '../components/CustomSelect';
 import MeetingCalendarView from '../components/MeetingCalendarView';
 import { MeetingDatePicker, MeetingTimePicker } from '../components/MeetingCalendarControls';
 import { apiFetch, readJsonResponse } from '../utils/api';
@@ -345,13 +346,31 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
     </header>
 
     <div className="meetings-toolbar">
-      <label className="meeting-search"><Search size={17} /><input value={meetingSearch} onChange={(event) => setMeetingSearch(event.target.value)} placeholder="Tìm theo tiêu đề, nội dung, địa điểm…" aria-label="Tìm lịch họp" /></label>
-      <label className="meeting-filter"><span>Trạng thái</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-        <option value="ALL">Tất cả</option><option value="UPCOMING">Sắp diễn ra</option><option value="IN_PROGRESS">Đang diễn ra</option><option value="COMPLETED">Đã kết thúc</option><option value="CANCELLED">Đã hủy</option>
-      </select></label>
+      <label className="meeting-search">
+        <Search size={17} />
+        <input value={meetingSearch} onChange={(event) => setMeetingSearch(event.target.value)} placeholder="Tìm theo tiêu đề, nội dung, địa điểm…" aria-label="Tìm lịch họp" />
+      </label>
+      <div className="meeting-filter">
+        <span className="meeting-filter-label">Trạng thái</span>
+        <CustomSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="filter-select">
+          <option value="ALL">Tất cả trạng thái</option>
+          <option value="UPCOMING">Sắp diễn ra</option>
+          <option value="IN_PROGRESS">Đang diễn ra</option>
+          <option value="COMPLETED">Đã kết thúc</option>
+          <option value="CANCELLED">Đã hủy</option>
+        </CustomSelect>
+      </div>
     </div>
 
-    {error && <div className="meeting-alert" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Đóng thông báo lỗi"><X size={15} /></button></div>}
+    {error && (
+      <div className="meeting-alert" role="alert">
+        <div className="meeting-alert-content">
+          <AlertCircle size={18} />
+          <span>{error}</span>
+        </div>
+        <button type="button" onClick={() => setError('')} aria-label="Đóng thông báo lỗi"><X size={15} /></button>
+      </div>
+    )}
     {loading ? <div className="meetings-state" role="status"><RefreshCw size={19} className="meeting-spin" /> Đang tải lịch họp…</div>
       : visibleMeetings.length === 0 ? <div className="meetings-state meetings-empty"><span><CalendarDays size={23} /></span><strong>{meetings.length ? 'Không có lịch họp phù hợp' : 'Chưa có lịch họp'}</strong>
         <p>{meetings.length ? 'Hãy đổi bộ lọc hoặc từ khóa tìm kiếm.' : isManager ? 'Tạo lịch đầu tiên và chọn đúng những người cần tham dự.' : 'Khi được mời, lịch họp sẽ xuất hiện ở đây.'}</p>
@@ -359,64 +378,221 @@ export default function MeetingsView({ currentUser, onShowToast, requestedMeetin
 
     {formOpen && <div className="meeting-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}>
       <section className="meeting-dialog meeting-form-dialog" role="dialog" aria-modal="true" aria-labelledby="meeting-form-title">
-        <header className="meeting-dialog-header"><div><span className="meetings-eyebrow">THÔNG TIN CUỘC HỌP</span><h3 id="meeting-form-title">{editingMeeting ? 'Sửa lịch họp' : 'Tạo lịch họp mới'}</h3></div><button type="button" className="meeting-icon-button" onClick={() => setFormOpen(false)} disabled={saving} aria-label="Đóng"><X size={19} /></button></header>
+        <header className="meeting-dialog-header">
+          <div>
+            <span className="meetings-eyebrow">THÔNG TIN CUỘC HỌP</span>
+            <h3 id="meeting-form-title">{editingMeeting ? 'Sửa lịch họp' : 'Tạo lịch họp mới'}</h3>
+          </div>
+          <button type="button" className="meeting-icon-button" onClick={() => setFormOpen(false)} disabled={saving} aria-label="Đóng"><X size={19} /></button>
+        </header>
         <form className="meeting-form-content" onSubmit={saveMeeting}>
           <div className="meeting-dialog-body">
-            <label className="meeting-field meeting-field-full"><span>Tiêu đề <b>*</b></span><input className="form-control" maxLength={200} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required placeholder="Ví dụ: Trao đổi tiến độ thực tập" /></label>
+            <label className="meeting-field meeting-field-full">
+              <span>Tiêu đề cuộc họp <b>*</b></span>
+              <input className="form-control" maxLength={200} value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required placeholder="Ví dụ: Trao đổi tiến độ thực tập" />
+            </label>
             <div className="meeting-form-grid">
-              <div className="meeting-field"><span>Ngày bắt đầu <b>*</b></span><MeetingDatePicker value={form.start_at.split('T')[0] || ''} onChange={updateStartDate} disabled={saving} /></div>
-              <div className="meeting-field"><span>Giờ bắt đầu <b>*</b></span><MeetingTimePicker value={form.start_at.split('T')[1] || ''} onChange={updateStartTime} label="bắt đầu" disabled={saving} /><small>Định dạng 24 giờ, múi giờ Việt Nam (GMT+7).</small></div>
+              <div className="meeting-field">
+                <span>Ngày bắt đầu <b>*</b></span>
+                <MeetingDatePicker value={form.start_at.split('T')[0] || ''} onChange={updateStartDate} disabled={saving} />
+                <small>Chọn ngày diễn ra theo lịch làm việc.</small>
+              </div>
+              <div className="meeting-field">
+                <span>Giờ bắt đầu <b>*</b></span>
+                <MeetingTimePicker value={form.start_at.split('T')[1] || ''} onChange={updateStartTime} label="bắt đầu" disabled={saving} />
+                <small>Định dạng 24 giờ, múi giờ Việt Nam (GMT+7).</small>
+              </div>
               <div className="meeting-duration-summary-grid">
-                <label className="meeting-field"><span>Thời lượng</span><div className={'meeting-duration-controls' + (hasPresetDuration ? '' : ' is-custom')}><select className="form-control" value={hasPresetDuration ? String(durationMinutes) : 'CUSTOM'} onChange={(event) => updateDuration(event.target.value === 'CUSTOM' ? 75 : event.target.value)}>
-                  <option value="15">15 phút</option><option value="30">30 phút</option><option value="45">45 phút</option><option value="60">1 giờ</option><option value="90">1 giờ 30 phút</option><option value="120">2 giờ</option><option value="CUSTOM">Tùy chỉnh</option>
-                </select>{!hasPresetDuration && <input className="form-control" type="number" min="1" max="1440" step="1" aria-label="Thời lượng tùy chỉnh, tính bằng phút" value={durationMinutes || 60} onChange={(event) => updateDuration(event.target.value)} />}</div></label>
-                <div className="meeting-field"><span>Kết thúc dự kiến</span><div className="meeting-end-display"><CalendarDays size={15} /><strong>{formatVietnamDateKey(form.end_at.split('T')[0] || '', { day: 'numeric', month: 'short', year: 'numeric' })}</strong><Clock3 size={15} /><strong>{form.end_at.split('T')[1] || '—'}</strong></div><small>Tự tính theo giờ bắt đầu và thời lượng.</small></div>
+                <div className="meeting-field">
+                  <span>Thời lượng</span>
+                  <div className={'meeting-duration-controls' + (hasPresetDuration ? '' : ' is-custom')}>
+                    <CustomSelect
+                      className="form-select"
+                      value={hasPresetDuration ? String(durationMinutes) : 'CUSTOM'}
+                      onChange={(event) => updateDuration(event.target.value === 'CUSTOM' ? 75 : event.target.value)}
+                    >
+                      <option value="15">15 phút</option>
+                      <option value="30">30 phút</option>
+                      <option value="45">45 phút</option>
+                      <option value="60">1 giờ</option>
+                      <option value="90">1 giờ 30 phút</option>
+                      <option value="120">2 giờ</option>
+                      <option value="CUSTOM">Tùy chỉnh</option>
+                    </CustomSelect>
+                    {!hasPresetDuration && (
+                      <div className="meeting-custom-duration-wrap">
+                        <input
+                          className="form-control"
+                          type="number"
+                          min="1"
+                          max="1440"
+                          step="1"
+                          aria-label="Thời lượng tùy chỉnh, tính bằng phút"
+                          value={durationMinutes || 60}
+                          onChange={(event) => updateDuration(event.target.value)}
+                        />
+                        <span className="meeting-custom-duration-unit">phút</span>
+                      </div>
+                    )}
+                  </div>
+                  <small>Chọn khoảng thời gian dự kiến diễn ra.</small>
+                </div>
+                <div className="meeting-field">
+                  <span>Kết thúc dự kiến</span>
+                  <div className="meeting-end-display">
+                    <span className="meeting-end-badge"><CalendarDays size={15} /><strong>{formatVietnamDateKey(form.end_at.split('T')[0] || '', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
+                    <span className="meeting-end-badge"><Clock3 size={15} /><strong>{form.end_at.split('T')[1] || '—'}</strong></span>
+                  </div>
+                  <small>Tự tính theo giờ bắt đầu và thời lượng.</small>
+                </div>
               </div>
-              <label className="meeting-field"><span>Địa điểm</span><input className="form-control" maxLength={500} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="Phòng họp hoặc địa chỉ" /></label>
-              <label className="meeting-field"><span>Link họp online</span><input className="form-control" type="url" maxLength={2000} value={form.meeting_url} onChange={(event) => setForm({ ...form, meeting_url: event.target.value })} placeholder="https://…" /></label>
+              <label className="meeting-field">
+                <span>Địa điểm</span>
+                <div className="meeting-input-with-icon">
+                  <MapPin size={16} />
+                  <input className="form-control" maxLength={500} value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="Phòng họp hoặc địa chỉ" />
+                </div>
+              </label>
+              <label className="meeting-field">
+                <span>Link họp online</span>
+                <div className="meeting-input-with-icon">
+                  <Video size={16} />
+                  <input className="form-control" type="url" maxLength={2000} value={form.meeting_url} onChange={(event) => setForm({ ...form, meeting_url: event.target.value })} placeholder="https://…" />
+                </div>
+              </label>
             </div>
-            <label className="meeting-field meeting-field-full"><span>Nội dung</span><textarea className="form-control" rows={3} maxLength={10000} value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="Nội dung cần trao đổi" /></label>
+            <label className="meeting-field meeting-field-full">
+              <span>Nội dung cuộc họp</span>
+              <textarea className="form-control" rows={3} maxLength={10000} value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="Nội dung cần trao đổi, mục tiêu và tài liệu chuẩn bị..." />
+            </label>
             <div className="meeting-field meeting-field-full">
-              <span>Người tham gia <b>*</b><small>Chọn ít nhất một tài khoản đang hoạt động. Tìm theo tên, email hoặc chương trình.</small></span>
-              {selectedParticipants.length > 0 && <div className="meeting-selected-list">{selectedParticipants.map((person) => <button type="button" key={person.ma_nguoi_dung} onClick={() => toggleParticipant(person.ma_nguoi_dung)} title="Bỏ người tham gia">{person.ho_ten}<X size={13} /></button>)}</div>}
-              <label className="meeting-search meeting-participant-search"><Search size={16} /><input value={participantSearch} onChange={(event) => setParticipantSearch(event.target.value)} placeholder="Tìm tên hoặc email…" aria-label="Tìm người tham gia" /></label>
+              <div className="meeting-attendees-header">
+                <span>Người tham gia <b>*</b></span>
+                <span className="meeting-attendees-count">{selectedParticipants.length} đã chọn</span>
+              </div>
+              <small className="meeting-attendees-hint">Chọn ít nhất một tài khoản tham dự. Tìm theo tên, email, vai trò hoặc chương trình.</small>
+              {selectedParticipants.length > 0 && (
+                <div className="meeting-selected-list">
+                  {selectedParticipants.map((person) => (
+                    <span key={person.ma_nguoi_dung} className="meeting-selected-pill">
+                      <span className="meeting-pill-name">{person.ho_ten}</span>
+                      <span className="meeting-pill-role">{roleLabel(person.vai_tro)}</span>
+                      <button type="button" onClick={() => toggleParticipant(person.ma_nguoi_dung)} title="Bỏ người tham gia" aria-label={`Bỏ ${person.ho_ten}`}>
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <label className="meeting-search meeting-participant-search">
+                <Search size={16} />
+                <input value={participantSearch} onChange={(event) => setParticipantSearch(event.target.value)} placeholder="Tìm tên, email, phòng ban…" aria-label="Tìm người tham gia" />
+              </label>
               <div className="meeting-participant-results" role="group" aria-label="Chọn người tham gia">
-                {participants.length === 0 ? <p>{participantSearch ? 'Không tìm thấy tài khoản phù hợp.' : 'Chưa có tài khoản đang hoạt động.'}</p> : participants.map((person) => {
-                  const checked = form.attendee_ids.includes(Number(person.ma_nguoi_dung));
-                  return <label className={`meeting-participant-option${checked ? ' is-selected' : ''}`} key={person.ma_nguoi_dung}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleParticipant(person.ma_nguoi_dung)} />
-                    <span className="meeting-participant-check">{checked && <Check size={13} />}</span>
-                    <span className="meeting-participant-copy"><strong>{person.ho_ten}</strong><small>{person.email} · {roleLabel(person.vai_tro)}{person.ten_phong_ban ? ` · ${person.ten_phong_ban}` : ''}</small>{person.programs?.length > 0 && <small>Chương trình: {person.programs.join(', ')}</small>}</span>
-                  </label>;
-                })}
+                {participants.length === 0 ? (
+                  <p className="meeting-participant-empty">{participantSearch ? 'Không tìm thấy tài khoản phù hợp.' : 'Chưa có tài khoản đang hoạt động.'}</p>
+                ) : (
+                  participants.map((person) => {
+                    const checked = form.attendee_ids.includes(Number(person.ma_nguoi_dung));
+                    return (
+                      <label className={`meeting-participant-option${checked ? ' is-selected' : ''}`} key={person.ma_nguoi_dung}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleParticipant(person.ma_nguoi_dung)} />
+                        <span className="meeting-participant-check">{checked && <Check size={13} />}</span>
+                        <span className="meeting-participant-copy">
+                          <strong>{person.ho_ten}</strong>
+                          <small>{person.email} · <span className="meeting-role-tag">{roleLabel(person.vai_tro)}</span>{person.ten_phong_ban ? ` · ${person.ten_phong_ban}` : ''}</small>
+                          {person.programs?.length > 0 && <small className="meeting-programs-tag">Chương trình: {person.programs.join(', ')}</small>}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
               </div>
             </div>
-            {formError && <p className="meeting-form-error" role="alert">{formError}</p>}
+            {formError && (
+              <div className="meeting-form-error" role="alert">
+                <AlertCircle size={16} />
+                <span>{formError}</span>
+              </div>
+            )}
           </div>
-          <footer className="meeting-dialog-footer"><button type="button" className="btn btn-secondary" onClick={() => setFormOpen(false)} disabled={saving}>Hủy</button><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? <><RefreshCw size={16} className="meeting-spin" />Đang lưu…</> : <><Check size={16} />{editingMeeting ? 'Lưu thay đổi' : 'Tạo lịch họp'}</>}</button></footer>
+          <footer className="meeting-dialog-footer">
+            <button type="button" className="btn btn-secondary" onClick={() => setFormOpen(false)} disabled={saving}>Hủy</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? <><RefreshCw size={16} className="meeting-spin" />Đang lưu…</> : <><Check size={16} />{editingMeeting ? 'Lưu thay đổi' : 'Tạo lịch họp'}</>}
+            </button>
+          </footer>
         </form>
       </section>
     </div>}
 
     {(modalDetail || detailLoading || detailError || requestedMeetingId) && <div className="meeting-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
       <section className="meeting-dialog meeting-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="meeting-detail-title">
-        <header className="meeting-dialog-header"><div><span className="meetings-eyebrow">CHI TIẾT LỊCH HỌP</span><h3 id="meeting-detail-title">{modalDetail?.title || (detailLoading || requestedDetailLoading ? 'Đang tải…' : 'Không mở được lịch họp')}</h3></div><button type="button" className="meeting-icon-button" onClick={closeDetail} aria-label="Đóng"><X size={19} /></button></header>
+        <header className="meeting-dialog-header">
+          <div>
+            <span className="meetings-eyebrow">CHI TIẾT LỊCH HỌP</span>
+            <h3 id="meeting-detail-title">{modalDetail?.title || (detailLoading || requestedDetailLoading ? 'Đang tải…' : 'Không mở được lịch họp')}</h3>
+          </div>
+          <button type="button" className="meeting-icon-button" onClick={closeDetail} aria-label="Đóng"><X size={19} /></button>
+        </header>
         <div className="meeting-dialog-body">
           {(detailLoading || requestedDetailLoading) && <div className="meetings-state"><RefreshCw size={18} className="meeting-spin" />Đang tải chi tiết…</div>}
-          {detailError && <p className="meeting-form-error" role="alert">{detailError}</p>}
+          {detailError && <div className="meeting-form-error" role="alert"><AlertCircle size={16} /><span>{detailError}</span></div>}
           {modalDetail && <>
-            {(() => { const status = meetingDisplayStatus(modalDetail, currentTime); const labels = { UPCOMING: 'Sắp diễn ra', IN_PROGRESS: 'Đang diễn ra', COMPLETED: 'Đã kết thúc', CANCELLED: 'Đã hủy' }; return <span className={'meeting-status is-' + status.toLowerCase()}><i />{labels[status]}</span>; })()}
-            <dl className="meeting-detail-grid"><div><dt>Thời gian</dt><dd>{formatDate(modalDetail.start_at)} – {formatDate(modalDetail.end_at)}</dd></div><div><dt>Người tổ chức</dt><dd>{modalDetail.organizer_name} · {modalDetail.organizer_email}</dd></div>
-              {modalDetail.location && <div><dt>Địa điểm</dt><dd>{modalDetail.location}</dd></div>}{modalDetail.meeting_url && <div><dt>Link họp</dt><dd><a href={modalDetail.meeting_url} target="_blank" rel="noreferrer">Mở link họp <ExternalLink size={13} /></a></dd></div>}
-              <div className="meeting-detail-full"><dt>Nội dung</dt><dd>{modalDetail.content || 'Không có nội dung bổ sung.'}</dd></div>
+            {(() => { const status = meetingDisplayStatus(modalDetail, currentTime); const labels = { UPCOMING: 'Sắp diễn ra', IN_PROGRESS: 'Đang diễn ra', COMPLETED: 'Đã kết thúc', CANCELLED: 'Đã hủy' }; return <div className="meeting-detail-status-wrap"><span className={'meeting-status is-' + status.toLowerCase()}><i />{labels[status]}</span></div>; })()}
+            <dl className="meeting-detail-grid">
+              <div>
+                <dt><Clock3 size={14} /> Thời gian</dt>
+                <dd>{formatDate(modalDetail.start_at)} – {formatDate(modalDetail.end_at)}</dd>
+              </div>
+              <div>
+                <dt><Users size={14} /> Người tổ chức</dt>
+                <dd>{modalDetail.organizer_name} <span className="meeting-organizer-email">({modalDetail.organizer_email})</span></dd>
+              </div>
+              {modalDetail.location && (
+                <div>
+                  <dt><MapPin size={14} /> Địa điểm</dt>
+                  <dd>{modalDetail.location}</dd>
+                </div>
+              )}
+              {modalDetail.meeting_url && (
+                <div>
+                  <dt><Video size={14} /> Link họp online</dt>
+                  <dd><a href={modalDetail.meeting_url} target="_blank" rel="noreferrer" className="meeting-join-link">Tham gia cuộc họp <ExternalLink size={13} /></a></dd>
+                </div>
+              )}
+              <div className="meeting-detail-full">
+                <dt>Nội dung cuộc họp</dt>
+                <dd className="meeting-detail-content">{modalDetail.content || 'Không có nội dung bổ sung.'}</dd>
+              </div>
             </dl>
-            <div className="meeting-detail-attendees"><strong><Users size={16} />Người tham gia ({modalDetail.attendees?.filter((person) => person.status === 'INVITED').length || 0})</strong>
-              {modalDetail.attendees?.map((person) => <span key={person.user_id} className={person.status === 'REMOVED' ? 'is-removed' : ''}>{person.ho_ten}<small>{person.email} · {roleLabel(person.vai_tro)}{person.status === 'REMOVED' ? ' · Đã gỡ' : ''}</small></span>)}
+            <div className="meeting-detail-attendees">
+              <div className="meeting-attendees-header">
+                <strong><Users size={16} /> Người tham gia ({modalDetail.attendees?.filter((person) => person.status === 'INVITED').length || 0})</strong>
+              </div>
+              <div className="meeting-attendees-chips">
+                {modalDetail.attendees?.map((person) => (
+                  <span key={person.user_id} className={'meeting-attendee-chip' + (person.status === 'REMOVED' ? ' is-removed' : '')}>
+                    <span className="meeting-attendee-name">{person.ho_ten}</span>
+                    <small>{person.email} · {roleLabel(person.vai_tro)}{person.status === 'REMOVED' ? ' · Đã gỡ' : ''}</small>
+                  </span>
+                ))}
+              </div>
             </div>
-            {isManager && <p className="meeting-detail-email"><Send size={15} />Email: {emailSummaryText(modalDetail.email_summary)}</p>}
+            {isManager && (
+              <div className="meeting-detail-email-card">
+                <Send size={15} />
+                <span>Thông báo email: <strong>{emailSummaryText(modalDetail.email_summary)}</strong></span>
+              </div>
+            )}
           </>}
         </div>
-        {modalDetail && isManager && modalDetail.status === 'SCHEDULED' && <footer className="meeting-dialog-footer"><button type="button" className="btn btn-secondary" onClick={() => { startEdit(modalDetail); }}>Sửa lịch</button><button type="button" className="btn btn-danger-soft" onClick={() => setCancelTarget(modalDetail)}><Trash2 size={15} />Hủy lịch</button></footer>}
+        {modalDetail && isManager && modalDetail.status === 'SCHEDULED' && (
+          <footer className="meeting-dialog-footer">
+            <button type="button" className="btn btn-secondary" onClick={() => { startEdit(modalDetail); }}>Sửa lịch</button>
+            <button type="button" className="btn btn-danger-soft" onClick={() => setCancelTarget(modalDetail)}><Trash2 size={15} /> Hủy lịch</button>
+          </footer>
+        )}
       </section>
     </div>}
 
