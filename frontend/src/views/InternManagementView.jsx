@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { apiFetch } from '../utils/api';
 import { 
   Search, 
@@ -11,9 +11,12 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  FileText,
 } from 'lucide-react';
 import InternModal from '../components/InternModal';
 import CustomSelect from '../components/CustomSelect';
+
+const FinalReportManagementView = lazy(() => import('./FinalReportManagementView'));
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
 import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
@@ -54,6 +57,8 @@ export default function InternManagementView({
   const [emailOutboxLoading, setEmailOutboxLoading] = useState(false);
   const [emailOutboxError, setEmailOutboxError] = useState('');
   const [emailOutboxRefresh, setEmailOutboxRefresh] = useState(0);
+  const [finalReportModalOpen, setFinalReportModalOpen] = useState(false);
+  const [reportProfileId, setReportProfileId] = useState(null);
   const tableScrollRef = useRef(null);
 
   const requestInterns = useCallback(async ({ signal } = {}) => {
@@ -238,6 +243,17 @@ export default function InternManagementView({
             type="button"
             className="btn btn-secondary"
             onClick={() => {
+              setReportProfileId(null);
+              setFinalReportModalOpen(true);
+            }}
+          >
+            <FileText size={16} />
+            <span>Báo cáo cuối kỳ</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
               setEmailOutboxError('');
               setEmailOutboxLoading(true);
               setEmailOutboxOpen(true);
@@ -414,6 +430,17 @@ export default function InternManagementView({
                           onClick={() => setDetailModalIntern(intern)}
                         >
                           <Eye size={13} />
+                        </button>
+                        <button
+                          className="btn btn-icon"
+                          title="Báo cáo cuối kỳ"
+                          aria-label="Báo cáo cuối kỳ"
+                          onClick={() => {
+                            setReportProfileId(intern.ma_ho_so);
+                            setFinalReportModalOpen(true);
+                          }}
+                        >
+                          <FileText size={13} />
                         </button>
                         <button
                           className="btn btn-outline-primary btn-sm"
@@ -640,6 +667,19 @@ export default function InternManagementView({
               </div>
             </div>
             <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  const pid = detailModalIntern.ma_ho_so;
+                  setDetailModalIntern(null);
+                  setReportProfileId(pid);
+                  setFinalReportModalOpen(true);
+                }}
+              >
+                <FileText size={14} />
+                <span>Báo cáo cuối kỳ</span>
+              </button>
               <button 
                 className="btn btn-outline-primary btn-sm"
                 onClick={() => {
@@ -656,6 +696,17 @@ export default function InternManagementView({
             </div>
           </div>
         </div>
+      )}
+
+      {finalReportModalOpen && (
+        <Suspense fallback={null}>
+          <FinalReportManagementView
+            isModal
+            initialProfileId={reportProfileId}
+            onCloseModal={() => setFinalReportModalOpen(false)}
+            onShowToast={onShowToast}
+          />
+        </Suspense>
       )}
     </div>
   );

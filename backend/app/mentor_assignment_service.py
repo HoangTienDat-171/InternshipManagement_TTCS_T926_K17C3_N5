@@ -186,6 +186,7 @@ def get_intern_active_assignment(
         LIMIT 1
     """, (profile_id,)).fetchone()
     if legacy:
+        legacy = dict(legacy)
         t_status = get_timeline_status(
             legacy["ngay_bat_dau"], legacy["ngay_ket_thuc"], legacy["trang_thai_ct"], as_of
         ) if legacy["ma_chuong_trinh"] else "CURRENT"
