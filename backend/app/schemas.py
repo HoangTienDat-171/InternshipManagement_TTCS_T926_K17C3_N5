@@ -117,6 +117,36 @@ class InternUpdate(BaseModel):
     chuyen_nganh: Optional[str] = None
     trang_thai_thuc_tap: Optional[Literal["DangThucTap", "HoanThanh", "ThoiHoc"]] = None
 
+class InternMentorSummary(BaseModel):
+    mentor_ma_nguoi_dung: Optional[int] = None
+    mentor_ho_ten: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_so_dien_thoai: Optional[str] = None
+    mentor_phong_ban: Optional[str] = None
+    mentor_chuyen_mon: Optional[str] = None
+    mentor_kinh_nghiem: Optional[int] = None
+    ngay_phan_cong: Optional[str] = None
+
+
+class InternProgramDetail(BaseModel):
+    ma_ung_tuyen: int
+    ma_chuong_trinh: int
+    ma_ct: Optional[str] = None
+    ten_ct: str
+    ngay_bat_dau: Optional[str] = None
+    ngay_ket_thuc: Optional[str] = None
+    trang_thai_chuong_trinh: Optional[str] = None
+    timeline_status: str
+    mentor_ma_nguoi_dung: Optional[int] = None
+    mentor_ho_ten: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_so_dien_thoai: Optional[str] = None
+    mentor_phong_ban: Optional[str] = None
+    mentor_chuyen_mon: Optional[str] = None
+    mentor_kinh_nghiem: Optional[int] = None
+    ngay_phan_cong: Optional[str] = None
+
+
 class InternDetail(BaseModel):
     ma_ho_so: int
     ma_nguoi_dung: int
@@ -139,11 +169,30 @@ class InternDetail(BaseModel):
     mentor_phong_ban: Optional[str] = None
     mentor_chuyen_mon: Optional[str] = None
     mentor_kinh_nghiem: Optional[int] = None
+    chuong_trinh_tham_gia: List[InternProgramDetail] = Field(default_factory=list)
+    mentor_chua_gan_chuong_trinh: List[InternMentorSummary] = Field(default_factory=list)
 
 class Department(BaseModel):
     ma_phong_ban: int
     ten_phong_ban: str
     mo_ta: Optional[str] = None
+
+class DepartmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ten_phong_ban: str = Field(min_length=1, max_length=100)
+
+    @field_validator("ten_phong_ban", mode="before")
+    @classmethod
+    def normalize_department_name(cls, value):
+        if not isinstance(value, str):
+            return value
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        if len(normalized) > 100:
+            raise ValueError("Tên phòng ban không được vượt quá 100 ký tự.")
+        return normalized
 
 class University(BaseModel):
     ma_truong: int

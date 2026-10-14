@@ -29,6 +29,7 @@ export default function InternManagementView({
   universities, 
   onCreateUniversity,
   onShowToast,
+  onCreateDepartment,
 }) {
   const [interns, setInterns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +54,9 @@ export default function InternManagementView({
 
   // Detail view modal
   const [detailModalIntern, setDetailModalIntern] = useState(null);
+  const [detailModalProfileId, setDetailModalProfileId] = useState(null);
+  const [detailModalLoading, setDetailModalLoading] = useState(false);
+  const [detailModalError, setDetailModalError] = useState('');
   const [emailOutboxOpen, setEmailOutboxOpen] = useState(false);
   const [emailOutbox, setEmailOutbox] = useState([]);
   const [emailOutboxLoading, setEmailOutboxLoading] = useState(false);
@@ -136,6 +140,33 @@ export default function InternManagementView({
     return () => controller.abort();
   }, [emailOutboxOpen, emailOutboxRefresh]);
 
+  useEffect(() => {
+    if (detailModalProfileId == null) return undefined;
+    const controller = new AbortController();
+
+    apiFetch(`/api/interns/${detailModalProfileId}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(payload?.detail || 'Không thể tải chi tiết hồ sơ thực tập sinh.');
+        }
+        return res.json();
+      })
+      .then((detail) => {
+        if (!controller.signal.aborted) setDetailModalIntern(detail);
+      })
+      .catch((error) => {
+        if (error.name !== 'AbortError' && !controller.signal.aborted) {
+          setDetailModalError(error.message || 'Không thể tải chi tiết hồ sơ thực tập sinh.');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailModalLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [detailModalProfileId]);
+
   const refreshInterns = () => {
     setLoading(true);
     setRefreshVersion((version) => version + 1);
@@ -145,6 +176,19 @@ export default function InternManagementView({
     setSelectedInternId(internId);
     setModalSession((session) => session + 1);
     setModalOpen(true);
+  };
+
+  const openInternDetails = (intern) => {
+    setDetailModalIntern(intern);
+    setDetailModalLoading(true);
+    setDetailModalError('');
+    setDetailModalProfileId(intern.ma_ho_so);
+  };
+
+  const closeInternDetails = () => {
+    setDetailModalProfileId(null);
+    setDetailModalIntern(null);
+    setDetailModalError('');
   };
 
   const handleSearchSubmit = (e) => {
@@ -428,7 +472,7 @@ export default function InternManagementView({
                           className="btn btn-icon"
                           title="Xem chi tiết"
                           aria-label="Xem chi tiết"
-                          onClick={() => setDetailModalIntern(intern)}
+                          onClick={() => openInternDetails(intern)}
                         >
                           <Eye size={13} />
                         </button>
@@ -605,6 +649,7 @@ export default function InternManagementView({
         internId={selectedInternId}
         universities={universities}
         onCreateUniversity={onCreateUniversity}
+        onCreateDepartment={onCreateDepartment}
         onSuccess={(msg) => {
           onShowToast(msg);
           refreshInterns();
@@ -612,12 +657,12 @@ export default function InternManagementView({
       />
 
       {/* Quick Detail Modal */}
-      {detailModalIntern && (
-        <div className="modal-overlay" onClick={() => setDetailModalIntern(null)}>
+      {detailModalProfileId != null && detailModalIntern && (
+        <div className="modal-overlay" onClick={closeInternDetails}>
           <div className="modal-container" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Hồ sơ sinh viên #{detailModalIntern.ma_ho_so}</h3>
-              <button className="modal-close-btn" onClick={() => setDetailModalIntern(null)}>×</button>
+              <button className="modal-close-btn" onClick={closeInternDetails}>×</button>
             </div>
             <div className="modal-body">
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
@@ -650,19 +695,58 @@ export default function InternManagementView({
                   <div>{getThucTapBadge(detailModalIntern.trang_thai_thuc_tap)}</div>
                 </div>
                 <div style={{ gridColumn: '1 / -1', paddingTop: '12px', borderTop: '1px solid var(--border-color)' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Mentor phụ trách:</span>
-                  {detailModalIntern.mentor_ho_ten ? (
-                    <div style={{ marginTop: '4px' }}>
-                      <div style={{ fontWeight: 600, fontSize: '15px' }}>{detailModalIntern.mentor_ho_ten}</div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
-                        {[detailModalIntern.mentor_email, detailModalIntern.mentor_so_dien_thoai, detailModalIntern.mentor_phong_ban].filter(Boolean).join(' · ') || 'Chưa cập nhật thông tin liên hệ'}
-                      </div>
-                      <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
-                        Chuyên môn: {detailModalIntern.mentor_chuyen_mon || 'Chưa cập nhật'} · Kinh nghiệm: {detailModalIntern.mentor_kinh_nghiem != null ? `${detailModalIntern.mentor_kinh_nghiem} năm` : 'Chưa cập nhật'}
-                      </div>
+                  <h4 style={{ margin: '0 0 10px' }}>Chương trình thực tập đã được duyệt</h4>
+                  {detailModalLoading && (
+                    <p role="status" style={{ color: 'var(--text-muted)', margin: '8px 0' }}>Đang tải lịch sử chương trình và Mentor...</p>
+                  )}
+                  {detailModalError && (
+                    <div className="alert-banner error" role="alert" style={{ margin: '8px 0' }}>
+                      <AlertCircle size={16} /><span>{detailModalError}</span>
                     </div>
-                  ) : (
-                    <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>Chưa được phân công Mentor.</div>
+                  )}
+                  {!detailModalLoading && !detailModalError && (
+                    <>
+                      {detailModalIntern.chuong_trinh_tham_gia?.length ? (
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                          {detailModalIntern.chuong_trinh_tham_gia.map((program) => (
+                            <article key={program.ma_ung_tuyen} style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                                <strong>{program.ten_ct} {program.ma_ct ? `(${program.ma_ct})` : ''}</strong>
+                                <span style={{ color: 'var(--text-muted)' }}>
+                                  {{ CURRENT: 'Đang diễn ra', HISTORICAL: 'Đã kết thúc', UPCOMING: 'Sắp bắt đầu' }[program.timeline_status] || program.timeline_status}
+                                </span>
+                              </div>
+                              <div style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                                {program.ngay_bat_dau || 'Chưa có ngày bắt đầu'} – {program.ngay_ket_thuc || 'Chưa có ngày kết thúc'}
+                              </div>
+                              <div style={{ marginTop: '8px' }}>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Mentor theo chương trình: </span>
+                                {program.mentor_ho_ten || 'Chưa được phân công'}
+                                {program.mentor_ho_ten && (
+                                  <div style={{ color: 'var(--text-muted)', marginTop: '3px' }}>
+                                    {[program.mentor_email, program.mentor_so_dien_thoai, program.mentor_phong_ban].filter(Boolean).join(' · ') || 'Chưa cập nhật thông tin liên hệ'}
+                                    {' · Chuyên môn: '}{program.mentor_chuyen_mon || 'Chưa cập nhật'}
+                                    {' · Kinh nghiệm: '}{program.mentor_kinh_nghiem != null ? `${program.mentor_kinh_nghiem} năm` : 'Chưa cập nhật'}
+                                  </div>
+                                )}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ color: 'var(--text-muted)', margin: '8px 0' }}>Hồ sơ chưa có chương trình nào được duyệt.</p>
+                      )}
+                      {detailModalIntern.mentor_chua_gan_chuong_trinh?.length > 0 && (
+                        <div style={{ marginTop: '12px' }}>
+                          <strong>Phân công cũ chưa gắn với chương trình</strong>
+                          {detailModalIntern.mentor_chua_gan_chuong_trinh.map((mentor, index) => (
+                            <div key={`${mentor.mentor_ma_nguoi_dung}-${mentor.ngay_phan_cong || index}`} style={{ color: 'var(--text-muted)', marginTop: '4px' }}>
+                              {mentor.mentor_ho_ten || 'Mentor'} · {mentor.ngay_phan_cong || 'Không rõ thời gian'}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -673,7 +757,7 @@ export default function InternManagementView({
                 className="btn btn-secondary btn-sm"
                 onClick={() => {
                   const pid = detailModalIntern.ma_ho_so;
-                  setDetailModalIntern(null);
+                  closeInternDetails();
                   setReportProfileId(pid);
                   setFinalReportModalOpen(true);
                 }}
@@ -685,13 +769,13 @@ export default function InternManagementView({
                 className="btn btn-outline-primary btn-sm"
                 onClick={() => {
                   openInternModal(detailModalIntern.ma_ho_so);
-                  setDetailModalIntern(null);
+                  closeInternDetails();
                 }}
               >
                 <Edit3 size={14} />
                 <span>Chỉnh sửa hồ sơ</span>
               </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => setDetailModalIntern(null)}>
+              <button className="btn btn-secondary btn-sm" onClick={closeInternDetails}>
                 Đóng
               </button>
             </div>

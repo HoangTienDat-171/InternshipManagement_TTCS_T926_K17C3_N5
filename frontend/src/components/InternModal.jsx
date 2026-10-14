@@ -26,8 +26,10 @@ export default function InternModal({
   isOpen, 
   onClose, 
   internId,
+  departments = [],
   universities, 
   onCreateUniversity,
+  onCreateDepartment,
   onSuccess 
 }) {
   const isEdit = Boolean(internId);
@@ -210,6 +212,25 @@ export default function InternModal({
                   value={formData.chuyen_nganh}
                   onChange={handleChange}
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="intern-department">Phòng ban (Tùy chọn)</label>
+                <MasterDataSelect
+                  id="intern-department"
+                  name="ma_phong_ban"
+                  value={formData.ma_phong_ban}
+                  items={[{ ma_phong_ban: '', ten_phong_ban: 'Chưa phân công' }, ...departments]}
+                  idKey="ma_phong_ban"
+                  labelKey="ten_phong_ban"
+                  placeholder="Tìm hoặc chọn phòng ban"
+                  itemName="phòng ban"
+                  maxNameLength={100}
+                  confirmCreate
+                  onChange={handleChange}
+                  onCreateNew={onCreateDepartment}
+                />
+                <small className="form-hint">Có thể để trống nếu chưa phân công. Thêm phòng ban vào danh mục không tự gán phòng ban cho thực tập sinh.</small>
               </div>
 
               {isEdit && <div className="form-group">

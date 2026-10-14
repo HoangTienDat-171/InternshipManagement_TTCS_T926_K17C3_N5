@@ -375,11 +375,15 @@ def init_mysql_db():
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
                 ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
                 ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ngay_xet_duyet DATETIME NULL,
-                nguoi_xet_duyet INT NULL, UNIQUE KEY uq_ung_tuyen_chuong_trinh (ma_chuong_trinh, ma_ho_so),
+                nguoi_xet_duyet INT NULL,
+                completion_status ENUM('ChuaHoanThanh','HoanThanh') NOT NULL DEFAULT 'ChuaHoanThanh',
+                completion_updated_by INT NULL, completion_updated_at DATETIME NULL,
+                UNIQUE KEY uq_ung_tuyen_chuong_trinh (ma_chuong_trinh, ma_ho_so),
                 KEY idx_ung_tuyen_chuong_trinh_trang_thai (ma_chuong_trinh, trang_thai),
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-                FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+                FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+                FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
                 ma_bao_cao BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -631,6 +635,40 @@ def init_mysql_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
+
+        application_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'UNG_TUYEN_CHUONG_TRINH'
+        """).fetchall()
+        application_column_names = {row["COLUMN_NAME"] for row in application_columns}
+        if "completion_status" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_status ENUM('ChuaHoanThanh','HoanThanh')
+                NOT NULL DEFAULT 'ChuaHoanThanh' AFTER nguoi_xet_duyet
+            """)
+        if "completion_updated_by" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_updated_by INT NULL AFTER completion_status
+            """)
+        if "completion_updated_at" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_updated_at DATETIME NULL AFTER completion_updated_by
+            """)
+        completion_actor_fk = conn.execute("""
+            SELECT 1 FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'UNG_TUYEN_CHUONG_TRINH'
+              AND COLUMN_NAME = 'completion_updated_by' AND REFERENCED_TABLE_NAME = 'NGUOI_DUNG'
+            LIMIT 1
+        """).fetchone()
+        if not completion_actor_fk:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD CONSTRAINT fk_application_completion_actor
+                FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            """)
 
         allowance_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -1232,12 +1270,30 @@ def init_db():
         ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         ngay_xet_duyet DATETIME,
         nguoi_xet_duyet INTEGER,
+        completion_status TEXT NOT NULL DEFAULT 'ChuaHoanThanh'
+            CHECK(completion_status IN ('ChuaHoanThanh', 'HoanThanh')),
+        completion_updated_by INTEGER,
+        completion_updated_at DATETIME,
         UNIQUE(ma_chuong_trinh, ma_ho_so),
         FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-        FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+        FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
     """)
+    application_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(UNG_TUYEN_CHUONG_TRINH)")}
+    if "completion_status" not in application_columns:
+        cursor.execute("""
+            ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_status TEXT NOT NULL
+            DEFAULT 'ChuaHoanThanh' CHECK(completion_status IN ('ChuaHoanThanh', 'HoanThanh'))
+        """)
+    if "completion_updated_by" not in application_columns:
+        cursor.execute("""
+            ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_updated_by INTEGER
+            REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        """)
+    if "completion_updated_at" not in application_columns:
+        cursor.execute("ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_updated_at DATETIME")
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
