@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
+  Download,
   Eye,
   FileText,
   Mail,
@@ -19,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
+import { downloadReport } from '../utils/reportExport';
 import CustomSelect from '../components/CustomSelect';
 import './FinalReportManagementView.css';
 
@@ -340,6 +342,7 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
   const [pageSize, setPageSize] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [exporting, setExporting] = useState('');
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -417,6 +420,23 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
     setPage(1);
   };
 
+  const exportReports = async (format) => {
+    setExporting(format);
+    try {
+      const params = new URLSearchParams({ format });
+      if (appliedSearch) params.set('search', appliedSearch);
+      if (filterProgram) params.set('program_id', filterProgram);
+      if (filterStatus) params.set('status', filterStatus);
+      if (filterProfileId) params.set('internship_profile_id', filterProfileId);
+      await downloadReport(`/api/reports/final-evaluations/export?${params}`, `ims-final-reports.${format}`);
+      onShowToast?.(`Đã xuất báo cáo ${format.toUpperCase()}.`, 'success');
+    } catch (cause) {
+      onShowToast?.(cause.message || 'Không thể xuất báo cáo.', 'error');
+    } finally {
+      setExporting('');
+    }
+  };
+
   const content = (
     <div className="final-report-page">
       <div className="final-report-header">
@@ -424,7 +444,9 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
           <h2>Tổng hợp Báo cáo Đánh giá Cuối kỳ</h2>
           <p>Rà soát và xem trước báo cáo cuối kỳ của thực tập sinh theo chương trình và đánh giá Mentor (US20)</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('xlsx')}><Download size={14} />{exporting === 'xlsx' ? 'Đang xuất…' : 'Xuất Excel'}</button>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('pdf')}><Download size={14} />{exporting === 'pdf' ? 'Đang xuất…' : 'Xuất PDF'}</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={fetchReports} title="Làm mới">
             <RefreshCw size={14} />
             <span>Làm mới</span>

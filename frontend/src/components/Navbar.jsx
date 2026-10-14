@@ -109,6 +109,8 @@ export default function Navbar({
       case 'programs': return canManage ? 'Chương trình thực tập' : 'Chương trình đang mở';
       case 'documents': return 'Quản lý Tài liệu';
       case 'work-shifts': return 'Quản lý ca làm việc';
+      case 'final-reports': return 'Báo cáo cuối kỳ';
+      case 'statistics': return 'Thống kê thực tập sinh';
       case 'leave-requests': return isIntern ? 'Đăng ký nghỉ phép' : 'Quản lý nghỉ phép';
       case 'intern-dashboard': return 'Tổng quan thực tập';
       case 'intern-schedule': return 'Lịch thực tập';

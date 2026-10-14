@@ -25,6 +25,7 @@ const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
 const AllowanceManagementView = lazy(() => import('./views/AllowanceManagementView'));
 const SupportRequestView = lazy(() => import('./views/SupportRequestView'));
 const FinalReportManagementView = lazy(() => import('./views/FinalReportManagementView'));
+const StatisticsManagementView = lazy(() => import('./views/StatisticsManagementView'));
 
 function clearSavedSession() {
   try {
@@ -48,6 +49,7 @@ function tabForPath(path) {
   if (path === '/my-evaluations') return 'my-evaluations';
   if (path === '/work-shifts') return 'work-shifts';
   if (path === '/final-reports' || path === '/reports') return 'final-reports';
+  if (path === '/statistics') return 'statistics';
   return 'interns';
 }
 
@@ -63,6 +65,7 @@ function pathForTab(tab) {
   if (tab === 'my-evaluations') return '/my-evaluations';
   if (tab === 'work-shifts') return '/work-shifts';
   if (tab === 'final-reports') return '/final-reports';
+  if (tab === 'statistics') return '/statistics';
   return '/';
 }
 
@@ -100,7 +103,7 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'support-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -528,6 +531,12 @@ export default function App() {
           {canManageRecords && visibleActiveTab === 'final-reports' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở báo cáo cuối kỳ…</div>}>
               <FinalReportManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {canManageRecords && visibleActiveTab === 'statistics' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở thống kê…</div>}>
+              <StatisticsManagementView onShowToast={showToast} />
             </Suspense>
           )}
 
