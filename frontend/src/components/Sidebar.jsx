@@ -45,6 +45,7 @@ const MENU_CONFIG = [
   { id: 'programs', label: 'Chương trình thực tập', icon: Briefcase, roles: ['manager'] },
   { id: 'documents', label: 'Quản lý Tài liệu', icon: FolderKanban, roles: ['manager'] },
   { id: 'work-shifts', label: 'Quản lý ca làm việc', icon: CalendarDays, roles: ['manager'] },
+  { id: 'final-reports', label: 'Báo cáo cuối kỳ', icon: FileText, roles: ['manager'] },
   { id: 'leave-requests', label: 'Quản lý nghỉ phép', icon: FileSpreadsheet, roles: ['manager'] },
   { id: 'allowances', label: 'Quản lý phụ cấp', icon: BadgeDollarSign, roles: ['manager'] },
   { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },
