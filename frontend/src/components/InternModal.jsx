@@ -28,6 +28,7 @@ export default function InternModal({
   internId,
   departments = [],
   universities, 
+  onCreateUniversity,
   onCreateDepartment,
   onSuccess 
 }) {
@@ -90,9 +91,9 @@ export default function InternModal({
         ho_ten: formData.ho_ten.trim(),
         email: formData.email.trim(),
         so_dien_thoai: formData.so_dien_thoai.trim(),
-        ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null,
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
+        ...(isEdit ? { ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null } : {}),
         ...(isEdit && approvalStatus === 'DaDuyet' ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 
@@ -188,19 +189,17 @@ export default function InternModal({
 
               <div className="form-group">
                 <label className="form-label">Trường Đại học</label>
-                <CustomSelect
+                <MasterDataSelect
+                  id="intern-university"
                   name="ma_truong"
-                  className="form-select"
                   value={formData.ma_truong}
+                  items={universities}
+                  idKey="ma_truong"
+                  labelKey="ten_truong"
+                  placeholder="Tìm hoặc chọn trường đại học"
+                  onCreateNew={onCreateUniversity}
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn trường đại học --</option>
-                  {universities.map((u) => (
-                    <option key={u.ma_truong} value={u.ma_truong}>
-                      {u.ten_truong}
-                    </option>
-                  ))}
-                </CustomSelect>
+                />
               </div>
 
               <div className="form-group">

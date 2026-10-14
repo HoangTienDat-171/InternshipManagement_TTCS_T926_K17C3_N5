@@ -30,9 +30,9 @@ Chạy frontend trong terminal khác:
     cd frontend
     npm run dev -- --host 127.0.0.1 --port 3000
 
-Mở http://127.0.0.1:3000; API docs local ở http://127.0.0.1:8000/docs. Vite chuyển tiếp /api tới backend cục bộ. run_servers.bat là launcher Windows và phụ thuộc backend/.venv.
+Mở http://127.0.0.1:3000; API docs local ở http://127.0.0.1:8000/docs. Vite chuyển tiếp /api tới backend cục bộ. run_server.bat là launcher Windows và phụ thuộc backend/.venv.
 
-Có thể chạy `run_servers.bat` ở thư mục gốc để khởi động cả hai cổng. Launcher kiểm tra Node/npm, virtualenv, cấu hình MySQL và cổng 3000/8000; nếu thiếu thư viện Frontend/Backend thì cài theo manifest trước khi chạy. Backend gọi `init_db()` khi khởi động để đảm bảo schema/dữ liệu danh mục mặc định trong database đã cấu hình.
+Chạy `run_server.bat` ở thư mục gốc để khởi động MySQL, Backend, Frontend tại cổng 3000 và kiểm tra SMTP/Email Worker. Frontend dùng Vite dev server nên mã giao diện trong workspace hiện tại được cập nhật ngay khi lưu file. Launcher kiểm tra Node/npm, virtualenv, cấu hình MySQL và cổng 3000/8000; nếu thiếu gói frontend, launcher tự cài từ manifest rồi chạy. Backend gọi `init_db()` khi khởi động để đảm bảo schema/dữ liệu danh mục mặc định trong database đã cấu hình. Dùng `stop_server.bat` để dừng các dịch vụ do launcher quản lý.
 
 Tài khoản demo hiện dùng mật khẩu chung 123456; chỉ dùng với dữ liệu demo local. `database.init_db()` tạo các bảng/module còn thiếu và đảm bảo hồ sơ Mentor/TTS. Sao lưu MySQL trước khi chạy migration trên dữ liệu quan trọng.
 

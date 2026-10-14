@@ -154,6 +154,23 @@ export default function App() {
     }, 3500);
   };
 
+  const createMasterItem = async (kind, name) => {
+    const response = await apiFetch(`/api/master/${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(kind === 'departments' ? { ten_phong_ban: name } : { ten_truong: name }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Không thể thêm danh mục.');
+    if (kind === 'departments') {
+      setDepartments((current) => current.some((item) => item.ma_phong_ban === data.ma_phong_ban) ? current : [...current, data]);
+    } else {
+      setUniversities((current) => current.some((item) => item.ma_truong === data.ma_truong) ? current : [...current, data]);
+    }
+    showToast(kind === 'departments' ? 'Đã thêm phòng ban mới.' : 'Đã thêm trường đại học mới.');
+    return data;
+  };
+
   const createDepartment = async (departmentName) => {
     const response = await apiFetch('/api/master/departments', {
       method: 'POST',
@@ -514,6 +531,7 @@ export default function App() {
             <InternManagementView
               departments={departments}
               universities={universities}
+              onCreateUniversity={(name) => createMasterItem('universities', name)}
               onShowToast={showToast}
               onCreateDepartment={createDepartment}
             />
@@ -522,6 +540,7 @@ export default function App() {
           {canManageRecords && visibleActiveTab === 'mentors' && (
             <MentorManagementView
               departments={departments}
+              onCreateDepartment={canManageRecords ? createDepartment : undefined}
               onShowToast={showToast}
               currentUser={currentUser}
             />
@@ -530,6 +549,7 @@ export default function App() {
           {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'programs' && (
             <ProgramManagementView
               departments={departments}
+              onCreateDepartment={canManageRecords ? createDepartment : undefined}
               onShowToast={showToast}
               currentUser={currentUser}
             />
@@ -563,6 +583,7 @@ export default function App() {
           {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
             <AccountManagementView
               departments={departments}
+              onCreateDepartment={createDepartment}
               onShowToast={showToast}
               currentUser={currentUser}
             />

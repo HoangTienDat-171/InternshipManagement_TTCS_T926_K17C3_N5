@@ -26,7 +26,7 @@ if not exist "%IMS_PYTHON%" (
     )
 )
 
-"%IMS_PYTHON%" "%IMS_ROOT%scripts\launcher.py" start %*
+"%IMS_PYTHON%" "%IMS_ROOT%scripts\launcher.py" start --install %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (

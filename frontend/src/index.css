@@ -4304,3 +4304,45 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .password-reset-notice { margin: 14px 16px 0; }
   .admin-password-reset-confirm .confirm-actions .btn:last-child { max-width: none; }
 }
+
+/* Shared finishing touches: keep short states legible and interactions calm. */
+.badge {
+  width: max-content;
+  max-width: 100%;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+.badge-dot { flex: 0 0 6px; }
+.intern-email-status .badge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-table td .badge { vertical-align: middle; }
+.btn {
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 3px 9px rgb(79 70 229 / 16%);
+  transform: translateY(-1px);
+}
+.btn:focus-visible {
+  outline: 3px solid rgb(99 102 241 / 24%);
+  outline-offset: 2px;
+}
+.modal-header { gap: 16px; }
+.modal-footer { flex-wrap: wrap; }
+:root[data-theme='dark'] .btn-primary:hover:not(:disabled) {
+  box-shadow: 0 3px 10px rgb(99 102 241 / 20%);
+}
+:root[data-theme='dark'] .btn-secondary:hover:not(:disabled) {
+  border-color: #52647c;
+  background: var(--surface-card-hover);
+  color: var(--text-body);
+  box-shadow: none;
+  transform: none;
+}
+@media (max-width: 640px) {
+  .modal-footer > .btn { flex: 1 1 auto; }
+}

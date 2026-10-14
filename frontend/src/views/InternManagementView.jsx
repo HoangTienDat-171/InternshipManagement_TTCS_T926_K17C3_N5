@@ -27,6 +27,7 @@ const SEARCH_DEBOUNCE_MS = 400;
 export default function InternManagementView({ 
   departments, 
   universities, 
+  onCreateUniversity,
   onShowToast,
   onCreateDepartment,
 }) {
@@ -646,8 +647,8 @@ export default function InternManagementView({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         internId={selectedInternId}
-        departments={departments}
         universities={universities}
+        onCreateUniversity={onCreateUniversity}
         onCreateDepartment={onCreateDepartment}
         onSuccess={(msg) => {
           onShowToast(msg);
