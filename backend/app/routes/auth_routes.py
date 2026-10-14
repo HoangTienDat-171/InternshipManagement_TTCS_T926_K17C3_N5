@@ -588,7 +588,7 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
             VALUES (?, 'Chưa cập nhật', 'DaDuyet', 'DangThucTap')
         """, (new_user_id,))
     elif user_role == 'Mentor':
-        cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (new_user_id,))
+        cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung) VALUES (?)", (new_user_id,))
 
     queue_temporary_password_email(db, new_user_id, data.ho_ten.strip(), email, temporary_password)
     client_ip = request.client.host if request.client else "127.0.0.1"
@@ -767,7 +767,7 @@ def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: B
                 VALUES (?, 'Chưa cập nhật', ?, ?)
             """, (id, approval_status, "DangThucTap" if approval_status == "DaDuyet" else None))
     elif data.vai_tro == 'Mentor':
-        cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (id,))
+        cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung) VALUES (?)", (id,))
 
     db.commit()
     cursor.execute("""

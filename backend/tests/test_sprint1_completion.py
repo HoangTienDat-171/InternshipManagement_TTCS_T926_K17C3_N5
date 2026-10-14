@@ -414,7 +414,8 @@ class Sprint1RuntimeTests(unittest.TestCase):
         status_code, mentor_rows, _ = self.json_request("/api/mentors", token=token)
         self.assertEqual(status_code, 200)
         saved_mentor = next(row for row in mentor_rows if row["ma_nguoi_dung"] == mentor_id)
-        self.assertEqual((saved_mentor["chuyen_mon"], saved_mentor["kinh_nghiem"], saved_mentor["so_tts_toi_da"]), ("Python, FastAPI", 5, 3))
+        self.assertEqual((saved_mentor["chuyen_mon"], saved_mentor["kinh_nghiem"]), ("Python, FastAPI", 5))
+        self.assertNotIn("so_tts_toi_da", saved_mentor)
 
         code = f"S1-{suffix[-10:]}"
         program = {

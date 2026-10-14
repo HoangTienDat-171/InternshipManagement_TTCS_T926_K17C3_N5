@@ -268,6 +268,21 @@ def init_mysql_db():
                 FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE SET NULL,
                 FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS_LICH_SU (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_phan_cong_goc BIGINT NOT NULL,
+                ma_nguoi_dung_mentor INT NULL,
+                ma_ho_so INT NULL,
+                ma_chuong_trinh INT NULL,
+                ma_ung_tuyen INT NULL,
+                ma_nguoi_phan_cong INT NULL,
+                ngay_phan_cong DATETIME NOT NULL,
+                su_kien VARCHAR(20) NOT NULL,
+                nguoi_thuc_hien INT NULL,
+                archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_mentor_assignment_history_profile (ma_ho_so, ma_chuong_trinh, archived_at),
+                KEY idx_mentor_assignment_history_mentor (ma_nguoi_dung_mentor, archived_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
                 ma_nhiem_vu BIGINT AUTO_INCREMENT PRIMARY KEY,
                 ma_ho_so INT NOT NULL,
@@ -835,9 +850,22 @@ def init_mysql_db():
         """).fetchone()["total"]
         if not university_unique_key:
             conn.execute("ALTER TABLE TRUONG_DAI_HOC ADD UNIQUE KEY uq_truong_dai_hoc_ten (ten_truong)")
+        department_unique_key = conn.execute("""
+            SELECT COUNT(*) AS total FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHONG_BAN'
+              AND INDEX_NAME = 'uq_phong_ban_ten'
+        """).fetchone()["total"]
+        department_duplicates = conn.execute("""
+            SELECT COUNT(*) AS total FROM (
+                SELECT LOWER(TRIM(ten_phong_ban)) AS normalized_name
+                FROM PHONG_BAN GROUP BY LOWER(TRIM(ten_phong_ban)) HAVING COUNT(*) > 1
+            ) duplicates
+        """).fetchone()["total"]
+        if not department_unique_key and not department_duplicates:
+            conn.execute("ALTER TABLE PHONG_BAN ADD UNIQUE KEY uq_phong_ban_ten (ten_phong_ban)")
         conn.execute("""
-            INSERT IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da)
-            SELECT ma_nguoi_dung, 3 FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'
+            INSERT IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung)
+            SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'
         """)
         conn.execute("""
             INSERT IGNORE INTO HO_SO_THUC_TAP
@@ -879,6 +907,19 @@ def init_db():
         email_lien_he TEXT
     );
     """)
+    for table_name, column_name, index_name in (
+        ("TRUONG_DAI_HOC", "ten_truong", "uq_truong_dai_hoc_ten"),
+        ("PHONG_BAN", "ten_phong_ban", "uq_phong_ban_ten"),
+    ):
+        duplicate_names = cursor.execute(
+            f"SELECT COUNT(*) FROM (SELECT LOWER(TRIM({column_name})) FROM {table_name} "
+            f"GROUP BY LOWER(TRIM({column_name})) HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        if not duplicate_names:
+            cursor.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} "
+                f"ON {table_name}(LOWER(TRIM({column_name})))"
+            )
 
     # 3. Bảng Người Dùng (Tài khoản & Phân quyền)
     cursor.execute("""
@@ -990,6 +1031,23 @@ def init_db():
         FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS_LICH_SU (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_phan_cong_goc INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER,
+        ma_ho_so INTEGER,
+        ma_chuong_trinh INTEGER,
+        ma_ung_tuyen INTEGER,
+        ma_nguoi_phan_cong INTEGER,
+        ngay_phan_cong DATETIME NOT NULL,
+        su_kien TEXT NOT NULL CHECK(su_kien IN ('REASSIGNED', 'UNASSIGNED')),
+        nguoi_thuc_hien INTEGER,
+        archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentor_assignment_history_profile ON PHAN_CONG_MENTOR_TTS_LICH_SU(ma_ho_so, ma_chuong_trinh, archived_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentor_assignment_history_mentor ON PHAN_CONG_MENTOR_TTS_LICH_SU(ma_nguoi_dung_mentor, archived_at)")
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_phan_cong_mentor
         ON PHAN_CONG_MENTOR_TTS(ma_nguoi_dung_mentor)

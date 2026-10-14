@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, KeyRound, X } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
+import MasterDataSelect from '../components/MasterDataSelect';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DashboardMetrics from '../components/DashboardMetrics';
 import TablePagination from '../components/TablePagination';
@@ -9,7 +10,7 @@ import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
-export default function AccountManagementView({ departments, onShowToast, currentUser }) {
+export default function AccountManagementView({ departments, onCreateDepartment, onShowToast, currentUser }) {
   const [users, setUsers] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -561,10 +562,17 @@ export default function AccountManagementView({ departments, onShowToast, curren
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-department">Phòng ban</label>
-                  <CustomSelect id="new-user-department" name="ma_phong_ban" className="form-select" value={formData.ma_phong_ban} onChange={handleChange}>
-                    <option value="">-- Không chỉ định --</option>
-                    {departments.map((d) => <option key={d.ma_phong_ban} value={d.ma_phong_ban}>{d.ten_phong_ban}</option>)}
-                  </CustomSelect>
+                  <MasterDataSelect
+                    id="new-user-department"
+                    name="ma_phong_ban"
+                    value={formData.ma_phong_ban}
+                    items={departments}
+                    idKey="ma_phong_ban"
+                    labelKey="ten_phong_ban"
+                    placeholder="Tìm hoặc chọn phòng ban"
+                    onCreateNew={onCreateDepartment}
+                    onChange={handleChange}
+                  />
                 </div>
               </form>
             </div>

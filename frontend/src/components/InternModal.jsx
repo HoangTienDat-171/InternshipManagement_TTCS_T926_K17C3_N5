@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import PhoneField from './PhoneField';
 import CustomSelect from './CustomSelect';
+import MasterDataSelect from './MasterDataSelect';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
@@ -11,11 +12,11 @@ const REVIEW_STATUS_LABELS = {
   TuChoi: 'Từ chối'
 };
 
-const createEmptyForm = (departments, universities) => ({
+const createEmptyForm = (universities) => ({
   ho_ten: '',
   email: '',
   so_dien_thoai: '',
-  ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
+  ma_phong_ban: '',
   ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
   chuyen_nganh: '',
   trang_thai_thuc_tap: 'DangThucTap'
@@ -25,13 +26,13 @@ export default function InternModal({
   isOpen, 
   onClose, 
   internId,
-  departments, 
   universities, 
+  onCreateUniversity,
   onSuccess 
 }) {
   const isEdit = Boolean(internId);
 
-  const [formData, setFormData] = useState(() => createEmptyForm(departments, universities));
+  const [formData, setFormData] = useState(() => createEmptyForm(universities));
 
   const [loading, setLoading] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(isEdit);
@@ -88,9 +89,9 @@ export default function InternModal({
         ho_ten: formData.ho_ten.trim(),
         email: formData.email.trim(),
         so_dien_thoai: formData.so_dien_thoai.trim(),
-        ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null,
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
+        ...(isEdit ? { ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null } : {}),
         ...(isEdit && approvalStatus === 'DaDuyet' ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 
@@ -186,19 +187,17 @@ export default function InternModal({
 
               <div className="form-group">
                 <label className="form-label">Trường Đại học</label>
-                <CustomSelect
+                <MasterDataSelect
+                  id="intern-university"
                   name="ma_truong"
-                  className="form-select"
                   value={formData.ma_truong}
+                  items={universities}
+                  idKey="ma_truong"
+                  labelKey="ten_truong"
+                  placeholder="Tìm hoặc chọn trường đại học"
+                  onCreateNew={onCreateUniversity}
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn trường đại học --</option>
-                  {universities.map((u) => (
-                    <option key={u.ma_truong} value={u.ma_truong}>
-                      {u.ten_truong}
-                    </option>
-                  ))}
-                </CustomSelect>
+                />
               </div>
 
               <div className="form-group">
@@ -211,23 +210,6 @@ export default function InternModal({
                   value={formData.chuyen_nganh}
                   onChange={handleChange}
                 />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Phòng ban</label>
-                <CustomSelect
-                  name="ma_phong_ban"
-                  className="form-select"
-                  value={formData.ma_phong_ban}
-                  onChange={handleChange}
-                >
-                  <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((d) => (
-                    <option key={d.ma_phong_ban} value={d.ma_phong_ban}>
-                      {d.ten_phong_ban}
-                    </option>
-                  ))}
-                </CustomSelect>
               </div>
 
               {isEdit && <div className="form-group">

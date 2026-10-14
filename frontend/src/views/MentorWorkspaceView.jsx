@@ -56,16 +56,14 @@ export default function MentorWorkspaceView({ currentUser }) {
   if (!workspace) return <div className="workspace-page"><div className="workspace-error">{error || 'Không thể tải dữ liệu.'}<button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); refresh(); }}>Thử lại</button></div></div>;
   const mentor = workspace.mentor || currentUser;
   const interns = workspace.interns || [];
-  const capacity = mentor.so_tts_toi_da ?? 3;
   const assignedCount = interns.length;
-  const percent = capacity ? Math.min(100, Math.round(assignedCount * 100 / capacity)) : 100;
 
   return <div className="workspace-page">
-    <header className="workspace-heading"><div><span className="workspace-eyebrow">MENTOR WORKSPACE</span><h2>Nhóm thực tập sinh của tôi</h2><p>Thông tin cá nhân, sức chứa và hồ sơ các thực tập sinh được phân công.</p></div><button type="button" className="btn btn-secondary" onClick={() => { setLoading(true); refresh(); }}><RefreshCw size={15} />Làm mới</button></header>
+    <header className="workspace-heading"><div><span className="workspace-eyebrow">MENTOR WORKSPACE</span><h2>Nhóm thực tập sinh của tôi</h2><p>Thông tin cá nhân và hồ sơ các thực tập sinh đang được phân công.</p></div><button type="button" className="btn btn-secondary" onClick={() => { setLoading(true); refresh(); }}><RefreshCw size={15} />Làm mới</button></header>
     {error && <div className="workspace-error compact">{error}</div>}
     <div className="workspace-summary-grid mentor-workspace-summary">
       <article className="workspace-card mentor-profile-card"><div className="workspace-profile-avatar">{mentor.ho_ten?.charAt(0) || 'M'}</div><div className="workspace-profile-main"><span className="workspace-eyebrow">HỒ SƠ MENTOR</span><h3>{mentor.ho_ten}</h3><p>{mentor.chuyen_mon || 'Chưa cập nhật chuyên môn'}</p><div className="workspace-contact-grid"><span><Mail size={14} />{mentor.email}</span><span><Phone size={14} />{mentor.so_dien_thoai || 'Chưa cập nhật SĐT'}</span><span><Building2 size={14} />{mentor.phong_ban || 'Chưa phân phòng'}</span><span><BriefcaseBusiness size={14} />{mentor.kinh_nghiem == null ? 'Chưa cập nhật kinh nghiệm' : `${mentor.kinh_nghiem} năm kinh nghiệm`}</span></div></div></article>
-      <article className="workspace-card mentor-capacity-card"><span className="workspace-eyebrow">SỨC CHỨA HƯỚNG DẪN</span><div className="mentor-capacity-number"><strong>{assignedCount}</strong><span>/ {capacity}</span></div><span className="workspace-progress-track"><i className={percent >= 100 ? 'is-full' : ''} style={{ width: `${percent}%` }} /></span><p>{Math.max(0, capacity - assignedCount)} vị trí còn trống</p></article>
+      <article className="workspace-card mentor-active-count"><span className="workspace-eyebrow">TTS ĐANG HƯỚNG DẪN</span><div><strong>{assignedCount}</strong><span>TTS</span></div><p>Số thực tập sinh duy nhất đang được phân công.</p></article>
     </div>
     <div className="mentor-workspace-layout">
       <section className="workspace-card"><div className="workspace-section-heading"><div><span className="workspace-eyebrow">NHÓM CỦA TÔI</span><h3>Thực tập sinh <small>{interns.length}</small></h3></div><UserRound size={19} /></div>

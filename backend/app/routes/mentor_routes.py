@@ -8,7 +8,6 @@ from ..database import get_db, hash_password
 from ..account_credentials import create_temporary_password, queue_temporary_password_email, require_password_change_schema
 from ..mentor_assignment_service import (
     assign_mentor_canonical,
-    count_mentor_active_interns,
     get_timeline_status,
     unassign_mentor_canonical,
 )
@@ -30,8 +29,7 @@ def mentor_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
     mentor = require_role(request, "Mentor")
     profile = db.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem,
-               COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da
+               p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem
         FROM NGUOI_DUNG u
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
         LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung=u.ma_nguoi_dung
@@ -41,17 +39,33 @@ def mentor_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban AS phong_ban, t.ten_truong,
                h.chuyen_nganh, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap,
-               a.ngay_phan_cong,
+               a.ngay_phan_cong, a.ma_chuong_trinh, c.ten_ct,
+               c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
                (SELECT COUNT(*) FROM TAI_LIEU_HO_SO d WHERE d.ma_ho_so=h.ma_ho_so) AS so_tai_lieu
         FROM PHAN_CONG_MENTOR_TTS a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so=a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
-        WHERE a.ma_nguoi_dung_mentor=?
+        LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
+        WHERE a.ma_nguoi_dung_mentor=? AND u.trang_thai='HoatDong'
+          AND h.trang_thai_xet_duyet='DaDuyet'
         ORDER BY u.ho_ten
     """, (mentor["ma_nguoi_dung"],)).fetchall()
-    return {"mentor": dict(profile) if profile else None, "interns": [dict(row) for row in interns]}
+    current_interns = {}
+    for row in interns:
+        item = dict(row)
+        timeline = get_timeline_status(
+            row["ngay_bat_dau"], row["ngay_ket_thuc"], row["trang_thai_ct"]
+        ) if row["ma_chuong_trinh"] else (
+            "CURRENT" if row["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
+        )
+        if timeline != "CURRENT":
+            continue
+        current = current_interns.setdefault(row["ma_nguoi_dung"], {**item, "programs": []})
+        if row["ma_chuong_trinh"] and not any(p["ma_chuong_trinh"] == row["ma_chuong_trinh"] for p in current["programs"]):
+            current["programs"].append({"ma_chuong_trinh": row["ma_chuong_trinh"], "ten_ct": row["ten_ct"]})
+    return {"mentor": dict(profile) if profile else None, "interns": list(current_interns.values())}
 
 
 @router.get("/me/interns/{profile_id}")
@@ -67,7 +81,14 @@ def mentor_intern_detail(profile_id: int, request: Request, db: sqlite3.Connecti
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung=h.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
+        LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
         WHERE a.ma_nguoi_dung_mentor=? AND h.ma_ho_so=?
+          AND u.trang_thai='HoatDong' AND h.trang_thai_xet_duyet='DaDuyet'
+          AND ((a.ma_chuong_trinh IS NOT NULL AND c.trang_thai != 'DaDong'
+                AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
+                AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
+               OR (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap='DangThucTap'))
+        ORDER BY a.ma_phan_cong DESC LIMIT 1
     """, (mentor["ma_nguoi_dung"], profile_id)).fetchone()
     if not intern:
         raise HTTPException(status_code=404, detail="Không tìm thấy thực tập sinh được phân công cho bạn.")
@@ -111,12 +132,14 @@ def list_mentors(
     rows = db.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban AS phong_ban,
-               mp.chuyen_mon, mp.kinh_nghiem, COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da,
-               (SELECT COUNT(DISTINCT a.ma_ho_so)
+               mp.chuyen_mon, mp.kinh_nghiem,
+               (SELECT COUNT(DISTINCT h.ma_nguoi_dung)
                 FROM PHAN_CONG_MENTOR_TTS a
                 JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
                 LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
                 WHERE a.ma_nguoi_dung_mentor = u.ma_nguoi_dung
+                  AND u.trang_thai = 'HoatDong'
+                  AND h.trang_thai_xet_duyet = 'DaDuyet'
                   AND (
                       (a.ma_chuong_trinh IS NOT NULL
                        AND c.trang_thai != 'DaDong'
@@ -242,28 +265,23 @@ def update_mentor_profile(
     require_role(request, "Admin", "HR")
     if not db.execute("SELECT 1 FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'", (mentor_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
-    capacity = data.so_tts_toi_da if data.so_tts_toi_da is not None else 3
     try:
         db.execute("BEGIN IMMEDIATE")
-        assigned_count = count_mentor_active_interns(db, mentor_id)
-        if capacity < assigned_count:
-            raise HTTPException(status_code=400, detail=f"Sức chứa không thể thấp hơn {assigned_count} TTS đang được phân công.")
         db.execute("""
-            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem, so_tts_toi_da)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem)
+            VALUES (?, ?, ?)
             ON CONFLICT(ma_nguoi_dung) DO UPDATE SET
                 chuyen_mon = excluded.chuyen_mon,
-                kinh_nghiem = excluded.kinh_nghiem,
-                so_tts_toi_da = excluded.so_tts_toi_da
+                kinh_nghiem = excluded.kinh_nghiem
         """, (
             mentor_id,
             data.chuyen_mon.strip() if data.chuyen_mon and data.chuyen_mon.strip() else None,
             data.kinh_nghiem,
-            capacity,
         ))
         db.commit()
     except HTTPException:
         db.rollback()
+        raise
     return {"message": "Đã cập nhật hồ sơ Mentor."}
 
 
@@ -348,7 +366,7 @@ def unassign_intern(
     program_id: int | None = Query(None),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    require_role(request, "Admin", "HR")
+    actor = require_role(request, "Admin", "HR")
     try:
         db.execute("BEGIN IMMEDIATE")
         res = unassign_mentor_canonical(
@@ -356,6 +374,7 @@ def unassign_intern(
             mentor_id=mentor_id,
             profile_id=profile_id,
             program_id=program_id,
+            unassigned_by=actor["ma_nguoi_dung"],
         )
         db.commit()
     except HTTPException:
@@ -392,9 +411,9 @@ def create_mentor(data: MentorCreate, request: Request, db: sqlite3.Connection =
         """, (data.ma_phong_ban, data.ho_ten.strip(), email, hash_password(temporary_password), data.so_dien_thoai or None))
         user_id = cursor.lastrowid
         cursor.execute("""
-            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem, so_tts_toi_da)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, data.chuyen_mon.strip() if data.chuyen_mon else None, data.kinh_nghiem, data.so_tts_toi_da))
+            INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, chuyen_mon, kinh_nghiem)
+            VALUES (?, ?, ?)
+        """, (user_id, data.chuyen_mon.strip() if data.chuyen_mon else None, data.kinh_nghiem))
         queue_temporary_password_email(db, user_id, data.ho_ten.strip(), email, temporary_password)
         db.commit()
     except sqlite3.IntegrityError as exc:

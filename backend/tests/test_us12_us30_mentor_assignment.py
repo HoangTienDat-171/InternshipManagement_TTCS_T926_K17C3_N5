@@ -386,6 +386,11 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
             [(row["ma_chuong_trinh"], row["ma_nguoi_dung_mentor"]) for row in remaining],
             [(historical_program, self.mentor_bob_id)],
         )
+        archived = self.db.execute(
+            "SELECT su_kien, ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_ho_so = ?",
+            (profile_id,),
+        ).fetchall()
+        self.assertEqual([(row["su_kien"], row["ma_nguoi_dung_mentor"]) for row in archived], [("UNASSIGNED", self.mentor_alice_id)])
 
     # =========================================================================
     # Test 6: Overlapping Approval Blocked (Section 77)
@@ -562,6 +567,31 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         self.assertEqual(r1["ma_phan_cong"], r2["ma_phan_cong"])
         row = self.db.execute("SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?", (r1["ma_phan_cong"],)).fetchone()
         self.assertEqual(row["ma_nguoi_dung_mentor"], self.mentor_bob_id)
+        archived = self.db.execute(
+            "SELECT su_kien, ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_phan_cong_goc = ?",
+            (r1["ma_phan_cong"],),
+        ).fetchone()
+        self.assertEqual((archived["su_kien"], archived["ma_nguoi_dung_mentor"]), ("REASSIGNED", self.mentor_alice_id))
+
+    def test_active_assignment_count_is_distinct_by_intern_user(self):
+        today = date.today()
+        user_id, profile_id = self._create_intern("dedup_active_count")
+        program_one = self._create_program("DEDUP-COUNT-1", (today - timedelta(days=1)).isoformat(), (today + timedelta(days=5)).isoformat())
+        program_two = self._create_program("DEDUP-COUNT-2", (today - timedelta(days=1)).isoformat(), (today + timedelta(days=5)).isoformat())
+        app_one = self._apply_and_approve(profile_id, program_one)
+        app_two = self._apply_and_approve(profile_id, program_two)
+
+        self.db.execute("UPDATE MENTOR_PROFILE SET so_tts_toi_da = 0 WHERE ma_nguoi_dung = ?", (self.mentor_alice_id,))
+        assign_mentor_canonical(self.db, self.mentor_alice_id, profile_id, program_id=program_one, application_id=app_one)
+        # Simulate a second concurrent program assignment for the same TTS; it must not double-count one person.
+        self.db.execute(
+            """INSERT INTO PHAN_CONG_MENTOR_TTS
+               (ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh, ma_ung_tuyen, ma_nguoi_phan_cong)
+               VALUES (?, ?, ?, ?, ?)""",
+            (self.mentor_alice_id, profile_id, program_two, app_two, self.hr_user_id),
+        )
+        self.db.commit()
+        self.assertEqual(count_mentor_active_interns(self.db, self.mentor_alice_id, as_of=today), 1)
 
     # =========================================================================
     # Test 12: Role RBAC (Section 84)

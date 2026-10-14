@@ -152,6 +152,32 @@ class University(BaseModel):
     nguoi_lien_he: Optional[str] = None
     email_lien_he: Optional[str] = None
 
+
+class DepartmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_phong_ban: str = Field(min_length=1, max_length=150)
+
+    @field_validator("ten_phong_ban")
+    @classmethod
+    def normalize_department_name(cls, value):
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        return normalized
+
+
+class UniversityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_truong: str = Field(min_length=1, max_length=255)
+
+    @field_validator("ten_truong")
+    @classmethod
+    def normalize_university_name(cls, value):
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên trường đại học không được để trống.")
+        return normalized
+
 class MentorCreate(BaseModel):
     ho_ten: str = Field(min_length=1, max_length=120)
     email: str = Field(min_length=3, max_length=254)
@@ -159,7 +185,6 @@ class MentorCreate(BaseModel):
     ma_phong_ban: Optional[int] = None
     chuyen_mon: Optional[str] = None
     kinh_nghiem: Optional[int] = Field(default=None, ge=0)
-    so_tts_toi_da: int = Field(default=3, ge=0)
 
 class MentorDetail(BaseModel):
     ma_nguoi_dung: int
@@ -170,13 +195,11 @@ class MentorDetail(BaseModel):
     phong_ban: Optional[str] = None
     chuyen_mon: Optional[str] = None
     kinh_nghiem: Optional[int] = None
-    so_tts_toi_da: Optional[int] = None
     so_tts_dang_huong_dan: int = 0
 
 class MentorProfileUpdate(BaseModel):
     chuyen_mon: Optional[str] = Field(default=None, max_length=255)
     kinh_nghiem: Optional[int] = Field(default=None, ge=0)
-    so_tts_toi_da: Optional[int] = Field(default=None, ge=0)
 
 class InternAssignmentCandidate(BaseModel):
     ma_ho_so: int

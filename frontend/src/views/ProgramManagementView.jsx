@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, readJsonResponse } from '../utils/api';
-import CustomSelect from '../components/CustomSelect';
+import MasterDataSelect from '../components/MasterDataSelect';
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
 import TablePagination from '../components/TablePagination';
@@ -56,7 +56,7 @@ function formatDate(value) {
   return value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN') : 'Chưa thiết lập';
 }
 
-export default function ProgramManagementView({ departments, onShowToast, currentUser }) {
+export default function ProgramManagementView({ departments, onCreateDepartment, onShowToast, currentUser }) {
   const isAdmin = currentUser?.vai_tro === 'Admin';
   const canCreateProgram = ['Admin', 'HR'].includes(currentUser?.vai_tro);
   const isManager = ['Admin', 'HR'].includes(currentUser?.vai_tro);
@@ -437,12 +437,18 @@ export default function ProgramManagementView({ departments, onShowToast, curren
               </div>
               <div className="form-group">
                 <label className="form-label">Phòng ban <span className="required">*</span></label>
-                <CustomSelect name="ma_phong_ban" className="form-select" required value={form.ma_phong_ban} onChange={handleChange}>
-                  <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((department) => (
-                    <option key={department.ma_phong_ban} value={department.ma_phong_ban}>{department.ten_phong_ban}</option>
-                  ))}
-                </CustomSelect>
+                <MasterDataSelect
+                  id="program-department"
+                  name="ma_phong_ban"
+                  value={form.ma_phong_ban}
+                  items={departments}
+                  idKey="ma_phong_ban"
+                  labelKey="ten_phong_ban"
+                  onChange={handleChange}
+                  onCreateNew={onCreateDepartment}
+                  placeholder="Tìm hoặc chọn phòng ban"
+                  required
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Chỉ tiêu số lượng <span className="required">*</span></label>
@@ -710,13 +716,10 @@ export default function ProgramManagementView({ departments, onShowToast, curren
                 >
                   <option value="">-- Chọn Mentor hướng dẫn --</option>
                   {mentorsList.map((m) => {
-                    const maxSlots = m.so_tts_toi_da ?? 3;
                     const used = m.so_tts_dang_huong_dan || 0;
-                    const available = maxSlots - used;
-                    const isFull = available <= 0 && m.ma_nguoi_dung !== assigningMentorApp.ma_nguoi_dung_mentor;
                     return (
-                      <option key={m.ma_nguoi_dung} value={m.ma_nguoi_dung} disabled={isFull}>
-                        {m.ho_ten} ({m.phong_ban || 'Chưa phân phòng'}) — Đang hướng dẫn: {used}/{maxSlots} TTS{isFull ? ' (Đã hết chỗ)' : ''}
+                      <option key={m.ma_nguoi_dung} value={m.ma_nguoi_dung}>
+                        {m.ho_ten} ({m.phong_ban || 'Chưa phân phòng'}) — Đang hướng dẫn: {used} TTS
                       </option>
                     );
                   })}
