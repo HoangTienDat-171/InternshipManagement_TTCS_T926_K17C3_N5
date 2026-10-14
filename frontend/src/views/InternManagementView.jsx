@@ -28,6 +28,7 @@ export default function InternManagementView({
   departments, 
   universities, 
   onShowToast,
+  onCreateDepartment,
 }) {
   const [interns, setInterns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -604,6 +605,7 @@ export default function InternManagementView({
         internId={selectedInternId}
         departments={departments}
         universities={universities}
+        onCreateDepartment={onCreateDepartment}
         onSuccess={(msg) => {
           onShowToast(msg);
           refreshInterns();

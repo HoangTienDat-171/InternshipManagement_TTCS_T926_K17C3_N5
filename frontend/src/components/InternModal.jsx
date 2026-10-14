@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import PhoneField from './PhoneField';
 import CustomSelect from './CustomSelect';
+import MasterDataSelect from './MasterDataSelect';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
@@ -11,11 +12,11 @@ const REVIEW_STATUS_LABELS = {
   TuChoi: 'Từ chối'
 };
 
-const createEmptyForm = (departments, universities) => ({
+const createEmptyForm = (universities) => ({
   ho_ten: '',
   email: '',
   so_dien_thoai: '',
-  ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
+  ma_phong_ban: '',
   ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
   chuyen_nganh: '',
   trang_thai_thuc_tap: 'DangThucTap'
@@ -25,13 +26,14 @@ export default function InternModal({
   isOpen, 
   onClose, 
   internId,
-  departments, 
+  departments = [],
   universities, 
+  onCreateDepartment,
   onSuccess 
 }) {
   const isEdit = Boolean(internId);
 
-  const [formData, setFormData] = useState(() => createEmptyForm(departments, universities));
+  const [formData, setFormData] = useState(() => createEmptyForm(universities));
 
   const [loading, setLoading] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(isEdit);
@@ -214,20 +216,22 @@ export default function InternModal({
               </div>
 
               <div className="form-group">
-                <label className="form-label">Phòng ban</label>
-                <CustomSelect
+                <label className="form-label" htmlFor="intern-department">Phòng ban (Tùy chọn)</label>
+                <MasterDataSelect
+                  id="intern-department"
                   name="ma_phong_ban"
-                  className="form-select"
                   value={formData.ma_phong_ban}
+                  items={[{ ma_phong_ban: '', ten_phong_ban: 'Chưa phân công' }, ...departments]}
+                  idKey="ma_phong_ban"
+                  labelKey="ten_phong_ban"
+                  placeholder="Tìm hoặc chọn phòng ban"
+                  itemName="phòng ban"
+                  maxNameLength={100}
+                  confirmCreate
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((d) => (
-                    <option key={d.ma_phong_ban} value={d.ma_phong_ban}>
-                      {d.ten_phong_ban}
-                    </option>
-                  ))}
-                </CustomSelect>
+                  onCreateNew={onCreateDepartment}
+                />
+                <small className="form-hint">Có thể để trống nếu chưa phân công. Thêm phòng ban vào danh mục không tự gán phòng ban cho thực tập sinh.</small>
               </div>
 
               {isEdit && <div className="form-group">
