@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .security import get_session_user, session_connections
-from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, intern_routes, leave_routes, master_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
+from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, intern_routes, leave_routes, master_routes, meeting_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -113,6 +113,7 @@ app.include_router(contract_routes.router)
 app.include_router(mentor_routes.router)
 app.include_router(program_routes.router)
 app.include_router(notification_routes.router)
+app.include_router(meeting_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(task_routes.router)
 app.include_router(weekly_report_routes.router)

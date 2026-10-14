@@ -633,6 +633,41 @@ def init_mysql_db():
             CONSTRAINT fk_support_request_file FOREIGN KEY (support_request_id)
                 REFERENCES YEU_CAU_HO_TRO(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        statements.append("""CREATE TABLE IF NOT EXISTS LICH_HOP (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(200) NOT NULL,
+            content TEXT NOT NULL,
+            start_at DATETIME NOT NULL,
+            end_at DATETIME NOT NULL,
+            location VARCHAR(500) NULL,
+            meeting_url VARCHAR(2000) NULL,
+            organizer_id INT NOT NULL,
+            status ENUM('SCHEDULED','CANCELLED') NOT NULL DEFAULT 'SCHEDULED',
+            version INT UNSIGNED NOT NULL DEFAULT 1,
+            idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+            request_hash CHAR(64) NOT NULL,
+            cancelled_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT chk_meeting_time CHECK (end_at > start_at),
+            KEY idx_meeting_schedule (status, start_at, id),
+            KEY idx_meeting_organizer (organizer_id, created_at),
+            CONSTRAINT fk_meeting_organizer FOREIGN KEY (organizer_id)
+                REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        statements.append("""CREATE TABLE IF NOT EXISTS LICH_HOP_NGUOI_THAM_GIA (
+            meeting_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            status ENUM('INVITED','REMOVED') NOT NULL DEFAULT 'INVITED',
+            invited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            removed_at DATETIME NULL,
+            PRIMARY KEY (meeting_id, user_id),
+            KEY idx_meeting_attendee (user_id, status, meeting_id),
+            CONSTRAINT fk_meeting_attendee_meeting FOREIGN KEY (meeting_id)
+                REFERENCES LICH_HOP(id) ON DELETE CASCADE,
+            CONSTRAINT fk_meeting_attendee_user FOREIGN KEY (user_id)
+                REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
 
@@ -1616,6 +1651,42 @@ def init_db():
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_HOP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+        content TEXT NOT NULL DEFAULT '',
+        start_at DATETIME NOT NULL,
+        end_at DATETIME NOT NULL,
+        location TEXT,
+        meeting_url TEXT,
+        organizer_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'SCHEDULED' CHECK(status IN ('SCHEDULED', 'CANCELLED')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        request_hash TEXT NOT NULL CHECK(length(request_hash) = 64),
+        cancelled_at DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(end_at > start_at),
+        FOREIGN KEY (organizer_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_schedule ON LICH_HOP(status, start_at, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_organizer ON LICH_HOP(organizer_id, created_at)")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_HOP_NGUOI_THAM_GIA (
+        meeting_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'INVITED' CHECK(status IN ('INVITED', 'REMOVED')),
+        invited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        removed_at DATETIME,
+        PRIMARY KEY (meeting_id, user_id),
+        FOREIGN KEY (meeting_id) REFERENCES LICH_HOP(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_attendee ON LICH_HOP_NGUOI_THAM_GIA(user_id, status, meeting_id)")
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_email_outbox_due
         ON EMAIL_OUTBOX(status, next_retry_at, created_at)

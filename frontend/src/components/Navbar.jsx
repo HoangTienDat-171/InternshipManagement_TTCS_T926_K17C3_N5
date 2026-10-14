@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, LifeBuoy, Menu, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
+import { User, LogOut, Shield, Briefcase, FileText, GraduationCap, Users, KeyRound, ChevronDown, Bell, BellRing, Check, ExternalLink, Inbox, LifeBuoy, Menu, Moon, RefreshCw, Sun, Wallet, CalendarDays } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 
 export default function Navbar({
@@ -80,6 +80,7 @@ export default function Navbar({
     if (item.loai === 'WEEKLY_REPORT_SUBMITTED') return { label: 'Báo cáo tuần', icon: <FileText size={15} /> };
     if (item.loai === 'WEEKLY_REPORT_REVIEWED') return { label: 'Nhận xét', icon: <FileText size={15} /> };
     if (item.loai === 'internship_review_result') return { label: 'Hồ sơ', icon: <GraduationCap size={15} /> };
+    if (['meeting_invitation', 'meeting_updated', 'meeting_cancelled', 'meeting_removed'].includes(item.loai)) return { label: 'Lịch họp', icon: <CalendarDays size={15} /> };
     if (['allowance_unreceived_report', 'allowance_report_status', 'allowance_report_acknowledged'].includes(item.loai)) return { label: 'Phụ cấp', icon: <Wallet size={15} /> };
     if (item.reference_type === 'support_request') return { label: 'Yêu cầu hỗ trợ', icon: <LifeBuoy size={15} /> };
     return { label: 'Hệ thống', icon: <BellRing size={15} /> };
@@ -183,7 +184,7 @@ export default function Navbar({
                   <div className="notification-list">
                     {notifications.map((item) => {
                       const meta = notificationMeta(item);
-                      const navigable = ['internship_task', 'weekly_report', 'allowance', 'support_request'].includes(item.reference_type) && item.reference_id;
+                      const navigable = ['internship_task', 'weekly_report', 'allowance', 'support_request', 'meeting'].includes(item.reference_type) && item.reference_id;
                       return <article key={item.ma_thong_bao} className={`notification-item${item.da_doc ? '' : ' unread'}`}>
                         <button type="button" className="notification-item-main" onClick={() => openNotification(item)}>
                           <span className="notification-type-icon">{meta.icon}</span>
