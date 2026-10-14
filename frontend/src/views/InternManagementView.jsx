@@ -667,7 +667,7 @@ export default function InternManagementView({
               </div>
             </div>
             <div className="modal-footer">
-              <button 
+              <button
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => {

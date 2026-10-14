@@ -740,4 +740,3 @@ class FinalReportListResponse(BaseModel):
     page_size: int
     total_pages: int
     summary: FinalReportSummaryMetrics
-
