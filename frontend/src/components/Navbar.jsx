@@ -132,6 +132,7 @@ export default function Navbar({
       case 'evaluations': return 'Đánh giá thực tập sinh';
       case 'my-evaluations': return 'Đánh giá của tôi';
       case 'accounts': return 'Quản trị Người dùng';
+      case 'hrm-integration': return 'Tích hợp HRM';
       case 'profile': return 'Tài khoản cá nhân';
       default: return 'Quản lý phụ cấp';
     }
