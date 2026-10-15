@@ -166,6 +166,7 @@ def build_sync_preview(
     existing_by_external_id: Mapping[str, Mapping[str, Any]],
     department_mappings: Mapping[str, Mapping[str, Any]],
     ims_user_ids_by_email: Mapping[str, Sequence[int]],
+    linked_mentors: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify source rows without writing accounts, roles, or assignments."""
     parsed: list[tuple[Mapping[str, Any], HRMEmployeeRecord | None, str | None]] = []
@@ -192,6 +193,7 @@ def build_sync_preview(
     existing = {key.casefold(): dict(value) for key, value in existing_by_external_id.items()}
     mappings = {key.casefold(): dict(value) for key, value in department_mappings.items()}
     ims_emails = {key.strip().casefold(): list(value) for key, value in ims_user_ids_by_email.items()}
+    mentor_links = {key.casefold(): dict(value) for key, value in (linked_mentors or {}).items()}
     preview: list[dict[str, Any]] = []
 
     for raw, employee, validation_error in parsed:
@@ -221,6 +223,7 @@ def build_sync_preview(
         email_key = employee.work_email or ""
         department = mappings.get((employee.department_code or "").casefold())
         existing_record = existing.get(id_key)
+        mentor_link = mentor_links.get(id_key)
         row["mapped_department_id"] = department.get("ma_phong_ban") if department else None
         row["mapped_department_name"] = department.get("ten_phong_ban") if department else None
 
@@ -232,6 +235,55 @@ def build_sync_preview(
             row.update(action="CONFLICT", reason="Có tên phòng ban nhưng thiếu mã phòng ban ổn định.")
         elif employee.department_code and not department:
             row.update(action="CONFLICT", reason="Mã phòng ban HRM chưa được ánh xạ sang danh mục IMS.")
+        elif mentor_link is not None:
+            mentor_user_id = int(mentor_link["ma_nguoi_dung"])
+            if mentor_link.get("vai_tro") != "Mentor":
+                row.update(action="CONFLICT", reason="The approved external-ID mapping no longer points to an IMS Mentor.")
+            elif any(int(user_id) != mentor_user_id for user_id in ims_emails.get(email_key, [])):
+                row.update(action="CONFLICT", reason="The HRM work email now belongs to a different IMS account.")
+            elif employee.department_code and not department:
+                row.update(action="CONFLICT", reason="The Mentor department cannot change until the HRM department is mapped.")
+            else:
+                desired = {
+                    "ho_ten": employee.full_name,
+                    "email": employee.work_email or mentor_link.get("email"),
+                    "so_dien_thoai": employee.phone or mentor_link.get("so_dien_thoai"),
+                    "ma_phong_ban": department.get("ma_phong_ban") if department else mentor_link.get("ma_phong_ban"),
+                }
+                changed = any(mentor_link.get(key) != value for key, value in desired.items())
+                directory_snapshot = {
+                    "full_name": employee.full_name,
+                    "work_email": employee.work_email,
+                    "phone": employee.phone,
+                    "department_code": employee.department_code,
+                    "department": employee.department,
+                    "ma_phong_ban": desired["ma_phong_ban"],
+                    "job_title": employee.job_title,
+                    "employment_status": employee.employment_status,
+                    "source_updated_at": employee.source_updated_at,
+                }
+                directory_changed = existing_record is None or any(
+                    existing_record.get(key) != value for key, value in directory_snapshot.items()
+                )
+                mentor_action = "MENTOR_UPDATE" if changed else "MENTOR_DIRECTORY_UPDATE" if directory_changed else "MENTOR_UNCHANGED"
+                row.update(
+                    action=mentor_action,
+                    reason=("The approved external-ID mapping proposes supported Mentor field updates."
+                            if changed else "Only the separate HRM directory snapshot changed."
+                            if directory_changed else "The linked Mentor and HRM directory fields are unchanged."),
+                    linked_user_id=mentor_user_id,
+                    mapped_department_id=desired["ma_phong_ban"],
+                    mapped_department_name=(department.get("ten_phong_ban") if department else mentor_link.get("ten_phong_ban")),
+                    mentor_before={key: mentor_link.get(key) for key in desired},
+                    mentor_after=desired,
+                    hrm_directory_changed=directory_changed,
+                )
+                if employee.employment_status == "inactive":
+                    row["warnings"].append("HRM reports inactive; this does not lock the IMS account, remove the Mentor, or change assignments.")
+                else:
+                    row["warnings"].append("HRM employment status is informational; the IMS account status is not changed by this sync.")
+                if employee.job_title:
+                    row["warnings"].append("Mentor job title has no supported IMS field; it is not written.")
         elif email_key and ims_emails.get(email_key):
             row["candidate_user_ids"] = ims_emails[email_key]
             row.update(action="CONFLICT", reason="Email khớp tài khoản IMS; cần xác nhận liên kết thủ công, không tự ghép tài khoản.")

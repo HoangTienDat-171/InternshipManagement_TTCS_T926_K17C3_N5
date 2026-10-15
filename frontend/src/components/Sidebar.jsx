@@ -55,7 +55,7 @@ const MENU_CONFIG = [
   { id: 'allowances', label: 'Quản lý phụ cấp', icon: BadgeDollarSign, roles: ['manager'] },
   { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },
   { id: 'accounts', label: 'Quản trị Người dùng', icon: ShieldCheck, roles: ['manager'], adminOnly: true },
-  { id: 'hrm-integration', label: 'Tích hợp HRM', icon: Database, roles: ['manager'], adminOnly: true },
+  { id: 'hrm-integration', label: 'Tích hợp HRM', icon: Database, roles: ['manager'] },
 
   // Mentor
   { id: 'mentor-workspace', label: 'Danh sách TTS hướng dẫn', icon: Users, roles: ['mentor'] },

@@ -19,6 +19,10 @@ MAX_PAGES = 100
 class HRMProviderError(RuntimeError):
     """Safe provider error that never carries a request header or response body."""
 
+    def __init__(self, message: str, *, uncertain: bool = False):
+        super().__init__(message)
+        self.uncertain = uncertain
+
 
 @dataclass(frozen=True)
 class HRMSandboxConfig:
@@ -163,6 +167,67 @@ class HRMSandboxProvider:
                 return employees
             page += 1
         raise HRMProviderError("HRM Sandbox vượt quá giới hạn phân trang.")
+
+    def _write_json_once(self, path: str, payload: dict) -> dict:
+        url = f"{self.config.base_url}/api/v1/{path.lstrip('/')}"
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = Request(
+            url,
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.api_key}",
+                "User-Agent": "IMS-HRM-Sandbox-Adapter/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with self._opener.open(request, timeout=self.config.timeout_seconds) as response:
+                if response.status not in {200, 201}:
+                    raise HRMProviderError("HRM Sandbox rejected the candidate request.")
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(body) > MAX_RESPONSE_BYTES:
+                    raise HRMProviderError("HRM Sandbox response exceeded the allowed size.", uncertain=True)
+            result = json.loads(body.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise HRMProviderError("HRM Sandbox returned an invalid candidate response.", uncertain=True)
+            return result
+        except HTTPError as exc:
+            if exc.code == 401:
+                raise HRMProviderError("HRM Sandbox rejected local authentication.") from None
+            if exc.code in {400, 404, 409, 422}:
+                raise HRMProviderError(f"HRM Sandbox rejected the candidate request (HTTP {exc.code}).") from None
+            raise HRMProviderError(f"HRM Sandbox returned HTTP {exc.code} during candidate submission.", uncertain=True) from None
+        except (URLError, TimeoutError, OSError):
+            raise HRMProviderError("Candidate submission outcome is uncertain; reconcile by IMS reference before retrying.", uncertain=True) from None
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise HRMProviderError("Candidate submission response was invalid; reconcile by IMS reference before retrying.", uncertain=True) from None
+
+    async def submit_candidate_request(self, payload: dict) -> dict:
+        return await asyncio.to_thread(self._write_json_once, "candidate-requests", payload)
+
+    async def fetch_candidate_requests(self, status: str = "PENDING") -> list[dict]:
+        result = await self._get_json(f"candidate-requests?status={status}&page=1&page_size=100")
+        items = result.get("items")
+        if not isinstance(items, list) or len(items) > 100:
+            raise HRMProviderError("HRM Sandbox candidate inbox response is invalid.")
+        return [item for item in items if isinstance(item, dict)]
+
+    async def get_candidate_request(self, external_reference: str) -> dict | None:
+        try:
+            return await self._get_json(f"candidate-requests/by-reference/{external_reference}")
+        except HRMProviderError as exc:
+            if "HTTP 404" in str(exc):
+                return None
+            raise
+
+    async def decide_candidate_request(self, external_reference: str, decision: str, reason: str | None = None) -> dict:
+        payload = {"decision": decision}
+        if reason:
+            payload["reason"] = reason
+        path = f"candidate-requests/by-reference/{external_reference}/decision"
+        return await asyncio.to_thread(self._write_json_once, path, payload)
 
 
 def configured_provider() -> tuple[HRMSandboxProvider | None, str | None]:

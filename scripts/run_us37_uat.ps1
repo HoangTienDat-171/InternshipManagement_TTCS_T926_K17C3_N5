@@ -41,7 +41,8 @@ $logPaths = @{
 $previousEnvironment = @{}
 $environmentNames = @(
   'IMS_DATABASE_BACKEND', 'IMS_SQLITE_PATH', 'HRM_PROVIDER',
-  'HRM_SANDBOX_BASE_URL', 'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_PORT'
+  'HRM_SANDBOX_BASE_URL', 'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_PORT',
+  'IMS_HRM_SANDBOX_OUTBOUND_ENABLED'
 )
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 $started = @()
@@ -54,6 +55,12 @@ try {
   $env:HRM_SANDBOX_API_KEY = $sandboxKey
   $env:HRM_SANDBOX_DATABASE_PATH = Join-Path $stateDir 'hrm-sandbox.sqlite3'
   $env:HRM_SANDBOX_PORT = '8100'
+  $env:IMS_HRM_SANDBOX_OUTBOUND_ENABLED = '1'
+
+  Push-Location -LiteralPath $backendDir
+  try { & $pythonPath -m app.us37_uat_seed }
+  finally { Pop-Location }
+  if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the synthetic candidate in the isolated IMS SQLite UAT database.' }
 
   $sandbox = Start-Process -FilePath $pythonPath -ArgumentList @('-m', 'app.hrm_sandbox') -WorkingDirectory $backendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logPaths.sandboxOut -RedirectStandardError $logPaths.sandboxErr
   $started += @{ name = 'hrm-sandbox'; id = $sandbox.Id; executable = $pythonPath; marker = 'app.hrm_sandbox' }
@@ -178,7 +185,7 @@ try {
   }
   $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statePath -Encoding UTF8
   Write-Output 'US37 isolated UAT is ready: http://localhost:3000'
-  Write-Output 'Backend: http://127.0.0.1:8000 | HRM Sandbox: http://127.0.0.1:8100'
+  Write-Output 'Backend: http://127.0.0.1:8000 | HRM Sandbox API and review console: http://127.0.0.1:8100'
   Write-Output 'IMS and HRM use separate persistent SQLite files under %LOCALAPPDATA%\IMS-US37-UAT.'
   Write-Output 'Use scripts\stop_us37_uat.ps1 to stop only these verified UAT processes.'
 } catch {

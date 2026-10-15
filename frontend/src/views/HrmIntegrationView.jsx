@@ -14,12 +14,16 @@ import {
   XCircle,
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
+import HrmOutboundPanel from './HrmOutboundPanel';
 import './HrmIntegrationView.css';
 
 const ACTIONS = [
   { key: 'NEW', label: 'Mới', tone: 'new' },
   { key: 'UPDATE', label: 'Cập nhật', tone: 'update' },
+  { key: 'MENTOR_UPDATE', label: 'Mentor linked update', tone: 'update' },
+  { key: 'MENTOR_DIRECTORY_UPDATE', label: 'HRM directory only', tone: 'update' },
   { key: 'UNCHANGED', label: 'Không đổi', tone: 'unchanged' },
+  { key: 'MENTOR_UNCHANGED', label: 'Mentor unchanged', tone: 'unchanged' },
   { key: 'CONFLICT', label: 'Xung đột', tone: 'conflict' },
   { key: 'INVALID', label: 'Không hợp lệ', tone: 'invalid' },
 ];
@@ -46,7 +50,7 @@ function StatusIcon({ state }) {
   return <AlertTriangle size={23} aria-hidden="true" />;
 }
 
-export default function HrmIntegrationView() {
+function AdminHrmIntegrationView({ currentUser }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -57,6 +61,8 @@ export default function HrmIntegrationView() {
   const [mappingSelection, setMappingSelection] = useState({});
   const [history, setHistory] = useState([]);
   const [directory, setDirectory] = useState([]);
+  const [mentorMappings, setMentorMappings] = useState(null);
+  const [mentorMappingSelection, setMentorMappingSelection] = useState({});
 
   const loadStatus = useCallback(async (signal) => {
     const payload = await apiJson('/api/integrations/hrm/status', { signal });
@@ -101,7 +107,7 @@ export default function HrmIntegrationView() {
   }, [refresh]);
 
   const previewCounts = preview?.counts || {};
-  const hasApplicableChanges = (previewCounts.NEW || 0) + (previewCounts.UPDATE || 0) > 0;
+  const hasApplicableChanges = (previewCounts.NEW || 0) + (previewCounts.UPDATE || 0) + (previewCounts.MENTOR_UPDATE || 0) + (previewCounts.MENTOR_DIRECTORY_UPDATE || 0) > 0;
   const previewRows = preview?.rows || [];
   const previewExpiry = useMemo(() => formatDate(preview?.expires_at), [preview?.expires_at]);
 
@@ -163,6 +169,40 @@ export default function HrmIntegrationView() {
     }
   };
 
+  const loadMentorMappings = async () => {
+    setBusy('mentor-mappings');
+    setError('');
+    try {
+      const result = await apiJson('/api/integrations/hrm/mentor-mappings');
+      setMentorMappings(result);
+      setMentorMappingSelection(Object.fromEntries((result.employees || []).map((item) => [
+        item.external_employee_id,
+        item.linked_user_id ? String(item.linked_user_id) : item.email_suggestion_user_id ? String(item.email_suggestion_user_id) : '',
+      ])));
+    } catch (cause) {
+      setError(cause.message || 'Could not load explicit Mentor mappings.');
+    } finally { setBusy(''); }
+  };
+
+  const saveMentorMapping = async (externalEmployeeId) => {
+    const mentorId = Number(mentorMappingSelection[externalEmployeeId]);
+    if (!mentorId) return;
+    setBusy(`mentor-map:${externalEmployeeId}`);
+    setError('');
+    setNotice('');
+    try {
+      await apiJson('/api/integrations/hrm/mentor-mappings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ external_employee_id: externalEmployeeId, ma_nguoi_dung: mentorId }),
+      });
+      setPreview(null);
+      setNotice('Admin đã xác nhận liên kết external ID HRM ↔ Mentor IMS. Tạo preview mới để xem các thay đổi HRM-owned.');
+      await loadMentorMappings();
+    } catch (cause) { setError(cause.message || 'Could not save the external-ID mapping.'); }
+    finally { setBusy(''); }
+  };
+
   const createPreview = async () => {
     setBusy('preview');
     setError('');
@@ -184,9 +224,11 @@ export default function HrmIntegrationView() {
     if (!preview?.preview_id) return;
     const newCount = previewCounts.NEW || 0;
     const updateCount = previewCounts.UPDATE || 0;
+    const mentorUpdateCount = previewCounts.MENTOR_UPDATE || 0;
+    const directoryOnlyCount = previewCounts.MENTOR_DIRECTORY_UPDATE || 0;
     const skipCount = (previewCounts.CONFLICT || 0) + (previewCounts.INVALID || 0);
     const confirmed = window.confirm(
-      `Xác nhận áp dụng ${newCount} nhân viên mới và ${updateCount} cập nhật vào danh bạ HRM của IMS? ${skipCount} bản ghi xung đột/không hợp lệ sẽ được bỏ qua. Thao tác không tạo tài khoản, không đổi quyền và không sửa phân công Mentor.`,
+      `Apply ${newCount} new HRM directory records, ${updateCount} HRM directory updates, ${directoryOnlyCount} directory-only changes for linked Mentors, and ${mentorUpdateCount} supported Mentor profile updates? ${skipCount} conflicts/invalid rows will be skipped. Roles, login status, assignments, and history stay unchanged.`,
     );
     if (!confirmed) return;
     setBusy('apply');
@@ -315,6 +357,42 @@ export default function HrmIntegrationView() {
         </section>
       )}
 
+      {current.configured && current.sync_history_available && (
+        <section className="hrm-panel">
+          <div className="hrm-panel-heading">
+            <div><h2>Liên kết Mentor theo external ID</h2><p>Email chỉ là gợi ý. Admin phải chọn đúng tài khoản Mentor và xác nhận; hệ thống không tự ghép, tạo tài khoản hoặc gộp hồ sơ.</p></div>
+            <button type="button" className="btn btn-secondary" onClick={loadMentorMappings} disabled={Boolean(busy)}>
+              {busy === 'mentor-mappings' ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />} Tải nhân viên HRM
+            </button>
+          </div>
+          {!mentorMappings ? <p className="hrm-empty">Tải danh sách để xem mapping hiện có và gợi ý email cần xác nhận.</p> : mentorMappings.employees.length === 0 ? (
+            <p className="hrm-empty">HRM Sandbox không có hồ sơ nhân viên để liên kết.</p>
+          ) : (
+            <div className="hrm-table-wrap"><table className="hrm-table">
+              <thead><tr><th>HRM external ID</th><th>Nhân viên HRM</th><th>Mentor IMS</th><th>Mapping</th><th>Thao tác</th></tr></thead>
+              <tbody>{mentorMappings.employees.map((employee) => (
+                <tr key={employee.external_employee_id}>
+                  <td>{employee.external_employee_id}</td>
+                  <td><strong>{employee.full_name}</strong><small>{employee.work_email || 'Không có email'}</small></td>
+                  <td>
+                    <select aria-label={`Mentor IMS cho HRM ${employee.external_employee_id}`} value={mentorMappingSelection[employee.external_employee_id] || ''}
+                      onChange={(event) => setMentorMappingSelection((previous) => ({ ...previous, [employee.external_employee_id]: event.target.value }))}
+                      disabled={Boolean(employee.linked_user_id)}>
+                      <option value="">Chọn Mentor IMS</option>
+                      {mentorMappings.mentors.map((mentor) => <option key={mentor.ma_nguoi_dung} value={mentor.ma_nguoi_dung}>{mentor.ho_ten} · {mentor.email}</option>)}
+                    </select>
+                    {employee.email_suggestion_user_id && !employee.linked_user_id && <small>Gợi ý từ email — cần Admin xác nhận.</small>}
+                  </td>
+                  <td>{employee.linked_user_id ? `Đã liên kết #${employee.linked_user_id}` : employee.email_suggestion_count > 1 ? 'CONFLICT · email trùng' : employee.email_suggestion_user_id ? 'Chờ xác nhận' : 'Chưa liên kết'}</td>
+                  <td>{employee.linked_user_id ? 'External ID đã khóa' : <button type="button" className="btn btn-secondary" onClick={() => saveMentorMapping(employee.external_employee_id)} disabled={!mentorMappingSelection[employee.external_employee_id] || Boolean(busy)}>{busy === `mentor-map:${employee.external_employee_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Xác nhận mapping</button>}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+          )}
+          <p className="hrm-action-note">Mapping theo provider + external ID không đổi role, mật khẩu, phân công Mentor–TTS hoặc lịch sử. Tạo preview mới sau khi mapping để Admin xem và xác nhận các trường HRM-owned được hỗ trợ.</p>
+        </section>
+      )}
+
       <section className="hrm-panel hrm-actions-panel">
         <div className="hrm-panel-heading">
           <div><h2>Xem trước và xác nhận đồng bộ</h2><p>Preview có thời hạn; dữ liệu nguồn và mapping được kiểm tra lại trước khi ghi.</p></div>
@@ -336,7 +414,7 @@ export default function HrmIntegrationView() {
 
       {preview && (
         <section className="hrm-panel">
-          <div className="hrm-panel-heading"><div><h2>Bản xem trước ({preview.total})</h2><p>Chỉ các dòng Mới/Cập nhật/Không đổi được áp dụng. Xung đột và dữ liệu sai được giữ lại để rà soát.</p></div></div>
+          <div className="hrm-panel-heading"><div><h2>Preview ({preview.total})</h2><p>Apply directory changes and Admin-approved Mentor links according to their separate scopes. Conflicts and invalid records remain for review.</p></div></div>
           <div className="hrm-table-wrap">
             <table className="hrm-table">
               <thead><tr><th>Mã NV</th><th>Nhân viên</th><th>Phòng ban HRM → IMS</th><th>Chức danh</th><th>Trạng thái</th><th>Hành động</th><th>Ghi chú</th></tr></thead>
@@ -396,6 +474,13 @@ export default function HrmIntegrationView() {
           </div>
         )}
       </section>
+
+      <HrmOutboundPanel currentUser={currentUser} />
     </section>
   );
+}
+
+export default function HrmIntegrationView({ currentUser }) {
+  if (currentUser?.vai_tro === 'HR') return <HrmOutboundPanel currentUser={currentUser} />;
+  return <AdminHrmIntegrationView currentUser={currentUser} />;
 }

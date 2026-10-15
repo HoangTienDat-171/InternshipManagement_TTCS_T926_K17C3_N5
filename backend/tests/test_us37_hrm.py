@@ -207,9 +207,9 @@ class US37SyncWorkflowTests(unittest.TestCase):
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.execute("CREATE TABLE PHONG_BAN(ma_phong_ban INTEGER PRIMARY KEY, ten_phong_ban TEXT NOT NULL)")
-        self.db.execute("CREATE TABLE NGUOI_DUNG(ma_nguoi_dung INTEGER PRIMARY KEY, ho_ten TEXT NOT NULL, email TEXT NOT NULL, vai_tro TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE NGUOI_DUNG(ma_nguoi_dung INTEGER PRIMARY KEY, ma_phong_ban INTEGER, ho_ten TEXT NOT NULL, email TEXT NOT NULL, so_dien_thoai TEXT, vai_tro TEXT NOT NULL, trang_thai TEXT, mat_khau TEXT)")
         self.db.execute("INSERT INTO PHONG_BAN VALUES (9, 'Engineering')")
-        self.db.execute("INSERT INTO NGUOI_DUNG VALUES (1, 'Admin Test', 'admin@ims.test', 'Admin')")
+        self.db.execute("INSERT INTO NGUOI_DUNG (ma_nguoi_dung, ho_ten, email, vai_tro) VALUES (1, 'Admin Test', 'admin@ims.test', 'Admin')")
         ensure_hrm_sqlite_schema(self.db)
         self.records = [{
             "external_employee_id": "NV001",

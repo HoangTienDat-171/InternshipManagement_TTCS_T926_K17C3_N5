@@ -126,7 +126,7 @@ export default function App() {
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
-        || (activeTab === 'hrm-integration' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'hrm-integration' && !['Admin', 'HR'].includes(currentUser.vai_tro))
       )
         ? personalWorkspace
         : activeTab;
@@ -627,9 +627,9 @@ export default function App() {
             />
           )}
 
-          {visibleActiveTab === 'hrm-integration' && currentUser?.vai_tro === 'Admin' && (
+          {visibleActiveTab === 'hrm-integration' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải trạng thái tích hợp HRM…</div>}>
-              <HrmIntegrationView />
+              <HrmIntegrationView currentUser={currentUser} />
             </Suspense>
           )}
 

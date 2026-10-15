@@ -1,10 +1,12 @@
-# US37 — HRM Sandbox integration
+# US37 — Bidirectional HRM Sandbox integration
 
-This feature contains a local HRM demonstration service and an Admin-only IMS
-workflow. **The sandbox is synthetic and is not a connection to a real company
-HRM.** It binds to `127.0.0.1` only and stores its records in a separate SQLite
-file. The IMS directory, preview tokens, department mappings, and sync history
-are stored in the currently configured IMS database.
+This feature contains a local HRM demonstration service and separate IMS
+workflows for Admin-managed HRM imports/Mentor mappings and HR-approved hiring
+proposals. **The sandbox uses synthetic data and is not connected to a real
+company HRM.** It binds to `127.0.0.1` only and stores records in a separate
+SQLite file. The IMS directory, preview tokens, department mappings, and sync
+history are stored in the configured IMS database; the UAT launcher uses its
+own isolated SQLite database.
 
 ## Local setup
 
@@ -26,9 +28,11 @@ are stored in the currently configured IMS database.
 
 3. Install the backend virtualenv requirements and frontend dependencies if
    needed. The local scripts expect `backend/.venv` and `frontend/node_modules`.
-4. Apply `migrations/20261015_us37_hrm_sandbox.sql` **only to an isolated/test
-   IMS database**. Do not apply it to a business database without separate
-   owner approval and backup.
+4. Apply `migrations/20261015_us37_hrm_sandbox.sql` and then
+   `migrations/20261015_us37_bidirectional_workflows.sql` **only to an
+   isolated/test MySQL IMS database**. The included SQLite UAT launcher creates
+   its tables automatically. Do not apply either migration to a business
+   database without a separate rollout review and backup.
 
 ## Start and stop
 
@@ -49,6 +53,16 @@ workspace's MySQL database or alter the root `run_server.bat` behavior.
 
 The seeded demo sign-in is `admin@internship.vn` / `123456`; it exists only in
 the isolated SQLite test database and must never be used in production.
+The launcher also prepares one synthetic, explicitly completed candidate
+profile in that isolated IMS database. It is not a real person's data.
+The demo HR account is `hr@internship.vn` / `123456`, also UAT-only.
+
+Open the separate HRM Sandbox review console at
+`http://127.0.0.1:8100/`. Enter the local API key from the ignored
+`backend/.env` file in the current PR worktree. The key stays in the page's
+memory only and is never printed by the launcher. This console lists candidate
+drafts and lets the Sandbox reviewer accept or reject them. Acceptance creates
+an employee only in the independent Sandbox SQLite database.
 
 To run the synthetic HTTP end-to-end flow as part of startup:
 
@@ -105,7 +119,7 @@ Data persists in a dedicated SQLite file, defaulting to
 `HRM_SANDBOX_DATABASE_PATH` when needed. The UAT launcher uses its own separate
 file and never reads or writes the standalone Sandbox database.
 
-## IMS workflow and data rules
+## HRM → IMS workflow and data rules
 
 1. Admin tests the Sandbox connection.
 2. Admin maps each source department code to an existing `PHONG_BAN` record.
@@ -130,8 +144,42 @@ is retained in the HRM directory with a warning; it does not lock or delete an
 IMS account. Department assignment uses the mapped IMS department ID and does
 not alter program/mentor history.
 
-All IMS integration endpoints are Admin-only. HR, Mentor, and intern roles are
-denied by the backend, even if they call the API directly.
+HRM employee imports and external-ID-to-Mentor mapping are Admin-only. Email
+matches only suggest a possible Mentor; they never establish a mapping. Admin
+must select a Mentor and confirm the `(provider_id, external_employee_id)` link.
+Subsequent previews can update only the supported Mentor fields `ho_ten`,
+`email`, `so_dien_thoai`, and the current `ma_phong_ban` after department
+mapping. Job title and employee status have no safe Mentor destination in the
+current IMS schema; they remain in the separate HRM directory and appear in
+the preview. An inactive source never locks the account. Role, credentials,
+assignments, programs, evaluations, and history remain unchanged. Conflicts
+and updates are previewed, and Admin must confirm apply.
+
+## IMS → HRM candidate workflow
+
+Only HR can record the hiring decision, approve the exact candidate snapshot,
+and send it. Admin can configure the integration, approve Mentor mappings, and
+view status/history, but cannot approve or send a candidate. Eligibility
+requires an approved TTS profile, at least one approved participation with an
+explicit `HoanThanh` state and completion confirmation timestamp, plus a
+separate HR hiring decision. Dates and evaluation scores are never used to
+infer completion or recruitment.
+
+The outbound preview contains only the IMS profile reference, full name, and
+all explicitly completed programs. It omits personal email/phone, CVs,
+documents, detailed evaluations, credentials, IMS roles, and department. HR
+reviews the snapshot before approval and send. The Sandbox receives a `PENDING`
+draft; it creates an employee ID only after a Sandbox reviewer accepts. A
+rejection reason and every send/decision are retained in outbound history; the
+IMS internship profile and completion history are not changed. Stable
+`ims-profile-{id}` references make retries idempotent. Uncertain POST results
+must be reconciled by that reference before another send.
+
+HR opens **Tích hợp HRM** in IMS and reviews candidates. After HR approves and
+sends a draft, a Sandbox reviewer can decide at `http://127.0.0.1:8100/`. The
+IMS panel also has a Sandbox inbox view for demo. If a draft is accepted or
+rejected outside IMS, HR refreshes the IMS panel and uses reconciliation to
+save the latest Sandbox decision and external employee ID.
 
 ## Safe UAT sequence
 
@@ -172,12 +220,32 @@ Sandbox key. Do not test writes against the real IMS MySQL database.
 7. Stop the isolated demo with `scripts\stop_us37_uat.ps1`. Its databases and
    logs remain available for review.
 
+### Bidirectional candidate and Mentor demo
+
+1. Start the isolated demo with `scripts\run_us37_uat.ps1`; the script
+   idempotently seeds only a synthetic eligible candidate into the dedicated
+   UAT SQLite database.
+2. Sign in as the UAT HR account and open **Tích hợp HRM**. Select the synthetic
+   candidate, review the included fields/program history, record the hiring
+   decision, approve the snapshot, then send it as `PENDING`.
+3. Open `http://127.0.0.1:8100/`, enter the Sandbox key from the ignored local
+   `.env`, and accept or reject. Rejection requires a reason. Refresh IMS to
+   confirm the final status, external ID (if accepted), and outbound history.
+4. For HRM → IMS Mentor data, sign in as UAT Admin. In **Liên kết Mentor theo
+   external ID**, select and explicitly confirm a Mentor mapping. Review the
+   next preview. Apply only after checking the supported fields; status/title
+   changes remain in the separate HRM directory and do not change account
+   access or assignments.
+
 ## Real HRM follow-up
 
-`SANDBOX E2E VERIFIED` means this local service and isolated IMS test database
-completed the connection/preview/apply/history workflow. It does not mean a
-real company HRM is connected. `REAL HRM INTEGRATION PENDING` remains until the
-owner supplies the vendor/API contract, stable employee IDs, approved field
-ownership, department-code mapping rules, rate limits, and inactive/duplicate
-handling policies. Implementing a real provider must use a separate reviewed
-adapter and secret provisioning process.
+`SANDBOX E2E VERIFIED` means targeted automated tests exercised the IMS HR
+approval/send routes against a separate loopback HRM Sandbox HTTP server and
+isolated SQLite files, verified rejection/resubmission/idempotent acceptance,
+and exercised Admin-approved external-ID Mentor mapping without changing
+account access or assignments. It does not mean a real company HRM is
+connected. `REAL HRM INTEGRATION PENDING` remains until the owner supplies the
+vendor/API contract, stable employee IDs, approved field ownership,
+department-code mapping rules, rate limits, and inactive/duplicate-handling
+policies. Implementing a real provider must use a separate reviewed adapter
+and secret provisioning process.

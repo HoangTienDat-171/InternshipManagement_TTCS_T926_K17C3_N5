@@ -71,8 +71,92 @@ SQLITE_SCHEMA = (
         lock_token TEXT NULL,
         lease_until TEXT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS HRM_MENTOR_LINKS (
+        provider_id TEXT NOT NULL,
+        external_employee_key TEXT NOT NULL,
+        external_employee_id TEXT NOT NULL,
+        ma_nguoi_dung INTEGER NOT NULL,
+        approved_by INTEGER NOT NULL,
+        approved_at TEXT NOT NULL,
+        PRIMARY KEY(provider_id, external_employee_key),
+        UNIQUE(provider_id, ma_nguoi_dung),
+        FOREIGN KEY(ma_nguoi_dung) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY(approved_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_MENTOR_SYNC_AUDIT (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        external_employee_id TEXT NOT NULL,
+        mentor_user_id INTEGER NOT NULL,
+        actor_user_id INTEGER NOT NULL,
+        changed_fields_json TEXT NOT NULL,
+        before_values_json TEXT NOT NULL,
+        after_values_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(mentor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_HIRING_DECISIONS (
+        ma_ho_so INTEGER PRIMARY KEY,
+        decision_status TEXT NOT NULL CHECK(decision_status IN ('APPROVED', 'REVOKED')),
+        actor_user_id INTEGER NOT NULL,
+        decision_at TEXT NOT NULL,
+        reason TEXT NULL,
+        FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_HIRING_DECISION_HISTORY (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_ho_so INTEGER NOT NULL,
+        decision_status TEXT NOT NULL CHECK(decision_status IN ('APPROVED', 'REVOKED')),
+        actor_user_id INTEGER NOT NULL,
+        reason TEXT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_OUTBOUND_PREVIEWS (
+        preview_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        actor_user_id INTEGER NOT NULL,
+        ma_ho_so INTEGER NOT NULL,
+        snapshot_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('PENDING', 'APPROVED', 'SENT', 'STALE', 'EXPIRED')),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_OUTBOUND_PROPOSALS (
+        provider_id TEXT NOT NULL,
+        ma_ho_so INTEGER NOT NULL,
+        external_reference TEXT NOT NULL,
+        candidate_request_id TEXT NULL,
+        status TEXT NOT NULL,
+        external_employee_id TEXT NULL,
+        last_payload_hash TEXT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(provider_id, ma_ho_so),
+        UNIQUE(provider_id, external_reference),
+        UNIQUE(provider_id, candidate_request_id),
+        FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_OUTBOUND_HISTORY (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        actor_user_id INTEGER NOT NULL,
+        ma_ho_so INTEGER NOT NULL,
+        external_reference TEXT NOT NULL,
+        candidate_request_id TEXT NULL,
+        event_status TEXT NOT NULL,
+        reason TEXT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT,
+        FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT
+    )""",
     "CREATE INDEX IF NOT EXISTS idx_hrm_employee_name ON HRM_EMPLOYEE_DIRECTORY(full_name)",
     "CREATE INDEX IF NOT EXISTS idx_hrm_history_created ON HRM_SYNC_HISTORY(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_hrm_outbound_history_created ON HRM_OUTBOUND_HISTORY(created_at)",
 )
 
 
@@ -87,7 +171,10 @@ def hrm_schema_ready(db) -> bool:
     try:
         for table in (
             "HRM_DEPARTMENT_MAPPINGS", "HRM_EMPLOYEE_DIRECTORY", "HRM_SYNC_PREVIEWS",
-            "HRM_SYNC_HISTORY", "HRM_SYNC_LOCKS",
+            "HRM_SYNC_HISTORY", "HRM_SYNC_LOCKS", "HRM_MENTOR_LINKS",
+            "HRM_MENTOR_SYNC_AUDIT", "HRM_HIRING_DECISIONS",
+            "HRM_HIRING_DECISION_HISTORY", "HRM_OUTBOUND_PREVIEWS",
+            "HRM_OUTBOUND_PROPOSALS", "HRM_OUTBOUND_HISTORY",
         ):
             db.execute(f"SELECT 1 FROM {table} LIMIT 0")
         return True
@@ -109,6 +196,15 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
         (provider_id,),
     ).fetchall()
     user_rows = db.execute("SELECT ma_nguoi_dung, email FROM NGUOI_DUNG WHERE email IS NOT NULL").fetchall()
+    mentor_rows = db.execute(
+        "SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai, u.ma_phong_ban, "
+        "u.vai_tro, p.ten_phong_ban FROM NGUOI_DUNG u "
+        "LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban WHERE u.vai_tro = 'Mentor'"
+    ).fetchall()
+    link_rows = db.execute(
+        "SELECT external_employee_key, external_employee_id, ma_nguoi_dung "
+        "FROM HRM_MENTOR_LINKS WHERE provider_id = ?", (provider_id,)
+    ).fetchall()
 
     existing = {}
     for row in current_rows:
@@ -127,10 +223,18 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
         email = (row["email"] or "").strip().casefold()
         if email:
             emails.setdefault(email, []).append(int(row["ma_nguoi_dung"]))
+    mentors = {int(row["ma_nguoi_dung"]): dict(row) for row in mentor_rows}
+    links = {str(row["external_employee_key"]).casefold(): {
+        "external_employee_id": row["external_employee_id"],
+        "ma_nguoi_dung": int(row["ma_nguoi_dung"]),
+        **mentors.get(int(row["ma_nguoi_dung"]), {}),
+    } for row in link_rows}
     return {
         "existing": existing,
         "mappings": mappings,
         "ims_user_ids_by_email": emails,
+        "ims_users_by_id": mentors,
+        "linked_mentors": links,
     }
 
 
@@ -167,6 +271,7 @@ def preview_rows(records: Sequence[Mapping[str, Any]], context: Mapping[str, Any
         existing_by_external_id=context["existing"],
         department_mappings=context["mappings"],
         ims_user_ids_by_email=context["ims_user_ids_by_email"],
+        linked_mentors=context.get("linked_mentors", {}),
     )
 
 
@@ -267,17 +372,7 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
     now = db_timestamp()
     begin_transaction(db)
     try:
-        for row in rows:
-            action = row["action"]
-            if action == "UNCHANGED":
-                unchanged += 1
-                continue
-            if action in {"CONFLICT", "INVALID"}:
-                skipped += 1
-                continue
-            if action not in {"NEW", "UPDATE"}:
-                skipped += 1
-                continue
+        def upsert_directory_record(row: Mapping[str, Any]) -> None:
             db.execute(
                 """INSERT INTO HRM_EMPLOYEE_DIRECTORY (
                     provider_id, external_employee_key, external_employee_id, full_name, work_email,
@@ -312,6 +407,55 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
                     now,
                 ),
             )
+
+        for row in rows:
+            action = row["action"]
+            if action == "UNCHANGED":
+                unchanged += 1
+                continue
+            if action in {"MENTOR_DIRECTORY_UPDATE", "MENTOR_UNCHANGED"}:
+                upsert_directory_record(row)
+                if action == "MENTOR_UNCHANGED":
+                    unchanged += 1
+                else:
+                    updated += 1
+                continue
+            if action in {"CONFLICT", "INVALID"}:
+                skipped += 1
+                continue
+            if action == "MENTOR_UPDATE":
+                before = row.get("mentor_before") or {}
+                after = row.get("mentor_after") or {}
+                mentor_id = int(row["linked_user_id"])
+                current = db.execute(
+                    "SELECT ho_ten, email, so_dien_thoai, ma_phong_ban, vai_tro "
+                    "FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?",
+                    (mentor_id,),
+                ).fetchone()
+                if not current or current["vai_tro"] != "Mentor" or any(current[key] != before.get(key) for key in before):
+                    raise ValueError("Linked Mentor data changed after the preview; create a new preview.")
+                changed_fields = [key for key, value in after.items() if before.get(key) != value]
+                db.execute(
+                    "UPDATE NGUOI_DUNG SET ho_ten = ?, email = ?, so_dien_thoai = ?, ma_phong_ban = ? "
+                    "WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'",
+                    (after["ho_ten"], after["email"], after["so_dien_thoai"], after["ma_phong_ban"], mentor_id),
+                )
+                db.execute(
+                    """INSERT INTO HRM_MENTOR_SYNC_AUDIT (
+                        provider_id, external_employee_id, mentor_user_id, actor_user_id,
+                        changed_fields_json, before_values_json, after_values_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (PROVIDER_ID, row["external_employee_id"], mentor_id, actor_user_id,
+                     json.dumps(changed_fields), json.dumps(before, default=str),
+                     json.dumps(after, default=str), now),
+                )
+                upsert_directory_record(row)
+                updated += 1
+                continue
+            if action not in {"NEW", "UPDATE"}:
+                skipped += 1
+                continue
+            upsert_directory_record(row)
             if action == "NEW":
                 created += 1
             else:
