@@ -6,12 +6,25 @@ import MasterDataSelect from '../components/MasterDataSelect';
 async function apiJson(path, options) {
   const response = await apiFetch(path, options);
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.detail || `Yêu cầu thất bại (${response.status}).`);
+  if (!response.ok) {
+    const detail = result.detail || `Yêu cầu thất bại (${response.status}).`;
+    if (response.status === 404 && (!result.detail || result.detail === 'Not Found')) {
+      throw new Error(`Backend trả 404 cho ${path}. Hãy kiểm tra backend có đang chạy từ worktree feature US37 trên cổng 8000 không, rồi tải lại trang.`);
+    }
+    throw new Error(detail);
+  }
   return result;
 }
 
 const PAGE_SIZE = 25;
 const stateLabels = { UNMAPPED: 'Chưa ánh xạ', DEFAULT: 'Mặc định', OVERRIDE: 'Ngoại lệ', CONFLICT: 'Cần xem lại' };
+const mappingFilterItems = [
+  { value: '', label: 'Tất cả trạng thái ánh xạ' },
+  { value: 'UNMAPPED', label: 'Chưa ánh xạ' },
+  { value: 'DEFAULT', label: 'Mặc định' },
+  { value: 'OVERRIDE', label: 'Ngoại lệ' },
+  { value: 'CONFLICT', label: 'Cần xem lại' },
+];
 
 function dateLabel(value) {
   if (!value) return '—';
@@ -85,6 +98,12 @@ export default function HrmDepartmentMappingPanel({ onMappingChanged, onNotice, 
   const pageRows = filtered.slice((visiblePage - 1) * PAGE_SIZE, visiblePage * PAGE_SIZE);
   const pageSelected = pageRows.length > 0 && pageRows.every((employee) => selectedIds.has(employee.external_employee_id));
   const selectedEmployees = employees.filter((employee) => selectedIds.has(employee.external_employee_id));
+  const departmentFilterItems = useMemo(() => [
+    { department_code: '', department_name: 'Tất cả phòng ban HRM' },
+    ...[...new Set(employees.map((employee) => employee.department_code).filter(Boolean))]
+      .sort()
+      .map((code) => ({ department_code: code, department_name: code })),
+  ], [employees]);
 
   const begin = (operation) => {
     setError('');
@@ -199,12 +218,12 @@ export default function HrmDepartmentMappingPanel({ onMappingChanged, onNotice, 
         </div>
         <div className="hrm-map-filters">
           <label className="hrm-map-search"><Search size={16} aria-hidden="true" /><input value={query} placeholder="Tìm mã, tên hoặc email" onChange={(event) => { setQuery(event.target.value); setPage(1); }} /></label>
-          <select aria-label="Lọc theo phòng ban HRM" value={departmentFilter} onChange={(event) => { setDepartmentFilter(event.target.value); setPage(1); }}>
-            <option value="">Tất cả phòng ban HRM</option>{[...new Set(employees.map((employee) => employee.department_code).filter(Boolean))].sort().map((code) => <option key={code} value={code}>{code}</option>)}
-          </select>
-          <select aria-label="Lọc theo trạng thái ánh xạ" value={mappingFilter} onChange={(event) => { setMappingFilter(event.target.value); setPage(1); }}>
-            <option value="">Tất cả trạng thái ánh xạ</option><option value="UNMAPPED">Chưa ánh xạ</option><option value="DEFAULT">Mặc định</option><option value="OVERRIDE">Ngoại lệ</option><option value="CONFLICT">Cần xem lại</option>
-          </select>
+          <MasterDataSelect id="hrm-department-code-filter" value={departmentFilter} items={departmentFilterItems}
+            idKey="department_code" labelKey="department_name" placeholder="Lọc phòng ban HRM" itemName="phòng ban HRM"
+            disabled={loading || saving} onChange={(event) => { setDepartmentFilter(event.target.value); setPage(1); }} />
+          <MasterDataSelect id="hrm-mapping-state-filter" value={mappingFilter} items={mappingFilterItems}
+            idKey="value" labelKey="label" placeholder="Lọc trạng thái ánh xạ" itemName="trạng thái ánh xạ"
+            disabled={loading || saving} onChange={(event) => { setMappingFilter(event.target.value); setPage(1); }} />
         </div>
         <div className="hrm-bulk-toolbar">
           <div className="hrm-bulk-selection"><label><input type="checkbox" checked={pageSelected} onChange={setAllOnPage} disabled={!pageRows.length || saving} /> Chọn trang này ({pageRows.length})</label>

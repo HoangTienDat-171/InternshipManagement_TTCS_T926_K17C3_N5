@@ -54,14 +54,20 @@
 .hrm-mapping-source { display: grid; gap: 3px; min-width: 0; }
 .hrm-mapping-source strong { color: var(--text-main); font-size: 12px; }
 .hrm-mapping-source span { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.hrm-mapping-row select { width: 100%; min-width: 0; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); }
+.hrm-mapping-row > .master-data-select { min-width: 0; }
 .hrm-map-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .hrm-map-actions .btn { min-height: 36px; padding: 7px 10px; white-space: nowrap; }
 .hrm-map-filters { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(180px, 1fr)); gap: 9px; }
-.hrm-map-filters select, .hrm-map-search { box-sizing: border-box; min-width: 0; min-height: 39px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); }
-.hrm-map-filters select { padding: 7px 10px; }
+.hrm-map-filters > .master-data-select { min-width: 0; }
+.hrm-map-search { box-sizing: border-box; min-width: 0; min-height: 39px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); }
 .hrm-map-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-muted); }
 .hrm-map-search input { width: 100%; min-width: 0; height: 35px; border: 0; outline: 0; background: transparent; color: var(--text-main); font: inherit; }
+.hrm-mentor-toolbar { display: grid; grid-template-columns: minmax(240px, 1.4fr) minmax(210px, .8fr) auto; align-items: center; gap: 10px; }
+.hrm-mentor-filter { min-width: 0; }
+.hrm-mentor-count { color: var(--text-muted); font-size: 11px; text-align: right; white-space: nowrap; }
+.hrm-mentor-table { min-width: 900px; }
+.hrm-mentor-table td .master-data-select { min-width: 220px; }
+.hrm-mentor-table .hrm-action-note { display: inline-block; }
 .hrm-bulk-toolbar { display: grid; gap: 11px; padding: 11px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--surface-muted, var(--surface-card)); }
 .hrm-bulk-selection, .hrm-bulk-action { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .hrm-bulk-selection > label { display: inline-flex; align-items: center; gap: 7px; color: var(--text-body); font-size: 12px; }
@@ -101,8 +107,8 @@
 :root[data-theme='dark'] .hrm-map-badge.state-default { color: #93c5fd; }
 :root[data-theme='dark'] .hrm-map-badge.state-conflict, :root[data-theme='dark'] .hrm-map-warning { color: #fcd34d !important; }
 :root[data-theme='dark'] .hrm-map-badge.state-unmapped { color: #cbd5e1; }
-@media (max-width: 900px) { .hrm-map-filters { grid-template-columns: 1fr 1fr; } .hrm-map-search { grid-column: 1 / -1; } }
-@media (max-width: 600px) { .hrm-map-filters { grid-template-columns: 1fr; } .hrm-map-search { grid-column: auto; } .hrm-bulk-selection, .hrm-bulk-action { align-items: stretch; flex-direction: column; } .hrm-bulk-selection > span { margin-left: 0; } .hrm-bulk-select { width: 100%; } .hrm-bulk-action .btn { justify-content: center; } .hrm-pagination { align-items: flex-start; flex-direction: column; } .hrm-map-modal-backdrop { padding: 10px; } .hrm-map-modal { max-height: calc(100vh - 20px); padding: 14px; } }
+@media (max-width: 900px) { .hrm-map-filters { grid-template-columns: 1fr 1fr; } .hrm-map-search { grid-column: 1 / -1; } .hrm-mentor-toolbar { grid-template-columns: 1fr 1fr; } .hrm-mentor-count { grid-column: 1 / -1; text-align: left; } }
+@media (max-width: 600px) { .hrm-map-filters { grid-template-columns: 1fr; } .hrm-map-search { grid-column: auto; } .hrm-mentor-toolbar { grid-template-columns: 1fr; } .hrm-mentor-count { grid-column: auto; } .hrm-bulk-selection, .hrm-bulk-action { align-items: stretch; flex-direction: column; } .hrm-bulk-selection > span { margin-left: 0; } .hrm-bulk-select { width: 100%; } .hrm-bulk-action .btn { justify-content: center; } .hrm-pagination { align-items: flex-start; flex-direction: column; } .hrm-map-modal-backdrop { padding: 10px; } .hrm-map-modal { max-height: calc(100vh - 20px); padding: 14px; } }
 .hrm-table-wrap { overflow: auto; max-width: 100%; border: 1px solid var(--border-color); border-radius: 11px; }
 .hrm-table { width: 100%; border-collapse: collapse; color: var(--text-main); font-size: 12px; }
 .hrm-table th, .hrm-table td { padding: 10px 11px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }

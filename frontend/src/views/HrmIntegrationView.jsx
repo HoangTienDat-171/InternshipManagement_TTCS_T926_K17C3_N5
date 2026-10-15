@@ -9,11 +9,13 @@ import {
   Link2,
   LoaderCircle,
   RefreshCw,
+  Search,
   ShieldCheck,
   UsersRound,
   XCircle,
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
+import MasterDataSelect from '../components/MasterDataSelect';
 import HrmOutboundPanel from './HrmOutboundPanel';
 import HrmDepartmentMappingPanel from './HrmDepartmentMappingPanel';
 import './HrmIntegrationView.css';
@@ -34,7 +36,13 @@ const ACTION_LABELS = Object.fromEntries(ACTIONS.map(({ key, label }) => [key, l
 async function apiJson(path, options) {
   const response = await apiFetch(path, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || `Yêu cầu thất bại (${response.status}).`);
+  if (!response.ok) {
+    const detail = payload.detail || `Yêu cầu thất bại (${response.status}).`;
+    if (response.status === 404 && (!payload.detail || payload.detail === 'Not Found')) {
+      throw new Error(`Backend trả 404 cho ${path}. Hãy kiểm tra backend có đang chạy từ worktree feature US37 trên cổng 8000 không, rồi tải lại trang.`);
+    }
+    throw new Error(detail);
+  }
   return payload;
 }
 
@@ -62,6 +70,8 @@ function AdminHrmIntegrationView({ currentUser }) {
   const [directory, setDirectory] = useState([]);
   const [mentorMappings, setMentorMappings] = useState(null);
   const [mentorMappingSelection, setMentorMappingSelection] = useState({});
+  const [mentorQuery, setMentorQuery] = useState('');
+  const [mentorLinkFilter, setMentorLinkFilter] = useState('ALL');
 
   const loadStatus = useCallback(async (signal) => {
     const payload = await apiJson('/api/integrations/hrm/status', { signal });
@@ -109,6 +119,30 @@ function AdminHrmIntegrationView({ currentUser }) {
   const hasApplicableChanges = (previewCounts.NEW || 0) + (previewCounts.UPDATE || 0) + (previewCounts.MENTOR_UPDATE || 0) + (previewCounts.MENTOR_DIRECTORY_UPDATE || 0) > 0;
   const previewRows = preview?.rows || [];
   const previewExpiry = useMemo(() => formatDate(preview?.expires_at), [preview?.expires_at]);
+  const mentorRows = useMemo(() => mentorMappings?.employees || [], [mentorMappings]);
+  const mentorUserById = useMemo(() => new Map((mentorMappings?.mentors || []).map((mentor) => [
+    Number(mentor.ma_nguoi_dung), mentor,
+  ])), [mentorMappings]);
+  const mentorOptions = useMemo(() => (mentorMappings?.mentors || [])
+    .filter((mentor) => !mentorRows.some((employee) => Number(employee.linked_user_id) === Number(mentor.ma_nguoi_dung)))
+    .map((mentor) => ({
+      ...mentor,
+      option_label: `${mentor.ho_ten || 'Chưa có tên'} · ${mentor.email || `IMS #${mentor.ma_nguoi_dung}`}`,
+    })), [mentorMappings, mentorRows]);
+  const filteredMentorRows = useMemo(() => {
+    const needle = mentorQuery.trim().toLocaleLowerCase();
+    return mentorRows.filter((employee) => {
+      const isLinked = Boolean(employee.linked_user_id);
+      if (mentorLinkFilter === 'LINKED' && !isLinked) return false;
+      if (mentorLinkFilter === 'UNLINKED' && isLinked) return false;
+      if (!needle) return true;
+      const linkedMentor = mentorUserById.get(Number(employee.linked_user_id));
+      return [
+        employee.external_employee_id, employee.full_name, employee.work_email,
+        linkedMentor?.ho_ten, linkedMentor?.email, employee.linked_user_id,
+      ].some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+    });
+  }, [mentorRows, mentorQuery, mentorLinkFilter, mentorUserById]);
 
   const checkConnection = async () => {
     setBusy('connection');
@@ -134,7 +168,7 @@ function AdminHrmIntegrationView({ currentUser }) {
       setMentorMappings(result);
       setMentorMappingSelection(Object.fromEntries((result.employees || []).map((item) => [
         item.external_employee_id,
-        item.linked_user_id ? String(item.linked_user_id) : item.email_suggestion_user_id ? String(item.email_suggestion_user_id) : '',
+        item.linked_user_id ? String(item.linked_user_id) : '',
       ])));
     } catch (cause) {
       setError(cause.message || 'Could not load explicit Mentor mappings.');
@@ -294,29 +328,50 @@ function AdminHrmIntegrationView({ currentUser }) {
               {busy === 'mentor-mappings' ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />} Tải nhân viên HRM
             </button>
           </div>
-          {!mentorMappings ? <p className="hrm-empty">Tải danh sách để xem mapping hiện có và gợi ý email cần xác nhận.</p> : mentorMappings.employees.length === 0 ? (
+          {!mentorMappings ? <p className="hrm-empty">Tải danh sách để xem mapping hiện có và gợi ý email cần xác nhận.</p> : mentorRows.length === 0 ? (
             <p className="hrm-empty">HRM Sandbox không có hồ sơ nhân viên để liên kết.</p>
           ) : (
-            <div className="hrm-table-wrap"><table className="hrm-table">
-              <thead><tr><th>HRM external ID</th><th>Nhân viên HRM</th><th>Mentor IMS</th><th>Mapping</th><th>Thao tác</th></tr></thead>
-              <tbody>{mentorMappings.employees.map((employee) => (
-                <tr key={employee.external_employee_id}>
-                  <td>{employee.external_employee_id}</td>
-                  <td><strong>{employee.full_name}</strong><small>{employee.work_email || 'Không có email'}</small></td>
-                  <td>
-                    <select aria-label={`Mentor IMS cho HRM ${employee.external_employee_id}`} value={mentorMappingSelection[employee.external_employee_id] || ''}
-                      onChange={(event) => setMentorMappingSelection((previous) => ({ ...previous, [employee.external_employee_id]: event.target.value }))}
-                      disabled={Boolean(employee.linked_user_id)}>
-                      <option value="">Chọn Mentor IMS</option>
-                      {mentorMappings.mentors.map((mentor) => <option key={mentor.ma_nguoi_dung} value={mentor.ma_nguoi_dung}>{mentor.ho_ten} · {mentor.email}</option>)}
-                    </select>
-                    {employee.email_suggestion_user_id && !employee.linked_user_id && <small>Gợi ý từ email — cần Admin xác nhận.</small>}
-                  </td>
-                  <td>{employee.linked_user_id ? `Đã liên kết #${employee.linked_user_id}` : employee.email_suggestion_count > 1 ? 'CONFLICT · email trùng' : employee.email_suggestion_user_id ? 'Chờ xác nhận' : 'Chưa liên kết'}</td>
-                  <td>{employee.linked_user_id ? 'External ID đã khóa' : <button type="button" className="btn btn-secondary" onClick={() => saveMentorMapping(employee.external_employee_id)} disabled={!mentorMappingSelection[employee.external_employee_id] || Boolean(busy)}>{busy === `mentor-map:${employee.external_employee_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Xác nhận mapping</button>}</td>
-                </tr>
-              ))}</tbody>
-            </table></div>
+            <>
+              <div className="hrm-mentor-toolbar">
+                <label className="hrm-map-search"><Search size={16} aria-hidden="true" /><input value={mentorQuery} placeholder="Tìm mã HRM, tên, email hoặc Mentor IMS" onChange={(event) => setMentorQuery(event.target.value)} /></label>
+                <div className="hrm-mentor-filter">
+                  <MasterDataSelect id="hrm-mentor-link-filter" value={mentorLinkFilter}
+                    items={[{ value: 'ALL', label: 'Tất cả nhân viên' }, { value: 'LINKED', label: 'Đã liên kết' }, { value: 'UNLINKED', label: 'Chưa liên kết' }]}
+                    idKey="value" labelKey="label" placeholder="Lọc liên kết" itemName="trạng thái liên kết"
+                    disabled={Boolean(busy)} onChange={(event) => setMentorLinkFilter(event.target.value)} />
+                </div>
+                <span className="hrm-mentor-count">{mentorRows.filter((employee) => employee.linked_user_id).length} đã liên kết · {mentorRows.filter((employee) => !employee.linked_user_id).length} chưa liên kết</span>
+              </div>
+              {filteredMentorRows.length === 0 ? <p className="hrm-empty">Không có nhân viên HRM phù hợp với tìm kiếm/bộ lọc.</p> : (
+                <div className="hrm-table-wrap"><table className="hrm-table hrm-mentor-table">
+                  <thead><tr><th>HRM external ID</th><th>Nhân viên HRM</th><th>Mentor IMS</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+                  <tbody>{filteredMentorRows.map((employee) => {
+                    const linkedMentor = mentorUserById.get(Number(employee.linked_user_id));
+                    const suggestion = employee.email_suggestion_user_id ? mentorUserById.get(Number(employee.email_suggestion_user_id)) : null;
+                    const selectedMentorId = mentorMappingSelection[employee.external_employee_id] || '';
+                    return <tr key={employee.external_employee_id}>
+                      <td>{employee.external_employee_id}</td>
+                      <td><strong>{employee.full_name || 'Chưa có tên'}</strong><small>{employee.work_email || 'Không có email'}</small></td>
+                      <td>
+                        {employee.linked_user_id ? <><strong>{linkedMentor?.ho_ten || `Tài khoản IMS #${employee.linked_user_id}`}</strong><small>{linkedMentor?.email || 'Liên kết external ID đã lưu'}</small></> : <>
+                          <MasterDataSelect id={`hrm-mentor-${employee.external_employee_id}`} value={selectedMentorId}
+                            items={mentorOptions} idKey="ma_nguoi_dung" labelKey="option_label" placeholder="Tìm và chọn Mentor IMS"
+                            itemName="Mentor IMS" disabled={Boolean(busy)}
+                            onChange={(event) => setMentorMappingSelection((previous) => ({ ...previous, [employee.external_employee_id]: event.target.value }))} />
+                          {employee.email_suggestion_count > 1 ? <small className="hrm-map-warning">Email trùng với {employee.email_suggestion_count} tài khoản; không tự chọn.</small>
+                            : suggestion ? <small>Gợi ý khớp email: {suggestion.ho_ten} · cần Admin tự chọn và xác nhận.</small>
+                              : <small>Chưa có gợi ý email; chỉ liên kết nếu chắc chắn cùng một người.</small>}
+                        </>}
+                      </td>
+                      <td><span className={`hrm-map-badge ${employee.linked_user_id ? 'state-override' : 'state-unmapped'}`}>{employee.linked_user_id ? 'Đã liên kết' : 'Chưa liên kết'}</span></td>
+                      <td>{employee.linked_user_id ? <span className="hrm-action-note">Liên kết hiện có được giữ nguyên.</span> : <button type="button" className="btn btn-secondary" onClick={() => saveMentorMapping(employee.external_employee_id)} disabled={!selectedMentorId || Boolean(busy)}>
+                        {busy === `mentor-map:${employee.external_employee_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Xác nhận mapping
+                      </button>}</td>
+                    </tr>;
+                  })}</tbody>
+                </table></div>
+              )}
+            </>
           )}
           <p className="hrm-action-note">Mapping theo provider + external ID không đổi role, mật khẩu, phân công Mentor–TTS hoặc lịch sử. Tạo preview mới sau khi mapping để Admin xem và xác nhận các trường HRM-owned được hỗ trợ.</p>
         </section>
