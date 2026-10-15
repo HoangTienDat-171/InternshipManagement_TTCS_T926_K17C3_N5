@@ -9,39 +9,18 @@ are stored in the currently configured IMS database.
 ## Local setup
 
 1. Create `backend/.env` from `backend/.env.example` if it does not exist.
-2. Generate a random local API key and put the following values in that ignored
-   `.env` file. The command below updates only the HRM keys and preserves the
-   existing MySQL/SMTP settings; it does not print the key:
+2. Configure one random local API key in the ignored `backend/.env` files used
+   by the IMS backend and Sandbox. This script preserves MySQL/SMTP settings,
+   aligns the same key in both files, and never prints it:
 
    ```powershell
-   $hrmEnvPath = (Resolve-Path .).Path + '\backend\.env'
-   $hrmLines = if (Test-Path -LiteralPath $hrmEnvPath) { [IO.File]::ReadAllLines($hrmEnvPath) } else { @() }
-   $hrmBytes = New-Object byte[] 32
-   $hrmRng = [Security.Cryptography.RandomNumberGenerator]::Create()
-   $hrmRng.GetBytes($hrmBytes)
-   $hrmRng.Dispose()
-   $hrmKey = [Convert]::ToBase64String($hrmBytes)
-   $hrmValues = [ordered]@{
-     HRM_PROVIDER = 'sandbox'
-     HRM_SANDBOX_BASE_URL = 'http://127.0.0.1:8100'
-     HRM_SANDBOX_API_KEY = $hrmKey
-     HRM_SANDBOX_TIMEOUT_SECONDS = '5'
-     HRM_SANDBOX_PORT = '8100'
-   }
-   foreach ($hrmName in $hrmValues.Keys) {
-     $hrmPattern = '^' + [regex]::Escape($hrmName) + '='
-     $hrmLine = $hrmName + '=' + $hrmValues[$hrmName]
-     $hrmMatch = -1
-     for ($hrmIndex = 0; $hrmIndex -lt $hrmLines.Count; $hrmIndex++) {
-       if ($hrmLines[$hrmIndex] -match $hrmPattern) { $hrmMatch = $hrmIndex; break }
-     }
-     if ($hrmMatch -ge 0) { $hrmLines[$hrmMatch] = $hrmLine } else { $hrmLines += $hrmLine }
-   }
-   [IO.File]::WriteAllLines($hrmEnvPath, $hrmLines, [Text.UTF8Encoding]::new($false))
-   Remove-Variable hrmKey, hrmBytes, hrmValues, hrmLine, hrmName
+   powershell -ExecutionPolicy Bypass -File .\scripts\configure_hrm_sandbox.ps1 `
+     -ImsEnvPath 'D:\antigravity_file\InternshipManagement_TTCS_T926_K17C3_N5\backend\.env' `
+     -SandboxEnvPath 'D:\Codex_file\ims-sprint4-us37-hrm\backend\.env'
    ```
 
-   Run this from the repository root. Do not commit or share `backend/.env`.
+   Run it once with the local workspace paths. Do not commit or share either
+   `backend/.env` file.
    The Sandbox reads only its HRM settings from this file; it does not load IMS
    database credentials.
 
@@ -61,8 +40,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_us37_uat.ps1
 ```
 
 This UAT launcher checks ports 3000, 8000, and 8100 first and exits without
-stopping anything if one is occupied. It generates a short-lived API key in
-process memory, uses separate persistent SQLite files under
+stopping anything if one is occupied. It reads the configured Sandbox key from
+the current worktree's ignored `backend/.env`, uses separate persistent SQLite files under
 `%LOCALAPPDATA%\IMS-US37-UAT`, and starts only the source in the current
 worktree. Open `http://localhost:3000`, sign in using an Admin account from this
 isolated demo database, then open **Tích hợp HRM**. It does not connect to the
@@ -92,12 +71,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop_us37_uat.ps1
 The stop script verifies each recorded PID, executable path, and command line
 before stopping it. UAT databases and logs remain in the isolated local folder.
 
-To start only the standalone sandbox interactively, run
-`scripts\run_hrm_sandbox.bat`; it listens on `127.0.0.1:8100` and can be stopped
-with Ctrl+C in that terminal. For the normal IMS launcher, configure the same
-`HRM_PROVIDER`, `HRM_SANDBOX_BASE_URL`, and `HRM_SANDBOX_API_KEY` values in the
-IMS `backend/.env`, start the sandbox separately, apply the migration to the
-intended test database, and then use the repository's `run_server.bat`.
+To start only the standalone Sandbox in the background, double-click
+`scripts\run_hrm_sandbox.bat`; stop its verified process with
+`scripts\stop_hrm_sandbox.bat`. These scripts use `127.0.0.1:8100`, keep logs
+and the standalone SQLite database under `%LOCALAPPDATA%\IMS-HRM-SANDBOX`, and
+leave the data in place when stopped. If UAT already owns port 8100, the
+standalone launcher exits without stopping or duplicating it.
+
+For normal IMS runtime, the IMS `backend/.env` must use the same
+`HRM_PROVIDER`, `HRM_SANDBOX_BASE_URL`, and `HRM_SANDBOX_API_KEY` values as the
+Sandbox. Start the Sandbox separately, apply the migration only to an isolated
+test IMS database, and then use the repository's `run_server.bat`.
 
 ## Sandbox API
 
@@ -113,10 +97,13 @@ bound to loopback. The adapter accepts only configured loopback URLs, blocks
 redirects, uses bounded timeouts/retries, and never accepts a URL from a
 browser request. The key is not returned by IMS or rendered in the Admin UI.
 
-Sandbox sample employees use stable IDs (`NV001`–`NV003`) and `.test` email
-domains. Data persists in a dedicated SQLite file, defaulting to
+Sandbox sample employees use stable IDs (`NV001`–`NV018`), multiple departments,
+active and inactive statuses, and `.test` email domains. Startup inserts any
+missing sample IDs without replacing records already edited in the Sandbox.
+Data persists in a dedicated SQLite file, defaulting to
 `backend/.local/hrm-sandbox.sqlite3`; override with
-`HRM_SANDBOX_DATABASE_PATH` when needed.
+`HRM_SANDBOX_DATABASE_PATH` when needed. The UAT launcher uses its own separate
+file and never reads or writes the standalone Sandbox database.
 
 ## IMS workflow and data rules
 
@@ -149,6 +136,9 @@ denied by the backend, even if they call the API directly.
 ## Safe UAT sequence
 
 - Connect: **Kiểm tra kết nối** should report `CONNECTED`.
+- Load the department list, map each source department to the correct existing
+  IMS department, and save each mapping. A mapping must be confirmed before
+  employee rows from that department can be applied.
 - New record: preview includes `NV001` as `NEW` after mapping `TECH`; confirm
   once and verify one row in **Danh bạ HRM đã đồng bộ** plus one history entry.
 - Repeat: preview should show `UNCHANGED`; apply does not add another employee.
@@ -163,6 +153,24 @@ denied by the backend, even if they call the API directly.
 
 The UAT launcher logs are in `%LOCALAPPDATA%\IMS-US37-UAT`. Logs contain no
 Sandbox key. Do not test writes against the real IMS MySQL database.
+
+## Owner demo steps
+
+1. Start the isolated demo with `scripts\run_us37_uat.ps1`.
+2. Open `http://localhost:3000`, sign in to the isolated demo as `admin@internship.vn` / `123456`, then open **Admin → Tích hợp HRM**.
+3. Click **Kiểm tra kết nối**. Load department codes, select the matching
+   existing IMS department for each code, and click **Lưu ánh xạ**.
+4. Click **Xem trước đồng bộ**. Review `NEW`, `UPDATE`, `UNCHANGED`,
+   `CONFLICT`, and `INVALID` rows and their reasons.
+5. Click **Xác nhận đồng bộ** only after reviewing the preview. The result and
+   **Lịch sử đồng bộ** show created, updated, unchanged, skipped, and error
+   counts.
+6. To simulate a source change, update an employee in the Sandbox through its
+   authenticated `PATCH /api/v1/employees/{employee_id}` endpoint, then repeat
+   preview and confirmation. The included `-VerifyE2E` startup option performs
+   this flow against the isolated SQLite test databases.
+7. Stop the isolated demo with `scripts\stop_us37_uat.ps1`. Its databases and
+   logs remain available for review.
 
 ## Real HRM follow-up
 

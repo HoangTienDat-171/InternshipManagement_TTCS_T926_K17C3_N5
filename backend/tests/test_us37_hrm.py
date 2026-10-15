@@ -187,6 +187,19 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.assertNotEqual(updated.updated_at, original["updated_at"])
         self.assertEqual(get_employee("NV001")["phone"], "0901999000")
 
+    def test_starter_employees_are_seeded_idempotently(self):
+        first_load = list_employees(page=1, page_size=100)
+        self.assertEqual(first_load["total"], 18)
+        self.assertEqual(len({row["employee_id"] for row in first_load["items"]}), 18)
+        self.assertEqual({row["employment_status"] for row in first_load["items"]}, {"ACTIVE", "INACTIVE"})
+        update_employee("NV001", SandboxEmployeePatch(phone="0901999000"))
+
+        initialize_database()
+        second_load = list_employees(page=1, page_size=100)
+        self.assertEqual(second_load["total"], 18)
+        self.assertEqual([row["employee_id"] for row in first_load["items"]], [row["employee_id"] for row in second_load["items"]])
+        self.assertEqual(get_employee("NV001")["phone"], "0901999000")
+
 
 class US37SyncWorkflowTests(unittest.TestCase):
     def setUp(self):

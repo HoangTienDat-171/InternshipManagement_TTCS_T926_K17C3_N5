@@ -128,21 +128,34 @@ def initialize_database() -> None:
             updated_at TEXT NOT NULL
         )""")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_employees_name ON sandbox_employees(full_name)")
-        count = connection.execute("SELECT COUNT(*) FROM sandbox_employees").fetchone()[0]
-        if count == 0:
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            samples = [
-                ("NV001", "Nguyễn An", "nguyen.an@hrm-sandbox.test", "0901000001", "TECH", "Kỹ thuật", "Kỹ sư Backend", "ACTIVE", now),
-                ("NV002", "Trần Bình", "tran.binh@hrm-sandbox.test", "0901000002", "OPS", "Vận hành", "Chuyên viên vận hành", "ACTIVE", now),
-                ("NV003", "Lê Chi", "le.chi@hrm-sandbox.test", "0901000003", "DATA", "Dữ liệu", "Chuyên viên dữ liệu", "ACTIVE", now),
-            ]
-            connection.executemany(
-                """INSERT OR IGNORE INTO sandbox_employees (
-                    employee_id, full_name, work_email, phone, department_code,
-                    department_name, job_title, employment_status, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                samples,
-            )
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        samples = [
+            ("NV001", "Nguyễn An", "nguyen.an@hrm-sandbox.test", "0901000001", "TECH", "Kỹ thuật", "Kỹ sư Backend", "ACTIVE", now),
+            ("NV002", "Trần Bình", "tran.binh@hrm-sandbox.test", "0901000002", "OPS", "Vận hành", "Chuyên viên vận hành", "ACTIVE", now),
+            ("NV003", "Lê Chi", "le.chi@hrm-sandbox.test", "0901000003", "DATA", "Dữ liệu", "Chuyên viên dữ liệu", "ACTIVE", now),
+            ("NV004", "Phạm Dũng", "pham.dung@hrm-sandbox.test", "0901000004", "HR", "Nhân sự", "Chuyên viên tuyển dụng", "ACTIVE", now),
+            ("NV005", "Vũ Hà", "vu.ha@hrm-sandbox.test", "0901000005", "FIN", "Tài chính", "Kế toán viên", "ACTIVE", now),
+            ("NV006", "Đỗ Huy", "do.huy@hrm-sandbox.test", "0901000006", "OPS", "Vận hành", "Kỹ sư QA", "INACTIVE", now),
+            ("NV007", "Bùi Lan", "bui.lan@hrm-sandbox.test", "0901000007", "OPS", "Vận hành", "Điều phối viên", "ACTIVE", now),
+            ("NV008", "Ngô Minh", "ngo.minh@hrm-sandbox.test", "0901000008", "DATA", "Dữ liệu", "Chuyên viên phân tích", "ACTIVE", now),
+            ("NV009", "Dương Nam", "duong.nam@hrm-sandbox.test", "0901000009", "HR", "Nhân sự", "Chuyên viên C&B", "INACTIVE", now),
+            ("NV010", "Lý Oanh", "ly.oanh@hrm-sandbox.test", "0901000010", "FIN", "Tài chính", "Chuyên viên tài chính", "ACTIVE", now),
+            ("NV011", "Trịnh Phúc", "trinh.phuc@hrm-sandbox.test", "0901000011", "DATA", "Dữ liệu", "Kỹ sư Frontend", "ACTIVE", now),
+            ("NV012", "Mai Quỳnh", "mai.quynh@hrm-sandbox.test", "0901000012", "OPS", "Vận hành", "Chuyên viên hỗ trợ", "ACTIVE", now),
+            ("NV013", "Cao Sơn", "cao.son@hrm-sandbox.test", "0901000013", "DATA", "Dữ liệu", "Kỹ sư dữ liệu", "ACTIVE", now),
+            ("NV014", "Hồ Trang", "ho.trang@hrm-sandbox.test", "0901000014", "HR", "Nhân sự", "Chuyên viên đào tạo", "ACTIVE", now),
+            ("NV015", "Đặng Uyên", "dang.uyen@hrm-sandbox.test", "0901000015", "FIN", "Tài chính", "Chuyên viên công nợ", "INACTIVE", now),
+            ("NV016", "Phan Việt", "phan.viet@hrm-sandbox.test", "0901000016", "OPS", "Vận hành", "Kỹ sư hệ thống", "ACTIVE", now),
+            ("NV017", "Hà Xuân", "ha.xuan@hrm-sandbox.test", "0901000017", "OPS", "Vận hành", "Giám sát vận hành", "ACTIVE", now),
+            ("NV018", "Tạ Yến", "ta.yen@hrm-sandbox.test", "0901000018", "DATA", "Dữ liệu", "Chuyên viên báo cáo", "ACTIVE", now),
+        ]
+        connection.executemany(
+            """INSERT OR IGNORE INTO sandbox_employees (
+                employee_id, full_name, work_email, phone, department_code,
+                department_name, job_title, employment_status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            samples,
+        )
         connection.commit()
     finally:
         connection.close()

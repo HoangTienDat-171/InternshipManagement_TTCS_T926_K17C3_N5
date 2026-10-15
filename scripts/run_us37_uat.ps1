@@ -7,11 +7,18 @@ $frontendDir = Join-Path $repoRoot 'frontend'
 $pythonPath = Join-Path $backendDir '.venv\Scripts\python.exe'
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $vitePath = Join-Path $frontendDir 'node_modules\vite\bin\vite.js'
+$envPath = Join-Path $backendDir '.env'
 $stateDir = Join-Path $env:LOCALAPPDATA 'IMS-US37-UAT'
 $statePath = Join-Path $stateDir 'processes.json'
 
 if (-not (Test-Path -LiteralPath $pythonPath)) { throw 'Backend virtualenv is missing. Create backend\.venv and install backend\requirements.txt.' }
 if (-not (Test-Path -LiteralPath $vitePath)) { throw 'Frontend dependencies are missing. Run npm ci in frontend first.' }
+if (-not (Test-Path -LiteralPath $envPath)) { throw 'backend\.env is missing. Configure the local HRM Sandbox first.' }
+
+$keyLines = @([IO.File]::ReadAllLines($envPath) | Where-Object { $_ -match '^\s*HRM_SANDBOX_API_KEY\s*=' })
+if ($keyLines.Count -ne 1) { throw 'backend\.env must contain exactly one HRM_SANDBOX_API_KEY entry.' }
+$sandboxKey = ($keyLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
+if ($sandboxKey.Length -lt 32 -or $sandboxKey -match '[^\x21-\x7E]') { throw 'HRM_SANDBOX_API_KEY must be at least 32 printable ASCII characters.' }
 
 $portsInUse = @()
 foreach ($port in @(3000, 8000, 8100)) {
@@ -40,11 +47,6 @@ foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environmen
 $started = @()
 
 try {
-  $randomBytes = New-Object byte[] 32
-  $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-  $rng.GetBytes($randomBytes)
-  $rng.Dispose()
-  $sandboxKey = [Convert]::ToBase64String($randomBytes)
   $env:IMS_DATABASE_BACKEND = 'sqlite'
   $env:IMS_SQLITE_PATH = Join-Path $stateDir 'ims-uat.sqlite3'
   $env:HRM_PROVIDER = 'sandbox'
@@ -204,5 +206,5 @@ try {
   foreach ($name in $environmentNames) {
     [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
   }
-  Remove-Variable sandboxKey, randomBytes -ErrorAction SilentlyContinue
+  Remove-Variable sandboxKey -ErrorAction SilentlyContinue
 }
