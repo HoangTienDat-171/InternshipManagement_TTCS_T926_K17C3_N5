@@ -1,17 +1,13 @@
-"""Provider-neutral HRM contract and safe, non-mutating import preview rules.
-
-No HRM vendor or API contract is configured in this application yet. This module
-deliberately contains no network client or write path; a vendor adapter must be
-implemented and reviewed before connection or synchronization can be enabled.
-"""
+"""Canonical HRM records and deterministic, reviewable synchronization rules."""
 from __future__ import annotations
 
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 class HRMEmployeeRecord(BaseModel):
@@ -23,9 +19,11 @@ class HRMEmployeeRecord(BaseModel):
     full_name: str = Field(min_length=1, max_length=200)
     work_email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=40)
+    department_code: str | None = Field(default=None, max_length=128)
     department: str | None = Field(default=None, max_length=200)
     job_title: str | None = Field(default=None, max_length=200)
     employment_status: Literal["active", "inactive"]
+    source_updated_at: str | None = Field(default=None, max_length=64)
 
     @field_validator("external_employee_id", "full_name")
     @classmethod
@@ -35,7 +33,7 @@ class HRMEmployeeRecord(BaseModel):
             raise ValueError("Giá trị bắt buộc không hợp lệ.")
         return normalized
 
-    @field_validator("work_email", "phone", "department", "job_title", mode="before")
+    @field_validator("work_email", "phone", "department_code", "department", "job_title", "source_updated_at", mode="before")
     @classmethod
     def normalize_optional_text(cls, value: Any) -> Any:
         if value is None:
@@ -52,6 +50,27 @@ class HRMEmployeeRecord(BaseModel):
             raise ValueError("Email công việc không hợp lệ.")
         return value.casefold()
 
+    @field_validator("department_code")
+    @classmethod
+    def normalize_department_code(cls, value: str | None) -> str | None:
+        return value.upper() if value else None
+
+    @field_validator("source_updated_at")
+    @classmethod
+    def validate_source_updated_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Thời gian cập nhật nguồn không hợp lệ.") from exc
+        return value
+
+    @field_validator("employment_status", mode="before")
+    @classmethod
+    def normalize_employment_status(cls, value: Any) -> Any:
+        return value.casefold() if isinstance(value, str) else value
+
 
 class HRMProvider(Protocol):
     """Interface for a vendor-specific adapter after its contract is approved."""
@@ -61,8 +80,8 @@ class HRMProvider(Protocol):
     async def test_connection(self) -> None:
         """Raise a safe, non-secret-bearing error if the provider is unavailable."""
 
-    async def fetch_employees(self) -> Sequence[HRMEmployeeRecord]:
-        """Return validated canonical records, including stable external IDs."""
+    async def fetch_employees(self) -> Sequence[Mapping[str, Any]]:
+        """Return paginated source records for per-record preview validation."""
 
 
 def validate_employee_batch(records: Sequence[HRMEmployeeRecord | Mapping[str, Any]]) -> list[HRMEmployeeRecord]:
@@ -142,13 +161,113 @@ def build_import_preview(
     return preview
 
 
+def build_sync_preview(
+    records: Sequence[Mapping[str, Any]],
+    existing_by_external_id: Mapping[str, Mapping[str, Any]],
+    department_mappings: Mapping[str, Mapping[str, Any]],
+    ims_user_ids_by_email: Mapping[str, Sequence[int]],
+) -> list[dict[str, Any]]:
+    """Classify source rows without writing accounts, roles, or assignments."""
+    parsed: list[tuple[Mapping[str, Any], HRMEmployeeRecord | None, str | None]] = []
+    for raw in records:
+        try:
+            employee = HRMEmployeeRecord.model_validate(raw)
+            parsed.append((raw, employee, None))
+        except ValidationError as exc:
+            errors = exc.errors(include_input=False)
+            detail = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in errors[:3]
+            )
+            parsed.append((raw, None, detail or "Bản ghi HRM không hợp lệ."))
+
+    id_counts = Counter(
+        employee.external_employee_id.casefold()
+        for _, employee, _ in parsed if employee is not None
+    )
+    email_counts = Counter(
+        employee.work_email for _, employee, _ in parsed
+        if employee is not None and employee.work_email
+    )
+    existing = {key.casefold(): dict(value) for key, value in existing_by_external_id.items()}
+    mappings = {key.casefold(): dict(value) for key, value in department_mappings.items()}
+    ims_emails = {key.strip().casefold(): list(value) for key, value in ims_user_ids_by_email.items()}
+    preview: list[dict[str, Any]] = []
+
+    for raw, employee, validation_error in parsed:
+        external_id = employee.external_employee_id if employee else str(raw.get("external_employee_id") or "")
+        row: dict[str, Any] = {
+            "external_employee_id": external_id or None,
+            "full_name": employee.full_name if employee else str(raw.get("full_name") or ""),
+            "work_email": employee.work_email if employee else str(raw.get("work_email") or "") or None,
+            "phone": employee.phone if employee else str(raw.get("phone") or "") or None,
+            "department_code": employee.department_code if employee else str(raw.get("department_code") or "") or None,
+            "department": employee.department if employee else str(raw.get("department") or "") or None,
+            "job_title": employee.job_title if employee else str(raw.get("job_title") or "") or None,
+            "employment_status": employee.employment_status if employee else str(raw.get("employment_status") or "").casefold() or None,
+            "source_updated_at": employee.source_updated_at if employee else str(raw.get("source_updated_at") or "") or None,
+            "mapped_department_id": None,
+            "mapped_department_name": None,
+            "action": "INVALID",
+            "reason": validation_error or "Bản ghi HRM không hợp lệ.",
+            "warnings": [],
+            "candidate_user_ids": [],
+        }
+        if employee is None:
+            preview.append(row)
+            continue
+
+        id_key = employee.external_employee_id.casefold()
+        email_key = employee.work_email or ""
+        department = mappings.get((employee.department_code or "").casefold())
+        existing_record = existing.get(id_key)
+        row["mapped_department_id"] = department.get("ma_phong_ban") if department else None
+        row["mapped_department_name"] = department.get("ten_phong_ban") if department else None
+
+        if id_counts[id_key] > 1:
+            row.update(action="INVALID", reason="Mã nhân viên ngoài bị lặp trong dữ liệu HRM.")
+        elif email_key and email_counts[email_key] > 1:
+            row.update(action="CONFLICT", reason="Email công việc bị lặp trong lô HRM; cần đối chiếu thủ công.")
+        elif employee.department and not employee.department_code:
+            row.update(action="CONFLICT", reason="Có tên phòng ban nhưng thiếu mã phòng ban ổn định.")
+        elif employee.department_code and not department:
+            row.update(action="CONFLICT", reason="Mã phòng ban HRM chưa được ánh xạ sang danh mục IMS.")
+        elif email_key and ims_emails.get(email_key):
+            row["candidate_user_ids"] = ims_emails[email_key]
+            row.update(action="CONFLICT", reason="Email khớp tài khoản IMS; cần xác nhận liên kết thủ công, không tự ghép tài khoản.")
+        else:
+            expected = {
+                "full_name": employee.full_name,
+                "work_email": employee.work_email,
+                "phone": employee.phone,
+                "department_code": employee.department_code,
+                "department": employee.department,
+                "ma_phong_ban": department.get("ma_phong_ban") if department else None,
+                "job_title": employee.job_title,
+                "employment_status": employee.employment_status,
+                "source_updated_at": employee.source_updated_at,
+            }
+            if existing_record is None:
+                row.update(action="NEW", reason="Nhân viên HRM chưa có trong danh bạ đồng bộ IMS.")
+            else:
+                changed = any(existing_record.get(key) != value for key, value in expected.items())
+                row.update(
+                    action="UPDATE" if changed else "UNCHANGED",
+                    reason="Thông tin nguồn thay đổi; cập nhật bản ghi HRM đã đồng bộ." if changed else "Không có thay đổi so với lần đồng bộ trước.",
+                )
+
+        if employee.employment_status == "inactive":
+            row["warnings"].append("Nhân viên đã nghỉ việc; chỉ cập nhật trạng thái hồ sơ HRM, không khóa tài khoản hoặc gỡ phân công IMS.")
+        if employee.department_code:
+            row["warnings"].append("Phòng ban được xác định bằng mã HRM đã ánh xạ; không sửa lịch sử chương trình hoặc phân công Mentor.")
+        preview.append(row)
+    return preview
+
+
 HRM_SETUP_REQUIREMENTS = [
-    "Tên nhà cung cấp HRM và tài liệu API chính thức (endpoint, schema, phân trang, giới hạn gọi).",
-    "Tenant sandbox/test và danh sách hostname HTTPS được phép kết nối.",
-    "Phương thức xác thực và bí mật được cấp qua secret store, không nhập/lưu trong giao diện IMS.",
-    "Mã nhân viên ngoài ổn định cùng ánh xạ trường và quyền sở hữu dữ liệu đã được duyệt.",
-    "Quy tắc xử lý trùng, đổi email/phòng ban và nhân viên nghỉ việc đã được HR duyệt.",
-    "Provider adapter đã triển khai, kiểm thử bảo mật và xác minh với sandbox của nhà cung cấp.",
+    "Đặt HRM_PROVIDER=sandbox và HRM_SANDBOX_BASE_URL trỏ tới dịch vụ loopback.",
+    "Cấp HRM_SANDBOX_API_KEY qua environment; không nhập hoặc hiển thị trong giao diện.",
+    "Chạy migration US37 trên database IMS thử nghiệm trước khi đồng bộ.",
 ]
 
 HRM_SYNC_SCOPE = [
@@ -164,20 +283,3 @@ HRM_EXCLUDED_SCOPE = [
     "Đánh giá, chấm công, nghỉ phép và phụ cấp",
     "Hồ sơ TTS và mọi thao tác xóa/khóa tài khoản tự động",
 ]
-
-
-def get_hrm_status() -> dict[str, Any]:
-    """Return current repository readiness without exposing credentials."""
-    return {
-        "state": "NOT_CONFIGURED",
-        "configured": False,
-        "provider_name": None,
-        "can_test_connection": False,
-        "can_preview": False,
-        "can_sync": False,
-        "sync_history_available": False,
-        "missing_requirements": list(HRM_SETUP_REQUIREMENTS),
-        "sync_scope": list(HRM_SYNC_SCOPE),
-        "excluded_scope": list(HRM_EXCLUDED_SCOPE),
-        "message": "Chưa cấu hình HRM: Product Backlog/source chưa cung cấp nhà cung cấp, API contract hoặc sandbox.",
-    }

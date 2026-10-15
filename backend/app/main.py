@@ -3,8 +3,9 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from .database import init_db
+from .database import DATABASE_BACKEND, get_db_connection, init_db
 from .email_outbox import start_email_worker, stop_email_worker
+from .hrm_storage import ensure_hrm_sqlite_schema
 from .security import get_session_user, session_connections
 from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, hrm_routes, intern_routes, leave_routes, master_routes, meeting_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
 
@@ -89,6 +90,12 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     init_db()
+    if DATABASE_BACKEND == "sqlite":
+        db = get_db_connection()
+        try:
+            ensure_hrm_sqlite_schema(db)
+        finally:
+            db.close()
     start_email_worker()
 
 
