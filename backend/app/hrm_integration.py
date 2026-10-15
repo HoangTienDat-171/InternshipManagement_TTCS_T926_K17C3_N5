@@ -167,6 +167,7 @@ def build_sync_preview(
     department_mappings: Mapping[str, Mapping[str, Any]],
     ims_user_ids_by_email: Mapping[str, Sequence[int]],
     linked_mentors: Mapping[str, Mapping[str, Any]] | None = None,
+    employee_department_overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify source rows without writing accounts, roles, or assignments."""
     parsed: list[tuple[Mapping[str, Any], HRMEmployeeRecord | None, str | None]] = []
@@ -194,6 +195,7 @@ def build_sync_preview(
     mappings = {key.casefold(): dict(value) for key, value in department_mappings.items()}
     ims_emails = {key.strip().casefold(): list(value) for key, value in ims_user_ids_by_email.items()}
     mentor_links = {key.casefold(): dict(value) for key, value in (linked_mentors or {}).items()}
+    employee_overrides = {key.casefold(): dict(value) for key, value in (employee_department_overrides or {}).items()}
     preview: list[dict[str, Any]] = []
 
     for raw, employee, validation_error in parsed:
@@ -221,16 +223,31 @@ def build_sync_preview(
 
         id_key = employee.external_employee_id.casefold()
         email_key = employee.work_email or ""
-        department = mappings.get((employee.department_code or "").casefold())
+        default_department = mappings.get((employee.department_code or "").casefold())
+        employee_override = employee_overrides.get(id_key)
+        current_department_code = (employee.department_code or "").casefold()
+        override_department_code = str(employee_override.get("external_department_code") or "").casefold() if employee_override else None
+        override_needs_review = employee_override is not None and current_department_code != override_department_code
+        department = employee_override if employee_override and not override_needs_review else default_department
         existing_record = existing.get(id_key)
         mentor_link = mentor_links.get(id_key)
         row["mapped_department_id"] = department.get("ma_phong_ban") if department else None
         row["mapped_department_name"] = department.get("ten_phong_ban") if department else None
+        row["mapping_source"] = "EMPLOYEE_OVERRIDE" if employee_override and not override_needs_review else "DEPARTMENT_DEFAULT" if default_department else "UNMAPPED"
+        row["mapping_status"] = "NEEDS_REVIEW" if override_needs_review else "OVERRIDE" if employee_override else "DEFAULT" if default_department else "UNMAPPED"
+        row["default_department_name"] = default_department.get("ten_phong_ban") if default_department else None
 
         if id_counts[id_key] > 1:
             row.update(action="INVALID", reason="Mã nhân viên ngoài bị lặp trong dữ liệu HRM.")
         elif email_key and email_counts[email_key] > 1:
             row.update(action="CONFLICT", reason="Email công việc bị lặp trong lô HRM; cần đối chiếu thủ công.")
+        elif override_needs_review:
+            row.update(
+                action="CONFLICT",
+                reason="Mã phòng ban HRM đã đổi sau khi tạo ánh xạ riêng; Admin cần xác nhận lại ngoại lệ hoặc khôi phục ánh xạ mặc định.",
+                mapping_source="OVERRIDE_REVIEW",
+                previous_override_department_name=employee_override.get("ten_phong_ban"),
+            )
         elif employee.department and not employee.department_code:
             row.update(action="CONFLICT", reason="Có tên phòng ban nhưng thiếu mã phòng ban ổn định.")
         elif employee.department_code and not department:

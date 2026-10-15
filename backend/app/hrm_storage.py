@@ -25,6 +25,35 @@ SQLITE_SCHEMA = (
         PRIMARY KEY(provider_id, external_department_key),
         FOREIGN KEY(ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE RESTRICT
     )""",
+    """CREATE TABLE IF NOT EXISTS HRM_EMPLOYEE_DEPARTMENT_OVERRIDES (
+        provider_id TEXT NOT NULL,
+        external_employee_key TEXT NOT NULL,
+        external_employee_id TEXT NOT NULL,
+        external_department_code TEXT NULL,
+        ma_phong_ban INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        approved_by INTEGER NOT NULL,
+        approved_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(provider_id, external_employee_key),
+        FOREIGN KEY(ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE RESTRICT,
+        FOREIGN KEY(approved_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
+    """CREATE TABLE IF NOT EXISTS HRM_DEPARTMENT_MAPPING_AUDIT (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT NOT NULL,
+        mapping_scope TEXT NOT NULL CHECK(mapping_scope IN ('GLOBAL', 'EMPLOYEE')),
+        external_department_code TEXT NULL,
+        external_employee_id TEXT NULL,
+        event_type TEXT NOT NULL,
+        before_department_id INTEGER NULL,
+        after_department_id INTEGER NULL,
+        reason TEXT NOT NULL,
+        actor_user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )""",
     """CREATE TABLE IF NOT EXISTS HRM_EMPLOYEE_DIRECTORY (
         provider_id TEXT NOT NULL,
         external_employee_key TEXT NOT NULL,
@@ -155,6 +184,8 @@ SQLITE_SCHEMA = (
         FOREIGN KEY(ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE RESTRICT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_hrm_employee_name ON HRM_EMPLOYEE_DIRECTORY(full_name)",
+    "CREATE INDEX IF NOT EXISTS idx_hrm_employee_override_department ON HRM_EMPLOYEE_DEPARTMENT_OVERRIDES(provider_id, external_department_code)",
+    "CREATE INDEX IF NOT EXISTS idx_hrm_department_audit_created ON HRM_DEPARTMENT_MAPPING_AUDIT(provider_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_hrm_history_created ON HRM_SYNC_HISTORY(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_hrm_outbound_history_created ON HRM_OUTBOUND_HISTORY(created_at)",
 )
@@ -170,7 +201,8 @@ def ensure_hrm_sqlite_schema(db) -> None:
 def hrm_schema_ready(db) -> bool:
     try:
         for table in (
-            "HRM_DEPARTMENT_MAPPINGS", "HRM_EMPLOYEE_DIRECTORY", "HRM_SYNC_PREVIEWS",
+            "HRM_DEPARTMENT_MAPPINGS", "HRM_EMPLOYEE_DEPARTMENT_OVERRIDES",
+            "HRM_DEPARTMENT_MAPPING_AUDIT", "HRM_EMPLOYEE_DIRECTORY", "HRM_SYNC_PREVIEWS",
             "HRM_SYNC_HISTORY", "HRM_SYNC_LOCKS", "HRM_MENTOR_LINKS",
             "HRM_MENTOR_SYNC_AUDIT", "HRM_HIRING_DECISIONS",
             "HRM_HIRING_DECISION_HISTORY", "HRM_OUTBOUND_PREVIEWS",
@@ -193,6 +225,13 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
         "SELECT m.external_department_key, m.external_department_code, m.ma_phong_ban, p.ten_phong_ban "
         "FROM HRM_DEPARTMENT_MAPPINGS m JOIN PHONG_BAN p ON p.ma_phong_ban = m.ma_phong_ban "
         "WHERE m.provider_id = ?",
+        (provider_id,),
+    ).fetchall()
+    override_rows = db.execute(
+        "SELECT o.external_employee_key, o.external_employee_id, o.external_department_code, "
+        "o.ma_phong_ban, p.ten_phong_ban, o.reason, o.approved_by, o.approved_at, o.updated_at, o.revision "
+        "FROM HRM_EMPLOYEE_DEPARTMENT_OVERRIDES o JOIN PHONG_BAN p ON p.ma_phong_ban = o.ma_phong_ban "
+        "WHERE o.provider_id = ?",
         (provider_id,),
     ).fetchall()
     user_rows = db.execute("SELECT ma_nguoi_dung, email FROM NGUOI_DUNG WHERE email IS NOT NULL").fetchall()
@@ -218,6 +257,11 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
         department_key = value.pop("external_department_key")
         value.pop("external_department_code", None)
         mappings[department_key.casefold()] = value
+    overrides = {}
+    for row in override_rows:
+        value = dict(row)
+        external_key = value.pop("external_employee_key")
+        overrides[str(external_key).casefold()] = value
     emails: dict[str, list[int]] = {}
     for row in user_rows:
         email = (row["email"] or "").strip().casefold()
@@ -232,13 +276,16 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
     return {
         "existing": existing,
         "mappings": mappings,
+        "employee_department_overrides": overrides,
         "ims_user_ids_by_email": emails,
         "ims_users_by_id": mentors,
         "linked_mentors": links,
     }
 
 
-def department_mapping_data(db, provider_departments: Sequence[Mapping[str, str]]) -> dict[str, Any]:
+def department_mapping_data(
+    db, provider_departments: Sequence[Mapping[str, str]], provider_id: str = PROVIDER_ID,
+) -> dict[str, Any]:
     choices = [dict(row) for row in db.execute(
         "SELECT ma_phong_ban, ten_phong_ban FROM PHONG_BAN ORDER BY ten_phong_ban"
     ).fetchall()]
@@ -246,7 +293,7 @@ def department_mapping_data(db, provider_departments: Sequence[Mapping[str, str]
         "SELECT m.external_department_key, m.external_department_code, m.ma_phong_ban, p.ten_phong_ban "
         "FROM HRM_DEPARTMENT_MAPPINGS m JOIN PHONG_BAN p ON p.ma_phong_ban = m.ma_phong_ban "
         "WHERE m.provider_id = ?",
-        (PROVIDER_ID,),
+        (provider_id,),
     ).fetchall()}
     return {
         "ims_departments": choices,
@@ -272,7 +319,258 @@ def preview_rows(records: Sequence[Mapping[str, Any]], context: Mapping[str, Any
         department_mappings=context["mappings"],
         ims_user_ids_by_email=context["ims_user_ids_by_email"],
         linked_mentors=context.get("linked_mentors", {}),
+        employee_department_overrides=context.get("employee_department_overrides", {}),
     )
+
+
+def employee_department_mapping_data(
+    db, records: Sequence[Mapping[str, Any]], provider_id: str = PROVIDER_ID,
+) -> dict[str, Any]:
+    """Resolve each live HRM record using employee override, then global mapping."""
+    context = load_sync_context(db, provider_id)
+    by_code = {str(key).casefold(): value for key, value in context["mappings"].items()}
+    overrides = context.get("employee_department_overrides", {})
+    employees = []
+    seen: set[str] = set()
+    for record in records:
+        external_id = str(record.get("external_employee_id") or "").strip()
+        if not external_id or external_id.casefold() in seen:
+            continue
+        seen.add(external_id.casefold())
+        department_code = str(record.get("department_code") or "").strip().upper()
+        override = overrides.get(external_id.casefold())
+        global_mapping = by_code.get(department_code.casefold())
+        needs_review = bool(override and str(override.get("external_department_code") or "").casefold() != department_code.casefold())
+        effective = override if override and not needs_review else global_mapping
+        if needs_review:
+            mapping_source = "OVERRIDE_REVIEW"
+            mapping_state = "CONFLICT"
+        elif override:
+            mapping_source = "EMPLOYEE_OVERRIDE"
+            mapping_state = "OVERRIDE"
+        elif global_mapping:
+            mapping_source = "DEPARTMENT_DEFAULT"
+            mapping_state = "DEFAULT"
+        else:
+            mapping_source = "UNMAPPED"
+            mapping_state = "UNMAPPED"
+        employees.append({
+            "external_employee_id": external_id,
+            "full_name": record.get("full_name") or "",
+            "work_email": record.get("work_email"),
+            "department_code": department_code or None,
+            "department": record.get("department"),
+            "source_department_code_at_override": override.get("external_department_code") if override else None,
+            "override_department_id": int(override["ma_phong_ban"]) if override else None,
+            "override_department_name": override.get("ten_phong_ban") if override else None,
+            "mapped_department_id": effective.get("ma_phong_ban") if effective else None,
+            "mapped_department_name": effective.get("ten_phong_ban") if effective else None,
+            "global_department_id": global_mapping.get("ma_phong_ban") if global_mapping else None,
+            "global_department_name": global_mapping.get("ten_phong_ban") if global_mapping else None,
+            "mapping_source": mapping_source,
+            "mapping_state": mapping_state,
+            "override_reason": override.get("reason") if override else None,
+            "override_revision": int(override["revision"]) if override else None,
+            "override_updated_at": override.get("updated_at") if override else None,
+            "override_actor_id": int(override["approved_by"]) if override else None,
+        })
+    return {"employees": employees, "ims_departments": department_mapping_data(db, records, provider_id)["ims_departments"]}
+
+
+def invalidate_pending_previews(db, provider_id: str) -> None:
+    db.execute(
+        "UPDATE HRM_SYNC_PREVIEWS SET status = 'STALE' WHERE provider_id = ? AND status = 'PENDING'",
+        (provider_id,),
+    )
+
+
+def _department_name(db, department_id: int | None) -> str | None:
+    if department_id is None:
+        return None
+    row = db.execute("SELECT ten_phong_ban FROM PHONG_BAN WHERE ma_phong_ban = ?", (department_id,)).fetchone()
+    return row["ten_phong_ban"] if row else None
+
+
+def _write_mapping_audit(
+    db, *, provider_id: str, scope: str, event: str, actor_user_id: int,
+    reason: str, before_department_id: int | None, after_department_id: int | None,
+    department_code: str | None = None, external_employee_id: str | None = None,
+) -> None:
+    db.execute(
+        "INSERT INTO HRM_DEPARTMENT_MAPPING_AUDIT (provider_id, mapping_scope, external_department_code, "
+        "external_employee_id, event_type, before_department_id, after_department_id, reason, actor_user_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (provider_id, scope, department_code, external_employee_id, event,
+         before_department_id, after_department_id, reason, actor_user_id, db_timestamp()),
+    )
+
+
+def save_global_department_mapping(
+    db, *, provider_id: str, department_code: str, department_id: int,
+    expected_department_id: int | None, actor_user_id: int, reason: str,
+) -> dict[str, Any]:
+    key = department_code.casefold()
+    begin_transaction(db)
+    try:
+        suffix = " FOR UPDATE" if database.DATABASE_BACKEND == "mysql" else ""
+        current = db.execute(
+            "SELECT ma_phong_ban FROM HRM_DEPARTMENT_MAPPINGS WHERE provider_id = ? AND external_department_key = ?" + suffix,
+            (provider_id, key),
+        ).fetchone()
+        current_id = int(current["ma_phong_ban"]) if current else None
+        if current_id != expected_department_id:
+            raise ValueError("Ánh xạ mặc định đã được thay đổi bởi người khác; hãy tải lại rồi xác nhận lại.")
+        if current_id == department_id:
+            db.rollback()
+            return {"saved": True, "unchanged": True}
+        if not _department_name(db, department_id):
+            raise ValueError("Phòng ban IMS được chọn không tồn tại.")
+        db.execute(
+            "INSERT INTO HRM_DEPARTMENT_MAPPINGS (provider_id, external_department_key, external_department_code, ma_phong_ban) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(provider_id, external_department_key) DO UPDATE SET "
+            "external_department_code = excluded.external_department_code, ma_phong_ban = excluded.ma_phong_ban",
+            (provider_id, key, department_code, department_id),
+        )
+        _write_mapping_audit(
+            db, provider_id=provider_id, scope="GLOBAL", event="CREATED" if current_id is None else "UPDATED",
+            actor_user_id=actor_user_id, reason=reason, before_department_id=current_id,
+            after_department_id=department_id, department_code=department_code,
+        )
+        invalidate_pending_previews(db, provider_id)
+        db.commit()
+        return {"saved": True, "unchanged": False}
+    except Exception:
+        db.rollback()
+        raise
+
+
+def delete_global_department_mapping(
+    db, *, provider_id: str, department_code: str, expected_department_id: int,
+    actor_user_id: int, reason: str,
+) -> dict[str, Any]:
+    key = department_code.casefold()
+    begin_transaction(db)
+    try:
+        suffix = " FOR UPDATE" if database.DATABASE_BACKEND == "mysql" else ""
+        current = db.execute(
+            "SELECT ma_phong_ban FROM HRM_DEPARTMENT_MAPPINGS WHERE provider_id = ? AND external_department_key = ?" + suffix,
+            (provider_id, key),
+        ).fetchone()
+        if not current or int(current["ma_phong_ban"]) != expected_department_id:
+            raise ValueError("Ánh xạ mặc định đã thay đổi; hãy tải lại trước khi xóa.")
+        db.execute("DELETE FROM HRM_DEPARTMENT_MAPPINGS WHERE provider_id = ? AND external_department_key = ?", (provider_id, key))
+        _write_mapping_audit(
+            db, provider_id=provider_id, scope="GLOBAL", event="DELETED", actor_user_id=actor_user_id,
+            reason=reason, before_department_id=expected_department_id, after_department_id=None,
+            department_code=department_code,
+        )
+        invalidate_pending_previews(db, provider_id)
+        db.commit()
+        return {"deleted": True}
+    except Exception:
+        db.rollback()
+        raise
+
+
+def save_employee_department_overrides(
+    db, *, provider_id: str, employees: Sequence[Mapping[str, Any]], department_id: int,
+    actor_user_id: int, reason: str,
+) -> dict[str, Any]:
+    if not _department_name(db, department_id):
+        raise ValueError("Phòng ban IMS được chọn không tồn tại.")
+    begin_transaction(db)
+    changed = 0
+    try:
+        for employee in employees:
+            external_id = str(employee["external_employee_id"]).strip()
+            external_key = external_id.casefold()
+            expected_revision = employee.get("expected_revision")
+            current_department_code = str(employee.get("department_code") or "").upper() or None
+            suffix = " FOR UPDATE" if database.DATABASE_BACKEND == "mysql" else ""
+            current = db.execute(
+                "SELECT ma_phong_ban, external_department_code, revision FROM HRM_EMPLOYEE_DEPARTMENT_OVERRIDES "
+                "WHERE provider_id = ? AND external_employee_key = ?" + suffix,
+                (provider_id, external_key),
+            ).fetchone()
+            current_revision = int(current["revision"]) if current else None
+            if current_revision != expected_revision:
+                raise ValueError(f"Ánh xạ riêng của {external_id} đã thay đổi; không có thay đổi nào được lưu. Hãy tải lại.")
+            previous_id = int(current["ma_phong_ban"]) if current else None
+            if previous_id == department_id and current and current["external_department_code"] == current_department_code:
+                continue
+            now = db_timestamp()
+            db.execute(
+                "INSERT INTO HRM_EMPLOYEE_DEPARTMENT_OVERRIDES (provider_id, external_employee_key, external_employee_id, "
+                "external_department_code, ma_phong_ban, reason, approved_by, approved_at, updated_at, revision) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(provider_id, external_employee_key) DO UPDATE SET "
+                "external_employee_id = excluded.external_employee_id, external_department_code = excluded.external_department_code, "
+                "ma_phong_ban = excluded.ma_phong_ban, reason = excluded.reason, approved_by = excluded.approved_by, "
+                "updated_at = excluded.updated_at, revision = HRM_EMPLOYEE_DEPARTMENT_OVERRIDES.revision + 1",
+                (provider_id, external_key, external_id, current_department_code, department_id,
+                 reason, actor_user_id, now, now),
+            )
+            _write_mapping_audit(
+                db, provider_id=provider_id, scope="EMPLOYEE", event="CREATED" if current is None else "UPDATED",
+                actor_user_id=actor_user_id, reason=reason, before_department_id=previous_id,
+                after_department_id=department_id, department_code=current_department_code,
+                external_employee_id=external_id,
+            )
+            changed += 1
+        if changed:
+            invalidate_pending_previews(db, provider_id)
+        db.commit()
+        return {"saved": True, "updated": changed, "total": len(employees)}
+    except Exception:
+        db.rollback()
+        raise
+
+
+def delete_employee_department_override(
+    db, *, provider_id: str, external_employee_id: str, expected_revision: int,
+    actor_user_id: int, reason: str,
+) -> dict[str, Any]:
+    external_key = external_employee_id.casefold()
+    begin_transaction(db)
+    try:
+        suffix = " FOR UPDATE" if database.DATABASE_BACKEND == "mysql" else ""
+        current = db.execute(
+            "SELECT ma_phong_ban, external_department_code, revision FROM HRM_EMPLOYEE_DEPARTMENT_OVERRIDES "
+            "WHERE provider_id = ? AND external_employee_key = ?" + suffix,
+            (provider_id, external_key),
+        ).fetchone()
+        if not current or int(current["revision"]) != expected_revision:
+            raise ValueError("Ánh xạ riêng đã thay đổi hoặc đã được xóa; hãy tải lại.")
+        before_id = int(current["ma_phong_ban"])
+        db.execute("DELETE FROM HRM_EMPLOYEE_DEPARTMENT_OVERRIDES WHERE provider_id = ? AND external_employee_key = ?", (provider_id, external_key))
+        _write_mapping_audit(
+            db, provider_id=provider_id, scope="EMPLOYEE", event="RESET_TO_DEFAULT", actor_user_id=actor_user_id,
+            reason=reason, before_department_id=before_id, after_department_id=None,
+            department_code=current["external_department_code"], external_employee_id=external_employee_id,
+        )
+        invalidate_pending_previews(db, provider_id)
+        db.commit()
+        return {"deleted": True}
+    except Exception:
+        db.rollback()
+        raise
+
+
+def list_department_mapping_audit(db, page: int = 1, page_size: int = 20, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
+    total = int(db.execute(
+        "SELECT COUNT(*) AS total FROM HRM_DEPARTMENT_MAPPING_AUDIT WHERE provider_id = ?", (provider_id,),
+    ).fetchone()["total"])
+    rows = db.execute(
+        "SELECT a.id, a.mapping_scope, a.external_department_code, a.external_employee_id, a.event_type, "
+        "a.before_department_id, before_department.ten_phong_ban AS before_department_name, "
+        "a.after_department_id, after_department.ten_phong_ban AS after_department_name, a.reason, a.created_at, "
+        "u.ho_ten AS actor_name FROM HRM_DEPARTMENT_MAPPING_AUDIT a "
+        "LEFT JOIN PHONG_BAN before_department ON before_department.ma_phong_ban = a.before_department_id "
+        "LEFT JOIN PHONG_BAN after_department ON after_department.ma_phong_ban = a.after_department_id "
+        "LEFT JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = a.actor_user_id "
+        "WHERE a.provider_id = ? ORDER BY a.id DESC LIMIT ? OFFSET ?",
+        (provider_id, page_size, (page - 1) * page_size),
+    ).fetchall()
+    return {"items": [dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
 
 def snapshot_digest(records: Sequence[Mapping[str, Any]], context: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> str:

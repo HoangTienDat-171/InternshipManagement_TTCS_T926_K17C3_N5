@@ -16,7 +16,20 @@ MAX_COMPLETED_PROGRAMS = 20
 
 
 def outbound_enabled() -> bool:
-    return database.DATABASE_BACKEND == "sqlite" and os.getenv("IMS_HRM_SANDBOX_OUTBOUND_ENABLED") == "1"
+    if (
+        os.getenv("HRM_PROVIDER", "").strip().lower() != "sandbox"
+        or os.getenv("IMS_HRM_SANDBOX_OUTBOUND_ENABLED") != "1"
+    ):
+        return False
+    if database.DATABASE_BACKEND == "sqlite":
+        return True
+    if database.DATABASE_BACKEND != "mysql":
+        return False
+    host = os.getenv("MYSQL_HOST", "").strip().lower()
+    return (
+        os.getenv("MYSQL_DATABASE", "").strip() == "internship_management_us37_uat"
+        and host in {"127.0.0.1", "localhost", "::1"}
+    )
 
 
 def build_candidate_payload(db, profile_id: int) -> tuple[dict[str, Any] | None, str | None]:

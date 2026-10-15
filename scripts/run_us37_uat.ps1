@@ -132,7 +132,7 @@ try {
     if (-not $tech -or -not $imsDepartment) { throw 'UAT mapping prerequisites are missing.' }
     Invoke-RestMethod -Method Put -Uri 'http://127.0.0.1:8000/api/integrations/hrm/department-mappings' `
       -Headers $imsHeaders -ContentType 'application/json' `
-      -Body (@{ department_code = 'TECH'; ma_phong_ban = $imsDepartment.ma_phong_ban } | ConvertTo-Json -Compress) `
+      -Body (@{ department_code = 'TECH'; ma_phong_ban = $imsDepartment.ma_phong_ban; expected_ma_phong_ban = $tech.mapped_department_id; reason = 'Synthetic isolated UAT setup' } | ConvertTo-Json -Compress) `
       -TimeoutSec 10 | Out-Null
 
     $preview = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/api/integrations/hrm/preview' -Headers $imsHeaders -TimeoutSec 20

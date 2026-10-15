@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,9 +18,13 @@ from ..hrm_storage import (
     PROVIDER_ID,
     acquire_sync_lock,
     apply_rows_and_history,
+    delete_employee_department_override,
+    delete_global_department_mapping,
     department_mapping_data,
+    employee_department_mapping_data,
     hrm_schema_ready,
     list_directory,
+    list_department_mapping_audit,
     list_history,
     load_sync_context,
     parse_timestamp,
@@ -28,6 +33,8 @@ from ..hrm_storage import (
     read_preview,
     record_failed_sync,
     release_sync_lock,
+    save_employee_department_overrides,
+    save_global_department_mapping,
     snapshot_digest,
 )
 from ..security import require_role
@@ -42,11 +49,45 @@ class DepartmentMappingRequest(BaseModel):
 
     department_code: str = Field(min_length=1, max_length=128)
     ma_phong_ban: int = Field(ge=1)
+    expected_ma_phong_ban: int | None
+    reason: str = Field(min_length=3, max_length=500)
 
     @field_validator("department_code")
     @classmethod
     def normalize_code(cls, value: str) -> str:
         return value.upper()
+
+
+class DepartmentMappingResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    department_code: str = Field(min_length=1, max_length=128)
+    expected_ma_phong_ban: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("department_code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.upper()
+
+
+class EmployeeDepartmentTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    external_employee_id: str = Field(min_length=1, max_length=128)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class EmployeeDepartmentMappingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    employees: list[EmployeeDepartmentTarget] = Field(min_length=1, max_length=5000)
+    ma_phong_ban: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class EmployeeDepartmentResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    external_employee_id: str = Field(min_length=1, max_length=128)
+    expected_revision: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ApplySyncRequest(BaseModel):
@@ -202,7 +243,7 @@ async def get_department_mappings(request: Request, db=Depends(get_db)):
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
         raise _safe_failure(exc)
-    return department_mapping_data(db, records)
+    return department_mapping_data(db, records, provider.provider_id)
 
 
 @router.put("/department-mappings")
@@ -211,7 +252,7 @@ async def save_department_mapping(
     request: Request,
     db=Depends(get_db),
 ):
-    _require_admin(request)
+    actor = _require_admin(request)
     _require_schema(db)
     provider = _provider_or_error()
     try:
@@ -221,24 +262,120 @@ async def save_department_mapping(
     known_codes = {str(row.get("department_code") or "").strip().upper() for row in records}
     if payload.department_code not in known_codes:
         raise HTTPException(status_code=422, detail="Mã phòng ban không có trong danh mục HRM Sandbox hiện tại.")
-    department = db.execute(
-        "SELECT ma_phong_ban FROM PHONG_BAN WHERE ma_phong_ban = ?",
-        (payload.ma_phong_ban,),
-    ).fetchone()
-    if not department:
-        raise HTTPException(status_code=422, detail="Phòng ban IMS được chọn không tồn tại.")
-    db.execute(
-        """INSERT INTO HRM_DEPARTMENT_MAPPINGS (
-               provider_id, external_department_key, external_department_code, ma_phong_ban
-           ) VALUES (?, ?, ?, ?)
-           ON CONFLICT(provider_id, external_department_key) DO UPDATE SET
-               external_department_code = excluded.external_department_code,
-               ma_phong_ban = excluded.ma_phong_ban""",
-        (PROVIDER_ID, payload.department_code.casefold(), payload.department_code, payload.ma_phong_ban),
-    )
-    db.commit()
+    try:
+        result = save_global_department_mapping(
+            db, provider_id=provider.provider_id, department_code=payload.department_code,
+            department_id=payload.ma_phong_ban, expected_department_id=payload.expected_ma_phong_ban,
+            actor_user_id=int(actor["ma_nguoi_dung"]), reason=payload.reason,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(status_code=409 if "thay đổi" in message else 422, detail=message) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Ánh xạ phòng ban vừa được thay đổi đồng thời; hãy tải lại trước khi thử lại.") from exc
     CONNECTION_STATE.update(state="CONNECTED", message="Đã lưu ánh xạ phòng ban HRM → IMS.")
-    return {"saved": True, "department_code": payload.department_code, "ma_phong_ban": payload.ma_phong_ban}
+    return {**result, "department_code": payload.department_code, "ma_phong_ban": payload.ma_phong_ban}
+
+
+@router.post("/department-mappings/reset")
+async def reset_department_mapping(payload: DepartmentMappingResetRequest, request: Request, db=Depends(get_db)):
+    actor = _require_admin(request)
+    _require_schema(db)
+    provider = _provider_or_error()
+    try:
+        result = delete_global_department_mapping(
+            db, provider_id=provider.provider_id, department_code=payload.department_code,
+            expected_department_id=payload.expected_ma_phong_ban,
+            actor_user_id=int(actor["ma_nguoi_dung"]), reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**result, "department_code": payload.department_code}
+
+
+@router.get("/employee-department-mappings")
+async def get_employee_department_mappings(request: Request, db=Depends(get_db)):
+    _require_admin(request)
+    _require_schema(db)
+    provider = _provider_or_error()
+    try:
+        records = await provider.fetch_employees()
+    except HRMProviderError as exc:
+        raise _safe_failure(exc)
+    return employee_department_mapping_data(db, records, provider.provider_id)
+
+
+@router.put("/employee-department-mappings")
+async def save_employee_department_mapping(
+    payload: EmployeeDepartmentMappingRequest, request: Request, db=Depends(get_db),
+):
+    actor = _require_admin(request)
+    _require_schema(db)
+    provider = _provider_or_error()
+    try:
+        records = await provider.fetch_employees()
+    except HRMProviderError as exc:
+        raise _safe_failure(exc)
+    source_by_id: dict[str, dict[str, Any]] = {}
+    duplicate_ids: set[str] = set()
+    for record in records:
+        external_id = str(record.get("external_employee_id") or "").strip()
+        key = external_id.casefold()
+        if key in source_by_id:
+            duplicate_ids.add(key)
+        source_by_id[key] = dict(record)
+    requested_ids = [item.external_employee_id.casefold() for item in payload.employees]
+    if len(set(requested_ids)) != len(requested_ids):
+        raise HTTPException(status_code=422, detail="Danh sách chọn có mã nhân viên bị lặp.")
+    if any(key in duplicate_ids for key in requested_ids):
+        raise HTTPException(status_code=409, detail="HRM trả về mã nhân viên bị lặp; không thể lưu ánh xạ an toàn.")
+    if any(key not in source_by_id for key in requested_ids):
+        raise HTTPException(status_code=409, detail="Một hoặc nhiều nhân viên không còn trong danh sách HRM hiện tại; hãy tải lại.")
+    targets = []
+    for item in payload.employees:
+        source = source_by_id[item.external_employee_id.casefold()]
+        targets.append({
+            "external_employee_id": str(source["external_employee_id"]).strip(),
+            "department_code": str(source.get("department_code") or "").strip().upper() or None,
+            "expected_revision": item.expected_revision,
+        })
+    try:
+        return save_employee_department_overrides(
+            db, provider_id=provider.provider_id, employees=targets, department_id=payload.ma_phong_ban,
+            actor_user_id=int(actor["ma_nguoi_dung"]), reason=payload.reason,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        raise HTTPException(status_code=409 if "đã thay đổi" in message else 422, detail=message) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Ánh xạ vừa được thay đổi đồng thời; không có phần nào được lưu. Hãy tải lại.") from exc
+
+
+@router.post("/employee-department-mappings/reset")
+async def reset_employee_department_mapping(
+    payload: EmployeeDepartmentResetRequest, request: Request, db=Depends(get_db),
+):
+    actor = _require_admin(request)
+    _require_schema(db)
+    provider = _provider_or_error()
+    try:
+        return delete_employee_department_override(
+            db, provider_id=provider.provider_id, external_employee_id=payload.external_employee_id,
+            expected_revision=payload.expected_revision, actor_user_id=int(actor["ma_nguoi_dung"]),
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/department-mapping-audit")
+def get_department_mapping_audit(
+    request: Request, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    db=Depends(get_db),
+):
+    _require_admin(request)
+    _require_schema(db)
+    return list_department_mapping_audit(db, page, page_size)
 
 
 @router.get("/mentor-mappings")
@@ -332,10 +469,17 @@ async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, d
 def get_outbound_status(request: Request, db=Depends(get_db)):
     _require_hr_or_admin(request)
     enabled = hrm_outbound.outbound_enabled() and hrm_schema_ready(db)
+    environment = (
+        "isolated local MySQL UAT"
+        if enabled and database.DATABASE_BACKEND == "mysql"
+        else "isolated SQLite UAT"
+        if enabled
+        else "disabled"
+    )
     return {
         "enabled": enabled,
         "provider": "HRM Sandbox",
-        "environment": "isolated SQLite UAT" if enabled else "disabled",
+        "environment": environment,
         "message": "Only explicitly completed internship participation is eligible. HR approval is required; Sandbox acceptance creates an employee." if enabled else "Outbound is disabled outside the isolated SQLite UAT runtime.",
     }
 
@@ -508,16 +652,16 @@ async def reconcile_outbound_candidate(profile_id: int, request: Request, db=Dep
         "FROM HRM_OUTBOUND_PROPOSALS WHERE provider_id = ? AND ma_ho_so = ?",
         (PROVIDER_ID, profile_id),
     ).fetchone()
-    if not local or local["status"] != "PENDING_RECONCILIATION":
-        raise HTTPException(status_code=409, detail="This proposal does not need reconciliation.")
+    if not local or local["status"] not in {"PENDING", "PENDING_RECONCILIATION"}:
+        raise HTTPException(status_code=409, detail="Only a pending proposal can be reconciled.")
     provider = _provider_or_error()
     try:
         remote = await provider.get_candidate_request(local["external_reference"])
     except HRMProviderError as exc:
         raise _safe_failure(exc)
     if not remote:
-        return {"status": "PENDING_RECONCILIATION", "found": False,
-                "message": "No Sandbox record was found yet. Do not resend until this is resolved."}
+        return {"status": local["status"], "found": False,
+                "message": "The Sandbox request was not found. Keep the current status and do not resend automatically."}
     remote_status = str(remote.get("status") or "")
     if remote_status not in {"PENDING", "ACCEPTED", "REJECTED"}:
         raise HTTPException(status_code=502, detail="Sandbox returned an invalid reconciliation state.")
@@ -525,8 +669,13 @@ async def reconcile_outbound_candidate(profile_id: int, request: Request, db=Dep
         hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), profile_id,
             local["external_reference"], remote_status, local["last_payload_hash"] or "",
             remote.get("candidate_request_id"), remote.get("employee_id"), remote.get("decision_reason"))
+    message = (
+        "IMS proposal was reconciled with the Sandbox record."
+        if remote_status != local["status"] or remote.get("employee_id") != local["external_employee_id"]
+        else f"Sandbox still reports {remote_status}; no change was needed."
+    )
     return {"status": remote_status, "found": True, "external_employee_id": remote.get("employee_id"),
-            "message": "IMS proposal was reconciled with the Sandbox record."}
+            "message": message}
 
 
 @router.get("/outbound/history")

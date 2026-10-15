@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import HrmOutboundPanel from './HrmOutboundPanel';
+import HrmDepartmentMappingPanel from './HrmDepartmentMappingPanel';
 import './HrmIntegrationView.css';
 
 const ACTIONS = [
@@ -57,8 +58,6 @@ function AdminHrmIntegrationView({ currentUser }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(null);
-  const [mappings, setMappings] = useState(null);
-  const [mappingSelection, setMappingSelection] = useState({});
   const [history, setHistory] = useState([]);
   const [directory, setDirectory] = useState([]);
   const [mentorMappings, setMentorMappings] = useState(null);
@@ -127,48 +126,6 @@ function AdminHrmIntegrationView({ currentUser }) {
     }
   };
 
-  const loadMappings = async () => {
-    setBusy('mappings');
-    setError('');
-    try {
-      const result = await apiJson('/api/integrations/hrm/department-mappings');
-      setMappings(result);
-      setMappingSelection(Object.fromEntries((result.hrm_departments || []).map((item) => [
-        item.department_code,
-        item.mapped_department_id ? String(item.mapped_department_id) : '',
-      ])));
-    } catch (cause) {
-      setError(cause.message || 'Không tải được danh mục phòng ban.');
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const saveMapping = async (departmentCode) => {
-    const departmentId = Number(mappingSelection[departmentCode]);
-    if (!departmentId) {
-      setError('Hãy chọn phòng ban IMS trước khi lưu ánh xạ.');
-      return;
-    }
-    setBusy(`mapping:${departmentCode}`);
-    setError('');
-    setNotice('');
-    try {
-      await apiJson('/api/integrations/hrm/department-mappings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_code: departmentCode, ma_phong_ban: departmentId }),
-      });
-      setPreview(null);
-      setNotice(`Đã lưu ánh xạ phòng ban ${departmentCode}.`);
-      await loadMappings();
-    } catch (cause) {
-      setError(cause.message || 'Không lưu được ánh xạ phòng ban.');
-    } finally {
-      setBusy('');
-    }
-  };
-
   const loadMentorMappings = async () => {
     setBusy('mentor-mappings');
     setError('');
@@ -212,7 +169,6 @@ function AdminHrmIntegrationView({ currentUser }) {
       const result = await apiJson('/api/integrations/hrm/preview', { method: 'POST' });
       setPreview(result);
       setNotice(`Đã tải ${result.total} bản ghi từ HRM Sandbox. Bản xem trước hết hạn ${formatDate(result.expires_at)}.`);
-      await loadMappings().catch(() => {});
     } catch (cause) {
       setError(cause.message || 'Không tạo được bản xem trước.');
     } finally {
@@ -243,7 +199,6 @@ function AdminHrmIntegrationView({ currentUser }) {
       setPreview(null);
       setNotice(`Đồng bộ ${result.status.toLowerCase()}: tạo ${result.created}, cập nhật ${result.updated}, không đổi ${result.unchanged}, bỏ qua ${result.skipped}, lỗi ${result.errors}.`);
       await refresh();
-      await loadMappings().catch(() => {});
     } catch (cause) {
       setError(cause.message || 'Không áp dụng được bản xem trước.');
       if (cause.message?.includes('thay đổi') || cause.message?.includes('hết hạn')) setPreview(null);
@@ -323,38 +278,12 @@ function AdminHrmIntegrationView({ currentUser }) {
       </div>
 
       {current.configured && current.sync_history_available && (
-        <section className="hrm-panel">
-          <div className="hrm-panel-heading">
-            <div><h2>Ánh xạ phòng ban</h2><p>Ánh xạ mã phòng ban HRM vào danh mục IMS. Không tự tạo phòng ban hoặc thay đổi phân công.</p></div>
-            <button type="button" className="btn btn-secondary" onClick={loadMappings} disabled={Boolean(busy)}>
-              {busy === 'mappings' ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />}
-              Tải danh mục
-            </button>
-          </div>
-          {!mappings ? <p className="hrm-empty">Tải mã phòng ban từ Sandbox để cấu hình ánh xạ.</p> : mappings.hrm_departments.length === 0 ? (
-            <p className="hrm-empty">HRM Sandbox chưa có mã phòng ban để ánh xạ.</p>
-          ) : (
-            <div className="hrm-mapping-list">
-              {mappings.hrm_departments.map((department) => (
-                <div className="hrm-mapping-row" key={department.department_code}>
-                  <div className="hrm-mapping-source"><strong>{department.department_code}</strong><span>{department.department_name || 'Chưa có tên'}</span></div>
-                  <select
-                    aria-label={`Phòng ban IMS cho ${department.department_code}`}
-                    value={mappingSelection[department.department_code] || ''}
-                    onChange={(event) => setMappingSelection((previous) => ({ ...previous, [department.department_code]: event.target.value }))}
-                  >
-                    <option value="">Chọn phòng ban IMS</option>
-                    {(mappings.ims_departments || []).map((choice) => <option key={choice.ma_phong_ban} value={choice.ma_phong_ban}>{choice.ten_phong_ban}</option>)}
-                  </select>
-                  <button type="button" className="btn btn-secondary" onClick={() => saveMapping(department.department_code)} disabled={!mappingSelection[department.department_code] || Boolean(busy)}>
-                    {busy === `mapping:${department.department_code}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />}
-                    Lưu ánh xạ
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        <HrmDepartmentMappingPanel
+          busy={busy}
+          onMappingChanged={() => setPreview(null)}
+          onNotice={setNotice}
+          onError={setError}
+        />
       )}
 
       {current.configured && current.sync_history_available && (

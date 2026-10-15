@@ -1,4 +1,5 @@
 import asyncio
+import os
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -96,7 +97,8 @@ def on_startup():
             ensure_hrm_sqlite_schema(db)
         finally:
             db.close()
-    start_email_worker()
+    if os.getenv("IMS_DISABLE_EMAIL_WORKER") != "1":
+        start_email_worker()
 
 
 @app.on_event("shutdown")

@@ -18,7 +18,9 @@ from app.hrm_storage import (
     acquire_sync_lock,
     ensure_hrm_sqlite_schema,
     list_directory,
+    load_sync_context,
     list_history,
+    preview_rows,
 )
 from app.routes import hrm_routes
 
@@ -209,6 +211,7 @@ class US37SyncWorkflowTests(unittest.TestCase):
         self.db.execute("CREATE TABLE PHONG_BAN(ma_phong_ban INTEGER PRIMARY KEY, ten_phong_ban TEXT NOT NULL)")
         self.db.execute("CREATE TABLE NGUOI_DUNG(ma_nguoi_dung INTEGER PRIMARY KEY, ma_phong_ban INTEGER, ho_ten TEXT NOT NULL, email TEXT NOT NULL, so_dien_thoai TEXT, vai_tro TEXT NOT NULL, trang_thai TEXT, mat_khau TEXT)")
         self.db.execute("INSERT INTO PHONG_BAN VALUES (9, 'Engineering')")
+        self.db.execute("INSERT INTO PHONG_BAN VALUES (10, 'AI/Data')")
         self.db.execute("INSERT INTO NGUOI_DUNG (ma_nguoi_dung, ho_ten, email, vai_tro) VALUES (1, 'Admin Test', 'admin@ims.test', 'Admin')")
         ensure_hrm_sqlite_schema(self.db)
         self.records = [{
@@ -272,16 +275,136 @@ class US37SyncWorkflowTests(unittest.TestCase):
     def test_department_mapping_requires_real_ims_department_and_known_source_code(self):
         with self.assertRaises(HTTPException) as denied:
             asyncio.run(hrm_routes.save_department_mapping(
-                hrm_routes.DepartmentMappingRequest(department_code="NOPE", ma_phong_ban=9),
+                hrm_routes.DepartmentMappingRequest(department_code="NOPE", ma_phong_ban=9, expected_ma_phong_ban=None, reason="test"),
                 request_for("HR"), self.db,
             ))
         self.assertEqual(denied.exception.status_code, 403)
         with self.assertRaises(HTTPException) as unknown:
             asyncio.run(hrm_routes.save_department_mapping(
-                hrm_routes.DepartmentMappingRequest(department_code="NOPE", ma_phong_ban=9),
+                hrm_routes.DepartmentMappingRequest(department_code="NOPE", ma_phong_ban=9, expected_ma_phong_ban=None, reason="test"),
                 request_for(), self.db,
             ))
         self.assertEqual(unknown.exception.status_code, 422)
+
+    def test_employee_override_precedence_bulk_update_reset_and_audit(self):
+        self.provider.records.append({**self.records[0], "external_employee_id": "NV002", "full_name": "Second Employee"})
+        with self.assertRaises(HTTPException) as denied:
+            self.call(
+                hrm_routes.save_employee_department_mapping,
+                hrm_routes.EmployeeDepartmentMappingRequest(
+                    employees=[{"external_employee_id": "NV001", "expected_revision": None}],
+                    ma_phong_ban=10, reason="HR cannot change Admin mappings.",
+                ),
+                request_for("HR"),
+            )
+        self.assertEqual(denied.exception.status_code, 403)
+        created = self.call(
+            hrm_routes.save_employee_department_mapping,
+            hrm_routes.EmployeeDepartmentMappingRequest(
+                employees=[{"external_employee_id": "NV001", "expected_revision": None}],
+                ma_phong_ban=10, reason="Admin assigned this employee to AI/Data.",
+            ),
+            request_for(),
+        )
+        self.assertEqual(created["updated"], 1)
+        with self.assertRaises(HTTPException) as stale_revision:
+            self.call(
+                hrm_routes.save_employee_department_mapping,
+                hrm_routes.EmployeeDepartmentMappingRequest(
+                    employees=[{"external_employee_id": "NV001", "expected_revision": None}],
+                    ma_phong_ban=9, reason="An outdated version must not overwrite an exception.",
+                ),
+                request_for(),
+            )
+        self.assertEqual(stale_revision.exception.status_code, 409)
+        context = load_sync_context(self.db)
+        preview = preview_rows(self.provider.records, context)
+        self.assertEqual((preview[0]["mapped_department_id"], preview[0]["mapping_source"]), (10, "EMPLOYEE_OVERRIDE"))
+        self.assertEqual((preview[1]["mapped_department_id"], preview[1]["mapping_source"]), (9, "DEPARTMENT_DEFAULT"))
+
+        mappings = self.call(hrm_routes.get_employee_department_mappings, request_for())
+        revisions = {item["external_employee_id"]: item["override_revision"] for item in mappings["employees"]}
+        bulk = self.call(
+            hrm_routes.save_employee_department_mapping,
+            hrm_routes.EmployeeDepartmentMappingRequest(
+                employees=[
+                    {"external_employee_id": "NV001", "expected_revision": revisions["NV001"]},
+                    {"external_employee_id": "NV002", "expected_revision": None},
+                ],
+                ma_phong_ban=10, reason="Admin confirmed the selected batch.",
+            ),
+            request_for(),
+        )
+        self.assertEqual(bulk["total"], 2)
+        self.assertEqual(bulk["updated"], 1)
+
+        refreshed = self.call(hrm_routes.get_employee_department_mappings, request_for())
+        nv001 = next(item for item in refreshed["employees"] if item["external_employee_id"] == "NV001")
+        reset = self.call(
+            hrm_routes.reset_employee_department_mapping,
+            hrm_routes.EmployeeDepartmentResetRequest(
+                external_employee_id="NV001", expected_revision=nv001["override_revision"],
+                reason="Return to the current TECH default.",
+            ),
+            request_for(),
+        )
+        self.assertTrue(reset["deleted"])
+        after_reset = preview_rows(self.provider.records, load_sync_context(self.db))
+        self.assertEqual(after_reset[0]["mapped_department_id"], 9)
+        self.assertEqual(after_reset[0]["mapping_source"], "DEPARTMENT_DEFAULT")
+        audit = hrm_routes.get_department_mapping_audit(request_for(), page=1, page_size=20, db=self.db)
+        self.assertGreaterEqual(audit["total"], 3)
+        self.assertTrue(all(row["actor_name"] == "Admin Test" for row in audit["items"]))
+
+    def test_changed_hrm_department_requires_override_review(self):
+        self.call(
+            hrm_routes.save_employee_department_mapping,
+            hrm_routes.EmployeeDepartmentMappingRequest(
+                employees=[{"external_employee_id": "NV001", "expected_revision": None}],
+                ma_phong_ban=10, reason="Approved individual exception.",
+            ),
+            request_for(),
+        )
+        self.provider.records[0]["department_code"] = "DATA"
+        preview = self.call(hrm_routes.create_preview, request_for())
+        row = preview["rows"][0]
+        self.assertEqual(row["action"], "CONFLICT")
+        self.assertEqual(row["mapping_status"], "NEEDS_REVIEW")
+        self.assertIsNone(row["mapped_department_id"])
+
+    def test_mapping_change_invalidates_old_preview_and_global_change_is_audited(self):
+        preview = self.call(hrm_routes.create_preview, request_for())
+        updated = self.call(
+            hrm_routes.save_department_mapping,
+            hrm_routes.DepartmentMappingRequest(
+                department_code="TECH", ma_phong_ban=10, expected_ma_phong_ban=9,
+                reason="UAT validation of a changed department default.",
+            ),
+            request_for(),
+        )
+        self.assertFalse(updated["unchanged"])
+        with self.assertRaises(HTTPException) as stale:
+            self.call(hrm_routes.apply_sync, hrm_routes.ApplySyncRequest(preview_id=preview["preview_id"]), request_for())
+        self.assertEqual(stale.exception.status_code, 409)
+        audit = hrm_routes.get_department_mapping_audit(request_for(), page=1, page_size=20, db=self.db)
+        self.assertEqual(audit["items"][0]["event_type"], "UPDATED")
+        self.assertEqual(audit["items"][0]["reason"], "UAT validation of a changed department default.")
+
+    def test_global_mapping_can_be_removed_with_audited_reason(self):
+        result = self.call(
+            hrm_routes.reset_department_mapping,
+            hrm_routes.DepartmentMappingResetRequest(
+                department_code="TECH", expected_ma_phong_ban=9,
+                reason="The default is no longer approved for this source department.",
+            ),
+            request_for(),
+        )
+        self.assertTrue(result["deleted"])
+        row = preview_rows(self.provider.records, load_sync_context(self.db))[0]
+        self.assertEqual(row["action"], "CONFLICT")
+        self.assertEqual(row["mapping_status"], "UNMAPPED")
+        audit = hrm_routes.get_department_mapping_audit(request_for(), page=1, page_size=20, db=self.db)
+        self.assertEqual(audit["items"][0]["event_type"], "DELETED")
 
     def test_concurrent_sync_lease_rejects_second_apply(self):
         with patch.object(database, "DATABASE_BACKEND", "sqlite"):

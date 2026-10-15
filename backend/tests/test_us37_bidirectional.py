@@ -37,6 +37,21 @@ class FakeInboundProvider:
         return [dict(record) for record in self.records]
 
 
+class US37OutboundConfigurationTests(unittest.TestCase):
+    def test_mysql_outbound_is_enabled_only_for_local_us37_uat_sandbox(self):
+        base_env = {
+            "HRM_PROVIDER": "sandbox",
+            "IMS_HRM_SANDBOX_OUTBOUND_ENABLED": "1",
+            "MYSQL_HOST": "127.0.0.1",
+            "MYSQL_DATABASE": "internship_management_us37_uat",
+        }
+        with patch.object(database, "DATABASE_BACKEND", "mysql"), patch.dict(os.environ, base_env, clear=False):
+            self.assertTrue(hrm_outbound.outbound_enabled())
+            for key, value in (("MYSQL_DATABASE", "internship_management"), ("MYSQL_HOST", "db.example.test"), ("HRM_PROVIDER", "enterprise")):
+                with patch.dict(os.environ, {key: value}, clear=False):
+                    self.assertFalse(hrm_outbound.outbound_enabled())
+
+
 class US37BidirectionalE2ETests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory(prefix="ims-us37-bidirectional-")
@@ -194,6 +209,48 @@ class US37BidirectionalE2ETests(unittest.TestCase):
         self.assertEqual(accepted["status"], "ACCEPTED")
         self.assertEqual(repeated_accept["employee_id"], accepted["employee_id"])
         self.assertEqual(hrm_sandbox.list_employees(page=1, page_size=100)["total"], 19)
+
+    def test_reconcile_pending_proposal_after_hrm_sandbox_acceptance(self):
+        profile_id = self.add_completed_intern("external-acceptance")
+        hr_request = request_for("HR", self.hr_id)
+        preview = hrm_routes.preview_outbound_candidate(
+            hrm_routes.OutboundProfileRequest(profile_id=profile_id), hr_request, self.db,
+        )
+        hrm_routes.approve_outbound_candidate(
+            hrm_routes.OutboundPreviewRequest(preview_id=preview["preview_id"], reason="Synthetic UAT approval."),
+            hr_request, self.db,
+        )
+        sent = asyncio.run(hrm_routes.send_outbound_candidate(
+            hrm_routes.OutboundPreviewRequest(preview_id=preview["preview_id"]), hr_request, self.db,
+        ))
+        self.assertEqual(sent["status"], "PENDING")
+
+        # Simulate HR accepting from the separate Sandbox UI rather than the IMS inbox.
+        accepted = asyncio.run(self.provider.decide_candidate_request(
+            f"ims-profile-{profile_id}", "ACCEPT",
+        ))
+        still_pending = self.db.execute(
+            "SELECT status, external_employee_id FROM HRM_OUTBOUND_PROPOSALS WHERE ma_ho_so=?",
+            (profile_id,),
+        ).fetchone()
+        self.assertEqual((still_pending["status"], still_pending["external_employee_id"]), ("PENDING", None))
+
+        reconciled = asyncio.run(hrm_routes.reconcile_outbound_candidate(
+            profile_id, hr_request, self.db,
+        ))
+
+        self.assertEqual(reconciled["status"], "ACCEPTED")
+        self.assertEqual(reconciled["external_employee_id"], accepted["employee_id"])
+        saved = self.db.execute(
+            "SELECT status, external_employee_id FROM HRM_OUTBOUND_PROPOSALS WHERE ma_ho_so=?",
+            (profile_id,),
+        ).fetchone()
+        self.assertEqual((saved["status"], saved["external_employee_id"]), ("ACCEPTED", accepted["employee_id"]))
+        history = self.db.execute(
+            "SELECT event_status FROM HRM_OUTBOUND_HISTORY WHERE ma_ho_so=? ORDER BY id",
+            (profile_id,),
+        ).fetchall()
+        self.assertEqual([row["event_status"] for row in history], ["PENDING", "ACCEPTED"])
 
     def test_expired_dates_do_not_infer_completion_or_hiring_eligibility(self):
         profile_id = self.add_completed_intern("ineligible")

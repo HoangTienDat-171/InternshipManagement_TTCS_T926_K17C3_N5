@@ -178,7 +178,7 @@ export default function HrmOutboundPanel({ currentUser }) {
                 <td><span className={`hrm-action-badge tone-${item.status === 'ACCEPTED' ? 'new' : item.status === 'REJECTED' ? 'conflict' : 'unchanged'}`}>{item.status}</span>{item.external_employee_id && <small>Mã NV HRM: {item.external_employee_id}</small>}</td>
                 <td className="hrm-outbound-actions">
                   {canApprove && ['AVAILABLE', 'REJECTED', 'FAILED'].includes(item.status) && <button type="button" className="btn btn-secondary" onClick={() => createPreview(item.profile_id)} disabled={Boolean(busy)}>{busy === `preview:${item.profile_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Xem trước</button>}
-                  {item.status === 'PENDING_RECONCILIATION' && <button type="button" className="btn btn-secondary" onClick={() => reconcile(item.profile_id)} disabled={Boolean(busy)}>{busy === `reconcile:${item.profile_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />} Đối soát</button>}
+                  {['PENDING', 'PENDING_RECONCILIATION'].includes(item.status) && <button type="button" className="btn btn-secondary" onClick={() => reconcile(item.profile_id)} disabled={Boolean(busy)}>{busy === `reconcile:${item.profile_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />} {item.status === 'PENDING' ? 'Lấy quyết định HRM' : 'Đối soát'}</button>}
                 </td>
               </tr>
             ))}</tbody>
