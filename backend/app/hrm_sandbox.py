@@ -700,7 +700,7 @@ def list_departments(include_inactive: bool = Query(default=True)):
             f"""SELECT d.department_code, d.department_name, d.is_active, d.created_at, d.updated_at,
                        COUNT(e.employee_id) AS employee_count
                 FROM sandbox_departments d LEFT JOIN sandbox_employees e ON e.department_code = d.department_code
-                {where} GROUP BY d.department_code ORDER BY d.is_active DESC, d.department_name COLLATE NOCASE"""
+                {where} GROUP BY d.department_code ORDER BY d.is_active DESC, LOWER(d.department_name)"""
         ).fetchall()
         return {"items": [dict(row) for row in rows], "total": len(rows)}
     finally:
