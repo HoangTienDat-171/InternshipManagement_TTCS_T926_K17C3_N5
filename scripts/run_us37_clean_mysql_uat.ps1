@@ -54,6 +54,7 @@ if (-not $pythonPath) { throw 'No installed Python runtime can import the US37 I
 if (-not (Test-Path -LiteralPath $vitePath -PathType Leaf)) { throw 'Frontend dependencies are missing from the US37 worktree.' }
 
 $runtime = Read-SimpleEnv $RuntimeConfigPath
+$sandboxDatabaseName = [string]$runtime.HRM_SANDBOX_MYSQL_DATABASE
 $requiredKeys = @(
   'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE',
   'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_ADMIN_API_KEY', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT',
@@ -63,7 +64,7 @@ $requiredKeys = @(
 foreach ($key in $requiredKeys) {
   if (-not $runtime.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($runtime[$key])) { throw "Local clean UAT config is missing $key." }
 }
-if ($runtime.MYSQL_DATABASE -ne 'ims_us37_clean_uat' -or $runtime.HRM_SANDBOX_MYSQL_DATABASE -ne 'hrm_us37_clean_uat') {
+if ($runtime.MYSQL_DATABASE -ne 'ims_us37_clean_uat' -or $sandboxDatabaseName -notmatch '^hrm_us37_clean_uat(?:_[a-z0-9]+)?$') {
   throw 'Refusing to run because the configured databases do not match the two clean UAT schemas.'
 }
 if ($runtime.MYSQL_HOST -notin @('127.0.0.1', 'localhost', '::1') -or $runtime.HRM_SANDBOX_MYSQL_HOST -notin @('127.0.0.1', 'localhost', '::1')) {
@@ -118,7 +119,7 @@ try {
   $env:HRM_SANDBOX_PORT = [string]$SandboxPort
   $env:HRM_SANDBOX_DATABASE_BACKEND = 'mysql'
   $env:HRM_SANDBOX_DATABASE_PATH = ''
-  $env:HRM_SANDBOX_MYSQL_DATABASE = 'hrm_us37_clean_uat'
+  $env:HRM_SANDBOX_MYSQL_DATABASE = $sandboxDatabaseName
   $env:HRM_SANDBOX_SEED_DEMO = '0'
   $env:IMS_HRM_SANDBOX_OUTBOUND_ENABLED = '1'
   $env:IMS_DISABLE_EMAIL_WORKER = '1'
@@ -164,7 +165,7 @@ try {
       $sandboxHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$SandboxPort/api/v1/health" -Headers $sandboxHeaders -TimeoutSec 3
       $backendHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/" -TimeoutSec 3
       $frontendHealth = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$FrontendPort/" -TimeoutSec 3
-      if ($sandboxHealth.status -ne 'ok' -or $sandboxHealth.database_backend -ne 'mysql' -or $sandboxHealth.database_name -ne 'hrm_us37_clean_uat' -or $sandboxHealth.employee_count -lt 0) {
+      if ($sandboxHealth.status -ne 'ok' -or $sandboxHealth.database_backend -ne 'mysql' -or $sandboxHealth.database_name -ne $sandboxDatabaseName -or $sandboxHealth.employee_count -lt 0) {
         throw 'HRM Sandbox did not report the expected local MySQL schema.'
       }
       if ($backendHealth.status -ne 'Online' -or $frontendHealth.StatusCode -ne 200) { throw 'IMS service health check failed.' }
@@ -191,7 +192,7 @@ try {
     branch = (& git -C $repoRoot branch --show-current).Trim()
     head = (& git -C $repoRoot rev-parse HEAD).Trim()
     database = 'ims_us37_clean_uat'
-    sandbox_database = 'hrm_us37_clean_uat'
+    sandbox_database = $sandboxDatabaseName
     database_directory = $stateDir
     log_directory = $runDir
     started_at = (Get-Date).ToString('o')
@@ -204,7 +205,7 @@ try {
   Write-Output "Backend: http://localhost:$BackendPort"
   Write-Output "HRM Sandbox: http://127.0.0.1:$SandboxPort"
   Write-Output 'IMS database: ims_us37_clean_uat'
-  Write-Output 'HRM database: hrm_us37_clean_uat'
+  Write-Output "HRM database: $sandboxDatabaseName"
   Write-Output "HRM Sandbox employees: $($sandboxHealth.employee_count) (existing UAT data preserved)"
   Write-Output 'IMS HRM directory: 0'
   Write-Output "Process record: $statePath"
