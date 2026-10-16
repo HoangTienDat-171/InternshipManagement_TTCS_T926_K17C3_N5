@@ -205,7 +205,7 @@ def get_status(request: Request, db=Depends(get_db)):
     status.update(
         can_preview=schema_ready and active["state"] == "CONNECTED",
         can_sync=schema_ready and active["state"] == "CONNECTED",
-        sync_history_available=schema_ready and active["state"] == "CONNECTED",
+        sync_history_available=schema_ready,
     )
     if not schema_ready:
         status.update(
@@ -772,8 +772,8 @@ def get_sync_history(
 ):
     _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error(db)
-    return list_history(db, page, page_size, provider.provider_id)
+    provider_id = hrm_connection_service.list_connections(db)["active_connection_id"] or ""
+    return list_history(db, page, page_size, provider_id)
 
 
 @router.get("/directory")
@@ -785,5 +785,5 @@ def get_synced_directory(
 ):
     _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error(db)
-    return list_directory(db, page, page_size, provider.provider_id)
+    provider_id = hrm_connection_service.list_connections(db)["active_connection_id"] or ""
+    return list_directory(db, page, page_size, provider_id)

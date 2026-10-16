@@ -71,6 +71,7 @@ class US37BidirectionalE2ETests(unittest.TestCase):
         self.env_patch = patch.dict(os.environ, {
             "HRM_SANDBOX_DATABASE_PATH": str(self.sandbox_path),
             "HRM_SANDBOX_API_KEY": self.api_key,
+            "HRM_SANDBOX_ADMIN_API_KEY": "isolated-us37-sandbox-admin-test-key-2026",
             "HRM_PROVIDER": "sandbox",
             "IMS_HRM_SANDBOX_OUTBOUND_ENABLED": "1",
         }, clear=False)

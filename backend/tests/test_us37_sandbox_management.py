@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.hrm_sandbox import app
+from app.hrm_sandbox import _safe_audit_reason, app
 
 
 class US37SandboxManagementApiTests(unittest.TestCase):
@@ -13,12 +13,14 @@ class US37SandboxManagementApiTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.env_patch = patch.dict(os.environ, {
             "HRM_SANDBOX_DATABASE_PATH": os.path.join(self.temp_dir.name, "sandbox.sqlite3"),
-            "HRM_SANDBOX_API_KEY": "us37-sandbox-management-test-key",
+            "HRM_SANDBOX_API_KEY": "us37-sandbox-service-test-key-0123456789",
+            "HRM_SANDBOX_ADMIN_API_KEY": "us37-sandbox-admin-test-key-9876543210",
         }, clear=False)
         self.env_patch.start()
         self.client = TestClient(app)
         self.client.__enter__()
-        self.headers = {"Authorization": "Bearer us37-sandbox-management-test-key"}
+        self.headers = {"Authorization": "Bearer us37-sandbox-admin-test-key-9876543210"}
+        self.service_headers = {"Authorization": "Bearer us37-sandbox-service-test-key-0123456789"}
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -33,8 +35,14 @@ class US37SandboxManagementApiTests(unittest.TestCase):
 
         denied = self.client.get("/api/v1/departments")
         self.assertEqual(denied.status_code, 401)
+        service_employee_write = self.client.post("/api/v1/employees", headers=self.service_headers, json={
+            "employee_id": "NV099", "full_name": "No admin scope",
+        })
+        self.assertEqual(service_employee_write.status_code, 403)
+        service_audit_read = self.client.get("/api/v1/changes", headers=self.service_headers)
+        self.assertEqual(service_audit_read.status_code, 403)
 
-        listed = self.client.get("/api/v1/employees?q=NV001&employment_status=ACTIVE", headers=self.headers)
+        listed = self.client.get("/api/v1/employees?q=NV001&employment_status=ACTIVE", headers=self.service_headers)
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()["total"], 1)
         self.assertEqual(listed.json()["items"][0]["employee_id"], "NV001")
@@ -81,11 +89,103 @@ class US37SandboxManagementApiTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         self.assertEqual(history.json()["total"], 2)
         update = history.json()["items"][0]
-        self.assertEqual(update["before"]["department_code"], "DATA")
-        self.assertEqual(update["after"]["department_code"], "OPS")
+        self.assertNotIn("before", update)
+        self.assertNotIn("after", update)
+        self.assertNotIn("before_json", update)
+        self.assertNotIn("after_json", update)
+        self.assertEqual(update["actor_label"], "Quản trị Sandbox")
+        self.assertIn("Mã phòng ban", update["changed_fields"])
+        detail = self.client.get(f"/api/v1/changes/{update['id']}", headers=self.headers)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual({change["label"] for change in detail.json()["changes"]}, {"Mã phòng ban", "Tên phòng ban", "Chức danh"})
+        self.assertNotIn("password", detail.text.casefold())
+        self.assertNotIn("api_key", detail.text.casefold())
+
+        changed_email = self.client.patch("/api/v1/employees/NV099", headers=self.headers, json={
+            "work_email": "private.nv099@hrm-sandbox.test", "expected_updated_at": changed.json()["updated_at"],
+        })
+        self.assertEqual(changed_email.status_code, 200)
+        email_event = self.client.get("/api/v1/changes?entity_id=NV099&page=1&page_size=1", headers=self.headers).json()["items"][0]
+        email_detail = self.client.get(f"/api/v1/changes/{email_event['id']}", headers=self.headers).json()
+        email_diff = next(change for change in email_detail["changes"] if change["field"] == "work_email")
+        self.assertTrue(email_diff["sensitive"])
+        self.assertNotEqual(email_diff["after"], "private.nv099@hrm-sandbox.test")
+        revealed_email = self.client.get(f"/api/v1/changes/{email_event['id']}?show_sensitive=true", headers=self.headers).json()
+        self.assertEqual(next(change for change in revealed_email["changes"] if change["field"] == "work_email")["after"], "private.nv099@hrm-sandbox.test")
 
         delete = self.client.delete("/api/v1/employees/NV099", headers=self.headers)
         self.assertEqual(delete.status_code, 405)
+        delete_audit = self.client.delete(f"/api/v1/changes/{update['id']}", headers=self.headers)
+        self.assertEqual(delete_audit.status_code, 405)
+
+    def test_audit_filters_and_status_actions_are_persisted_only_on_success(self):
+        employee = self.client.get("/api/v1/employees/NV001", headers=self.headers).json()
+        deactivated = self.client.patch("/api/v1/employees/NV001", headers=self.headers, json={
+            "employment_status": "INACTIVE", "expected_updated_at": employee["updated_at"],
+        })
+        self.assertEqual(deactivated.status_code, 200)
+        reactivated = self.client.patch("/api/v1/employees/NV001", headers=self.headers, json={
+            "employment_status": "ACTIVE", "expected_updated_at": deactivated.json()["updated_at"],
+        })
+        self.assertEqual(reactivated.status_code, 200)
+        stale_before = self.client.get("/api/v1/changes?entity_id=NV001", headers=self.headers).json()["total"]
+        stale = self.client.patch("/api/v1/employees/NV001", headers=self.headers, json={
+            "job_title": "Stale update", "expected_updated_at": employee["updated_at"],
+        })
+        self.assertEqual(stale.status_code, 409)
+        stale_after = self.client.get("/api/v1/changes?entity_id=NV001", headers=self.headers).json()["total"]
+        self.assertEqual(stale_before, stale_after)
+
+        filtered = self.client.get("/api/v1/changes?entity_id=NV001&actor=sandbox_admin_api_key&action=REACTIVATE&page=1&page_size=1", headers=self.headers)
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(filtered.json()["total"], 1)
+        self.assertEqual(filtered.json()["items"][0]["action"], "REACTIVATE")
+        invalid_range = self.client.get("/api/v1/changes?date_from=2026-10-20&date_to=2026-10-01", headers=self.headers)
+        self.assertEqual(invalid_range.status_code, 422)
+
+    def test_console_uses_text_nodes_and_no_raw_history_json(self):
+        page = self.client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Content-Security-Policy", page.headers)
+        self.assertIn("b\u1ed9 nh\u1edb tab n\u00e0y", page.text)
+        self.assertIn("textContent", page.text)
+        self.assertNotIn("innerHTML", page.text)
+        self.assertNotIn("localStorage.setItem('hrmSandboxApiKey'", page.text)
+        self.assertNotIn("sessionStorage.setItem('hrmSandboxApiKey'", page.text)
+        self.assertNotIn("JSON.stringify({before:", page.text)
+
+    def test_hostile_audit_note_is_returned_as_text_for_safe_dom_rendering(self):
+        employee = self.client.get("/api/v1/employees/NV001", headers=self.headers).json()
+        hostile_note = '<img src=x onerror="alert(1)">'
+        updated = self.client.patch("/api/v1/employees/NV001", headers=self.headers, json={
+            "job_title": "Security Audit UAT",
+            "expected_updated_at": employee["updated_at"],
+            "reason": hostile_note,
+        })
+        self.assertEqual(updated.status_code, 200, updated.text)
+        event = self.client.get("/api/v1/changes?entity_id=NV001&page_size=1", headers=self.headers).json()["items"][0]
+        detail = self.client.get(f"/api/v1/changes/{event['id']}", headers=self.headers).json()
+        self.assertEqual(detail["reason"], hostile_note)
+        page = self.client.get("/").text
+        self.assertIn("el.textContent=text", page)
+        self.assertNotIn("innerHTML", page)
+
+    def test_audit_reason_masks_contact_info_and_secret_material(self):
+        private_email = "person@example.test"
+        private_phone = "0901234567"
+        opaque_token = "A1b2C3d4E5f6G7h8J9k0L1m2N3o4P5q6R7s8T9u0V1w2"
+        reason = (
+            f"HR review {private_email} {private_phone} api_key=short-secret "
+            f"Bearer {opaque_token} db=mysql://user:password@localhost/hrm"
+        )
+
+        safe = _safe_audit_reason(reason)
+
+        self.assertNotIn(private_email, safe)
+        self.assertNotIn(private_phone, safe)
+        self.assertNotIn("short-secret", safe)
+        self.assertNotIn(opaque_token, safe)
+        self.assertNotIn("user:password", safe)
 
     def test_department_catalog_changes_update_employees_and_keep_mapping_warning(self):
         departments = self.client.get("/api/v1/departments", headers=self.headers).json()["items"]

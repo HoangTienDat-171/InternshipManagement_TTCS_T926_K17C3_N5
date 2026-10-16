@@ -117,6 +117,7 @@ function AdminHrmIntegrationView({ currentUser }) {
   }, [refresh]);
 
   const previewCounts = preview?.counts || {};
+  const latestSync = history[0] || null;
   const hasApplicableChanges = (previewCounts.NEW || 0) + (previewCounts.UPDATE || 0) + (previewCounts.MENTOR_UPDATE || 0) + (previewCounts.MENTOR_DIRECTORY_UPDATE || 0) > 0;
   const previewRows = preview?.rows || [];
   const previewExpiry = useMemo(() => formatDate(preview?.expires_at), [preview?.expires_at]);
@@ -275,6 +276,22 @@ function AdminHrmIntegrationView({ currentUser }) {
 
       <HrmConnectionManager onChanged={() => { setPreview(null); void refresh(); }} />
 
+      <section className="hrm-panel hrm-last-sync-panel" aria-live="polite">
+        <div className="hrm-panel-heading">
+          <div><h2>Thống kê lượt đồng bộ gần nhất</h2><p>{latestSync ? `Thực hiện lúc ${formatDate(latestSync.created_at)} · ${latestSync.status}` : 'Kết nối HRM chưa tự đồng bộ dữ liệu.'}</p></div>
+          <History size={19} aria-hidden="true" />
+        </div>
+        {latestSync ? <div className="hrm-last-sync-grid">
+          {[
+            ['Tổng bản ghi', latestSync.total_count], ['Tạo mới', latestSync.created_count],
+            ['Cập nhật', latestSync.updated_count], ['Không đổi', latestSync.unchanged_count],
+            ['Bỏ qua', latestSync.skipped_count], ['Lỗi', latestSync.error_count],
+          ].map(([label, count]) => <article className="hrm-last-sync-metric" key={label}><span>{label}</span><strong>{count ?? 0}</strong></article>)}
+        </div> : <p className="hrm-empty">Chưa có lượt đồng bộ nào nên chưa có số liệu. Bấm “Xem trước đồng bộ”, kiểm tra kết quả, rồi “Xác nhận đồng bộ” để tạo lượt đầu tiên.</p>}
+      </section>
+
+      <section className="hrm-panel hrm-preview-counts">
+        <div className="hrm-panel-heading"><div><h2>Phân loại bản xem trước</h2><p>{preview ? 'Các con số này thuộc preview hiện tại và sẽ đổi khi tạo preview mới.' : 'Chưa có preview đang mở; dữ liệu thống kê bền vững ở mục “Thống kê lượt đồng bộ gần nhất”.'}</p></div></div>
       <div className="hrm-summary-grid">
         {ACTIONS.map((item) => (
           <article className={`hrm-summary-card tone-${item.tone}`} key={item.key}>
@@ -283,6 +300,7 @@ function AdminHrmIntegrationView({ currentUser }) {
           </article>
         ))}
       </div>
+      </section>
 
       <div className="hrm-content-grid">
         <section className="hrm-panel">

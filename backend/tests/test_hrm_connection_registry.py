@@ -70,6 +70,44 @@ class HRMConnectionRegistryTests(unittest.TestCase):
             get_connections(request_as("HR"), self.db)
         self.assertEqual(denied.exception.status_code, 403)
 
+    def _paused_connection(self, name):
+        with patch.object(service.secret_vault, "put", return_value=f"dpapi:{name}"):
+            connection = service.add_connection(
+                self.db, name, "http://127.0.0.1:8100", "resume-test-service-key-0123456789012345", self.admin_id,
+            )
+        service.pause_connection(self.db, connection["connection_id"], self.admin_id)
+        return connection["connection_id"]
+
+    def test_resume_transitions_paused_connection_to_connected_after_successful_check(self):
+        connection_id = self._paused_connection("Resume success")
+        paused_row = service._connection_row(self.db, connection_id)
+        with patch.object(service, "test_connection_id", new=AsyncMock(return_value=(None, paused_row))):
+            result = __import__("asyncio").run(service.resume_connection(self.db, connection_id, self.admin_id))
+
+        self.assertEqual(result["state"], "CONNECTED")
+        current = service._connection_row(self.db, connection_id)
+        self.assertEqual(current["state"], "CONNECTED")
+        self.assertIn("tiếp tục kết nối", current["last_check_message"])
+        events = self.db.execute(
+            "SELECT event_type FROM HRM_CONNECTION_AUDIT WHERE connection_id = ? ORDER BY id",
+            (connection_id,),
+        ).fetchall()
+        self.assertEqual([row["event_type"] for row in events], ["CREATED", "PAUSED", "RESUMED"])
+
+    def test_resume_failure_keeps_paused_and_does_not_write_resumed_audit(self):
+        connection_id = self._paused_connection("Resume failure")
+        failure = HTTPException(status_code=502, detail="Sandbox connection failed")
+        with patch.object(service, "test_connection_id", new=AsyncMock(side_effect=failure)):
+            with self.assertRaises(HTTPException):
+                __import__("asyncio").run(service.resume_connection(self.db, connection_id, self.admin_id))
+
+        self.assertEqual(service._connection_row(self.db, connection_id)["state"], "PAUSED")
+        events = self.db.execute(
+            "SELECT event_type FROM HRM_CONNECTION_AUDIT WHERE connection_id = ? ORDER BY id",
+            (connection_id,),
+        ).fetchall()
+        self.assertEqual([row["event_type"] for row in events], ["CREATED", "PAUSED"])
+
     def test_sources_have_isolated_external_ids_and_history_on_switch(self):
         with patch.object(service.secret_vault, "put", side_effect=lambda connection_id, key: f"dpapi:{connection_id}"), \
              patch.object(service.secret_vault, "get", return_value="local-test-key-value-long-enough-123456789"):

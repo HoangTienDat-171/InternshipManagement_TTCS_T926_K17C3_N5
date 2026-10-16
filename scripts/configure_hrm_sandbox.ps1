@@ -11,8 +11,8 @@ function Read-EnvLines([string]$Path) {
   return ,([string[]]@())
 }
 
-function Read-Key([string[]]$Lines) {
-  $entries = @($Lines | Where-Object { $_ -match '^\s*HRM_SANDBOX_API_KEY\s*=' })
+function Read-Key([string[]]$Lines, [string]$Name = 'HRM_SANDBOX_API_KEY') {
+  $entries = @($Lines | Where-Object { $_ -match ('^\s*' + [regex]::Escape($Name) + '\s*=') })
   if ($entries.Count -ne 1) { return $null }
   $candidate = ($entries[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
   if ($candidate.Length -lt 32 -or $candidate -match '[^\x21-\x7E]') { return $null }
@@ -45,6 +45,7 @@ function Set-EnvValues([string]$Path, [System.Collections.IDictionary]$Values) {
 
 $imsPath = [IO.Path]::GetFullPath($ImsEnvPath)
 $sandboxPath = [IO.Path]::GetFullPath($SandboxEnvPath)
+$sandboxLines = Read-EnvLines $sandboxPath
 $existingKey = Read-Key (Read-EnvLines $imsPath)
 if ($existingKey) {
   $apiKey = $existingKey
@@ -54,6 +55,14 @@ if ($existingKey) {
   $random.GetBytes($randomBytes)
   $random.Dispose()
   $apiKey = [Convert]::ToBase64String($randomBytes)
+}
+$adminKey = Read-Key $sandboxLines 'HRM_SANDBOX_ADMIN_API_KEY'
+if (-not $adminKey -or [string]::Equals($adminKey, $apiKey, [StringComparison]::Ordinal)) {
+  $adminBytes = New-Object byte[] 48
+  $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+  $random.GetBytes($adminBytes)
+  $random.Dispose()
+  $adminKey = [Convert]::ToBase64String($adminBytes)
 }
 
 $sharedValues = [ordered]@{
@@ -66,12 +75,16 @@ $sharedValues = [ordered]@{
 }
 Set-EnvValues $imsPath $sharedValues
 Set-EnvValues $sandboxPath $sharedValues
+Set-EnvValues $sandboxPath ([ordered]@{ HRM_SANDBOX_ADMIN_API_KEY = $adminKey })
 
 $imsKey = Read-Key (Read-EnvLines $imsPath)
 $sandboxKey = Read-Key (Read-EnvLines $sandboxPath)
 if (-not $imsKey -or -not [string]::Equals($imsKey, $sandboxKey, [StringComparison]::Ordinal)) {
   throw 'HRM configuration verification failed. API key values were not displayed.'
 }
+if ([string]::Equals($sandboxKey, $adminKey, [StringComparison]::Ordinal)) {
+  throw 'Sandbox admin and service credentials are not isolated.'
+}
 
-Remove-Variable apiKey, existingKey, imsKey, sandboxKey, randomBytes, sharedValues -ErrorAction SilentlyContinue
-Write-Output 'HRM Sandbox settings are aligned in both local env files. The API key was not displayed.'
+Remove-Variable apiKey, adminKey, existingKey, imsKey, sandboxKey, randomBytes, adminBytes, sharedValues -ErrorAction SilentlyContinue
+Write-Output 'HRM Sandbox service settings are aligned; a separate local admin credential is configured. No key was displayed.'

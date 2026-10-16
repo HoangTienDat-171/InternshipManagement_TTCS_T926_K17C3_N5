@@ -142,6 +142,7 @@ class US37ContractTests(unittest.TestCase):
             "HRM_PROVIDER": "sandbox",
             "HRM_SANDBOX_BASE_URL": "https://attacker.example/api",
             "HRM_SANDBOX_API_KEY": "local-test-key-value-long-enough-123456",
+            "HRM_SANDBOX_ADMIN_API_KEY": "admin-test-key-value-long-enough-098765",
         }, clear=True):
             config, error = get_sandbox_config()
         self.assertIsNone(config)
@@ -150,7 +151,7 @@ class US37ContractTests(unittest.TestCase):
     def test_status_never_includes_api_key(self):
         sources = {"active_connection_id": "sandbox", "items": [{
             "connection_id": "sandbox", "connection_name": "HRM Sandbox A", "endpoint": "http://127.0.0.1:8100",
-            "state": "CONNECTED", "is_active": True, "has_credential": True, "last_check_message": "OK",
+            "state": "PAUSED", "is_active": True, "has_credential": True, "last_check_message": "OK",
         }]}
         with patch.object(hrm_routes.hrm_connection_service, "list_connections", return_value=sources):
             with patch.object(hrm_routes, "hrm_schema_ready", return_value=True):
@@ -158,6 +159,9 @@ class US37ContractTests(unittest.TestCase):
         self.assertNotIn("top-secret-test-token-value-long-enough-123456", str(payload))
         self.assertEqual(payload["provider_name"], "HRM Sandbox")
         self.assertEqual(payload["endpoint"], "http://127.0.0.1:8100")
+        self.assertEqual(payload["state"], "PAUSED")
+        self.assertFalse(payload["can_preview"])
+        self.assertTrue(payload["sync_history_available"])
 
 
 class US37SandboxPersistenceTests(unittest.TestCase):
@@ -167,6 +171,7 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.env_patch = patch.dict(os.environ, {
             "HRM_SANDBOX_DATABASE_PATH": self.db_path,
             "HRM_SANDBOX_API_KEY": "sandbox-test-secret",
+            "HRM_SANDBOX_ADMIN_API_KEY": "sandbox-admin-test-secret-different",
         }, clear=False)
         self.env_patch.start()
         initialize_database()
@@ -187,7 +192,7 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         original = get_employee("NV001")
         updated = update_employee("NV001", SandboxEmployeePatch(
             phone="0901999000", department_code="TECH", expected_updated_at=original["updated_at"],
-        ))
+        ), actor_identity="sandbox_admin_api_key")
         self.assertNotEqual(updated.updated_at, original["updated_at"])
         self.assertEqual(get_employee("NV001")["phone"], "0901999000")
 
@@ -197,7 +202,8 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.assertEqual(len({row["employee_id"] for row in first_load["items"]}), 18)
         self.assertEqual({row["employment_status"] for row in first_load["items"]}, {"ACTIVE", "INACTIVE"})
         original = get_employee("NV001")
-        update_employee("NV001", SandboxEmployeePatch(phone="0901999000", expected_updated_at=original["updated_at"]))
+        update_employee("NV001", SandboxEmployeePatch(phone="0901999000", expected_updated_at=original["updated_at"]),
+                        actor_identity="sandbox_admin_api_key")
 
         initialize_database()
         second_load = list_employees(page=1, page_size=100)
@@ -239,6 +245,31 @@ class US37SyncWorkflowTests(unittest.TestCase):
     def tearDown(self):
         self.patches.stop()
         self.db.close()
+
+    def test_persisted_history_and_directory_remain_readable_while_paused(self):
+        self.db.execute(
+            """INSERT INTO HRM_SYNC_HISTORY
+               (provider_id, actor_user_id, created_at, total_count, created_count,
+                updated_count, unchanged_count, skipped_count, error_count, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("sandbox", 1, "2026-10-16T08:00:00+00:00", 3, 1, 1, 0, 1, 0, "APPLIED"),
+        )
+        self.db.commit()
+        sources = {"active_connection_id": "sandbox", "items": [{
+            "connection_id": "sandbox", "state": "PAUSED", "is_active": True,
+        }]}
+        with patch.object(hrm_routes.hrm_connection_service, "list_connections", return_value=sources):
+            with patch.object(
+                hrm_routes.hrm_connection_service,
+                "make_provider",
+                side_effect=AssertionError("Read-only history must not decrypt credentials."),
+            ):
+                history = hrm_routes.get_sync_history(request_for(), page=1, page_size=20, db=self.db)
+                directory = hrm_routes.get_synced_directory(request_for(), page=1, page_size=20, db=self.db)
+
+        self.assertEqual(history["total"], 1)
+        self.assertEqual(history["items"][0]["total_count"], 3)
+        self.assertEqual(directory["total"], 0)
 
     def call(self, endpoint, *args):
         with patch.object(database, "DATABASE_BACKEND", "sqlite"):

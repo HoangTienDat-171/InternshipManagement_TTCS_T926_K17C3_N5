@@ -386,10 +386,16 @@ async def resume_connection(db, connection_id: str, actor_id: int) -> dict:
     row = _connection_row(db, connection_id)
     if not row:
         raise HTTPException(status_code=404, detail="Không tìm thấy kết nối HRM.")
-    provider, checked = await test_connection_id(db, connection_id)
+    await test_connection_id(db, connection_id)
+    now = utc_now()
+    db.execute(
+        "UPDATE HRM_CONNECTIONS SET state = 'CONNECTED', last_checked_at = ?, last_check_message = ?, updated_at = ? WHERE connection_id = ?",
+        (now, "Đã kiểm tra và tiếp tục kết nối Sandbox.", now, connection_id),
+    )
     _insert_audit(db, connection_id, "RESUMED", actor_id, "Đã kiểm tra lại và tiếp tục kết nối.")
     db.commit()
-    return {"connection_id": connection_id, "state": checked["state"]}
+    current = _connection_row(db, connection_id)
+    return {"connection_id": connection_id, "state": current["state"], "message": current["last_check_message"]}
 
 
 async def reconnect_connection(db, connection_id: str, api_key: str, actor_id: int) -> dict:
