@@ -27,9 +27,9 @@ const SEARCH_DEBOUNCE_MS = 400;
 export default function InternManagementView({ 
   departments, 
   universities, 
-  onCreateUniversity,
   onShowToast,
-  onCreateDepartment,
+  isAdmin = false,
+  onNavigateMasterData,
 }) {
   const [interns, setInterns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -647,9 +647,10 @@ export default function InternManagementView({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         internId={selectedInternId}
+        departments={departments}
         universities={universities}
-        onCreateUniversity={onCreateUniversity}
-        onCreateDepartment={onCreateDepartment}
+        isAdmin={isAdmin}
+        onNavigateMasterData={onNavigateMasterData}
         onSuccess={(msg) => {
           onShowToast(msg);
           refreshInterns();

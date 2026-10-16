@@ -148,13 +148,13 @@ class US37ContractTests(unittest.TestCase):
         self.assertIn("loopback", error)
 
     def test_status_never_includes_api_key(self):
-        with patch.dict(os.environ, {
-            "HRM_PROVIDER": "sandbox",
-            "HRM_SANDBOX_BASE_URL": "http://127.0.0.1:8100",
-            "HRM_SANDBOX_API_KEY": "top-secret-test-token-value-long-enough-123456",
-        }, clear=True):
+        sources = {"active_connection_id": "sandbox", "items": [{
+            "connection_id": "sandbox", "connection_name": "HRM Sandbox A", "endpoint": "http://127.0.0.1:8100",
+            "state": "CONNECTED", "is_active": True, "has_credential": True, "last_check_message": "OK",
+        }]}
+        with patch.object(hrm_routes.hrm_connection_service, "list_connections", return_value=sources):
             with patch.object(hrm_routes, "hrm_schema_ready", return_value=True):
-                payload = hrm_routes.get_status(request_for(), db=None)
+                payload = hrm_routes.get_status(request_for(), db=object())
         self.assertNotIn("top-secret-test-token-value-long-enough-123456", str(payload))
         self.assertEqual(payload["provider_name"], "HRM Sandbox")
         self.assertEqual(payload["endpoint"], "http://127.0.0.1:8100")
@@ -229,10 +229,7 @@ class US37SyncWorkflowTests(unittest.TestCase):
             "source_updated_at": "2026-10-15T08:00:00+00:00",
         }]
         self.provider = FakeSandboxProvider(self.records)
-        self.patches = patch.multiple(
-            hrm_routes,
-            _provider_or_error=lambda: self.provider,
-        )
+        self.patches = patch.multiple(hrm_routes, _provider_or_error=lambda *args, **kwargs: self.provider)
         self.patches.start()
         self.db.execute(
             "INSERT INTO HRM_DEPARTMENT_MAPPINGS(provider_id, external_department_key, external_department_code, ma_phong_ban) VALUES ('sandbox', 'tech', 'TECH', 9)"
@@ -249,7 +246,11 @@ class US37SyncWorkflowTests(unittest.TestCase):
 
     def test_admin_only_test_preview_apply_and_second_sync_is_idempotent(self):
         with patch.object(database, "DATABASE_BACKEND", "sqlite"):
-            self.assertEqual(asyncio.run(hrm_routes.test_connection(request_for()))["state"], "CONNECTED")
+            with patch.object(hrm_routes.hrm_connection_service, "_active_id", return_value="sandbox"):
+                async def checked_connection(db, connection_id):
+                    return self.provider, {"state": "CONNECTED", "endpoint": "http://127.0.0.1:8100"}
+                with patch.object(hrm_routes.hrm_connection_service, "test_connection_id", side_effect=checked_connection):
+                    self.assertEqual(asyncio.run(hrm_routes.test_connection(request_for(), db=self.db))["state"], "CONNECTED")
         with self.assertRaises(HTTPException) as denied:
             asyncio.run(hrm_routes.create_preview(request_for("HR"), db=self.db))
         self.assertEqual(denied.exception.status_code, 403)

@@ -7,8 +7,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .database import DATABASE_BACKEND, get_db_connection, init_db
 from .email_outbox import start_email_worker, stop_email_worker
 from .hrm_storage import ensure_hrm_sqlite_schema
+from .hrm_connection_service import bootstrap_legacy_connection, ensure_sqlite_schema
 from .security import get_session_user, session_connections
-from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, hrm_routes, intern_routes, leave_routes, master_routes, meeting_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
+from .routes import allowance_routes, attendance_routes, auth_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, hrm_connection_routes, hrm_routes, intern_routes, leave_routes, master_routes, meeting_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
 
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
@@ -95,6 +96,8 @@ def on_startup():
         db = get_db_connection()
         try:
             ensure_hrm_sqlite_schema(db)
+            ensure_sqlite_schema(db)
+            bootstrap_legacy_connection(db)
         finally:
             db.close()
     if os.getenv("IMS_DISABLE_EMAIL_WORKER") != "1":
@@ -135,6 +138,7 @@ app.include_router(support_request_routes.router)
 app.include_router(final_report_routes.router)
 app.include_router(reporting_routes.router)
 app.include_router(hrm_routes.router)
+app.include_router(hrm_connection_routes.router)
 
 
 @app.websocket("/api/auth/events")

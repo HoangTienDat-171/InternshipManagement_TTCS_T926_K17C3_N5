@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Plus, Search } from 'lucide-react';
 import './MasterDataSelect.css';
@@ -36,12 +36,16 @@ export default function MasterDataSelect({
   const selected = items.find((item) => String(item[idKey]) === String(value));
   const filteredItems = useMemo(() => {
     const needle = normalize(query);
-    return items.filter((item) => !needle || normalize(item[labelKey]).includes(needle));
-  }, [items, labelKey, query]);
+    return items.filter((item) => {
+      const selectedInactive = (item.is_active === false || item.is_active === 0) && String(item[idKey]) === String(value);
+      if ((item.is_active === false || item.is_active === 0) && !selectedInactive) return false;
+      return !needle || normalize(item[labelKey]).includes(needle);
+    });
+  }, [items, idKey, labelKey, query, value]);
   const canAdd = Boolean(onCreateNew && normalize(query)
     && !items.some((item) => normalize(item[labelKey]) === normalize(query)));
 
-  const updatePlacement = () => {
+  const updatePlacement = useCallback(() => {
     const input = inputRef.current;
     if (!input) return;
     const bounds = input.getBoundingClientRect();
@@ -51,7 +55,9 @@ export default function MasterDataSelect({
     const above = Math.max(0, bounds.top - viewportPadding - gap);
     const showAbove = below < 160 && above > below;
     const available = showAbove ? above : below;
-    const height = Math.min(280, available);
+    const resultCount = Math.max(1, filteredItems.length);
+    const desiredHeight = 48 + resultCount * 38 + (canAdd ? 48 : 0) + (showCreateForm ? 94 : 0);
+    const height = Math.min(280, available, desiredHeight);
     const width = Math.min(bounds.width, window.innerWidth - viewportPadding * 2);
     const left = Math.max(viewportPadding, Math.min(bounds.left, window.innerWidth - width - viewportPadding));
     const top = showAbove
@@ -59,7 +65,7 @@ export default function MasterDataSelect({
       : Math.min(bounds.bottom + gap, window.innerHeight - height - viewportPadding);
 
     setPlacement({ top, left, width, height, showAbove });
-  };
+  }, [filteredItems.length, canAdd, showCreateForm]);
 
   useLayoutEffect(() => {
     if (!open) return undefined;
@@ -98,7 +104,7 @@ export default function MasterDataSelect({
       document.removeEventListener('pointerdown', closeOutside, true);
       document.removeEventListener('keydown', handleEscape, true);
     };
-  }, [open, showCreateForm]);
+  }, [open, showCreateForm, filteredItems.length, canAdd, updatePlacement]);
 
   useEffect(() => {
     if (showCreateForm) createNameRef.current?.focus();
@@ -201,12 +207,13 @@ export default function MasterDataSelect({
               type="button"
               role="option"
               aria-selected={String(item[idKey]) === String(value)}
-              className="master-data-option"
+              aria-disabled={item.is_active === false || item.is_active === 0 || undefined}
+              className={`master-data-option${item.is_active === false || item.is_active === 0 ? ' is-inactive' : ''}`}
               key={item[idKey]}
               ref={(element) => { optionRefs.current[index] = element; }}
               onKeyDown={(event) => handleOptionKeyDown(event, index)}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => emitChange(item[idKey])}
+              onClick={() => { if (item.is_active !== false && item.is_active !== 0) emitChange(item[idKey]); }}
             >
               <span>{item[labelKey]}</span>
               {String(item[idKey]) === String(value) && <Check size={16} aria-hidden="true" />}

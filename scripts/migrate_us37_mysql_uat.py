@@ -17,6 +17,7 @@ US37_MIGRATIONS = (
     "20261015_us37_bidirectional_workflows.sql",
     "20261015_us37_hrm_sandbox.sql",
     "20261015_us37_department_overrides.sql",
+    "20261016_master_data_and_hrm_connections.sql",
 )
 
 

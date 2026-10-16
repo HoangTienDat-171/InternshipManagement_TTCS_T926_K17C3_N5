@@ -1794,6 +1794,47 @@ def init_db():
             ("Đại học FPT", "Khu CNC Hòa Lạc, Thạch Thất, Hà Nội", "ThS. Phạm Tuấn D", "contact@fpt.edu.vn")
         ])
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_DEPARTMENT_CATALOG_META (
+            ma_phong_ban INTEGER PRIMARY KEY,
+            ma_dinh_danh TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_UNIVERSITY_CATALOG_META (
+            ma_truong INTEGER PRIMARY KEY,
+            ma_dinh_danh TEXT UNIQUE,
+            ten_viet_tat TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ma_truong) REFERENCES TRUONG_DAI_HOC(ma_truong) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_MASTER_DATA_AUDIT (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            before_json TEXT,
+            after_json TEXT NOT NULL,
+            actor_user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO IMS_DEPARTMENT_CATALOG_META (ma_phong_ban, ma_dinh_danh)
+        SELECT ma_phong_ban, 'PB-' || printf('%04d', ma_phong_ban) FROM PHONG_BAN
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO IMS_UNIVERSITY_CATALOG_META (ma_truong)
+        SELECT ma_truong FROM TRUONG_DAI_HOC
+    """)
+
     # Seed users with Bcrypt hashes
     cursor.execute("SELECT COUNT(*) FROM NGUOI_DUNG")
     if cursor.fetchone()[0] == 0:

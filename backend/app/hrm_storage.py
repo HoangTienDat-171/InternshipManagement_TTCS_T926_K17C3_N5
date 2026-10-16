@@ -665,7 +665,7 @@ def db_timestamp(value: datetime | None = None) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, Any]], preview_id: str) -> dict[str, Any]:
+def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, Any]], preview_id: str, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
     created = updated = unchanged = skipped = 0
     now = db_timestamp()
     begin_transaction(db)
@@ -690,7 +690,7 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
                     source_updated_at = excluded.source_updated_at,
                     synced_at = excluded.synced_at""",
                 (
-                    PROVIDER_ID,
+                    provider_id,
                     str(row["external_employee_id"]).casefold(),
                     row["external_employee_id"],
                     row["full_name"],
@@ -743,7 +743,7 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
                         provider_id, external_employee_id, mentor_user_id, actor_user_id,
                         changed_fields_json, before_values_json, after_values_json, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (PROVIDER_ID, row["external_employee_id"], mentor_id, actor_user_id,
+                    (provider_id, row["external_employee_id"], mentor_id, actor_user_id,
                      json.dumps(changed_fields), json.dumps(before, default=str),
                      json.dumps(after, default=str), now),
                 )
@@ -765,7 +765,7 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
                 provider_id, actor_user_id, created_at, total_count, created_count,
                 updated_count, unchanged_count, skipped_count, error_count, status
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
-            (PROVIDER_ID, actor_user_id, now, total, created, updated, unchanged, skipped, status),
+            (provider_id, actor_user_id, now, total, created, updated, unchanged, skipped, status),
         )
         db.execute("UPDATE HRM_SYNC_PREVIEWS SET status = 'APPLIED' WHERE preview_id = ?", (preview_id,))
         db.commit()
@@ -783,7 +783,7 @@ def apply_rows_and_history(db, actor_user_id: int, rows: Sequence[Mapping[str, A
         raise
 
 
-def record_failed_sync(db, actor_user_id: int, total: int = 0) -> None:
+def record_failed_sync(db, actor_user_id: int, total: int = 0, provider_id: str = PROVIDER_ID) -> None:
     now = db_timestamp()
     try:
         db.execute(
@@ -791,15 +791,15 @@ def record_failed_sync(db, actor_user_id: int, total: int = 0) -> None:
                 provider_id, actor_user_id, created_at, total_count, created_count,
                 updated_count, unchanged_count, skipped_count, error_count, status
             ) VALUES (?, ?, ?, ?, 0, 0, 0, ?, 1, 'ERROR')""",
-            (PROVIDER_ID, actor_user_id, now, total, total),
+            (provider_id, actor_user_id, now, total, total),
         )
         db.commit()
     except Exception:
         db.rollback()
 
 
-def list_history(db, page: int, page_size: int) -> dict[str, Any]:
-    total = db.execute("SELECT COUNT(*) AS total FROM HRM_SYNC_HISTORY").fetchone()["total"]
+def list_history(db, page: int, page_size: int, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
+    total = db.execute("SELECT COUNT(*) AS total FROM HRM_SYNC_HISTORY WHERE provider_id = ?", (provider_id,)).fetchone()["total"]
     offset = (page - 1) * page_size
     rows = db.execute(
         """SELECT h.id, h.provider_id, h.created_at, h.total_count, h.created_count,
@@ -807,15 +807,15 @@ def list_history(db, page: int, page_size: int) -> dict[str, Any]:
                   h.status, u.ho_ten AS actor_name
            FROM HRM_SYNC_HISTORY h
            LEFT JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.actor_user_id
-           ORDER BY h.id DESC LIMIT ? OFFSET ?""",
-        (page_size, offset),
+           WHERE h.provider_id = ? ORDER BY h.id DESC LIMIT ? OFFSET ?""",
+        (provider_id, page_size, offset),
     ).fetchall()
     return {"items": [dict(row) for row in rows], "total": int(total), "page": page, "page_size": page_size}
 
 
-def list_directory(db, page: int, page_size: int) -> dict[str, Any]:
+def list_directory(db, page: int, page_size: int, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
     total = db.execute(
-        "SELECT COUNT(*) AS total FROM HRM_EMPLOYEE_DIRECTORY WHERE provider_id = ?", (PROVIDER_ID,)
+        "SELECT COUNT(*) AS total FROM HRM_EMPLOYEE_DIRECTORY WHERE provider_id = ?", (provider_id,)
     ).fetchone()["total"]
     offset = (page - 1) * page_size
     rows = db.execute(
@@ -827,7 +827,7 @@ def list_directory(db, page: int, page_size: int) -> dict[str, Any]:
            LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = d.ma_phong_ban
            WHERE d.provider_id = ? ORDER BY d.full_name, d.external_employee_id
            LIMIT ? OFFSET ?""",
-        (PROVIDER_ID, page_size, offset),
+        (provider_id, page_size, offset),
     ).fetchall()
     return {"items": [dict(row) for row in rows], "total": int(total), "page": page, "page_size": page_size}
 

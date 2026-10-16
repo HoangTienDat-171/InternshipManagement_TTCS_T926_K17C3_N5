@@ -28,6 +28,7 @@ const SupportRequestView = lazy(() => import('./views/SupportRequestView'));
 const FinalReportManagementView = lazy(() => import('./views/FinalReportManagementView'));
 const StatisticsManagementView = lazy(() => import('./views/StatisticsManagementView'));
 const HrmIntegrationView = lazy(() => import('./views/HrmIntegrationView'));
+const MasterDataManagementView = lazy(() => import('./views/MasterDataManagementView'));
 
 function clearSavedSession() {
   try {
@@ -54,6 +55,7 @@ function tabForPath(path) {
   if (path === '/final-reports' || path === '/reports') return 'final-reports';
   if (path === '/statistics') return 'statistics';
   if (path === '/integrations/hrm') return 'hrm-integration';
+  if (path === '/master-data') return 'master-data';
   return 'interns';
 }
 
@@ -72,6 +74,7 @@ function pathForTab(tab) {
   if (tab === 'final-reports') return '/final-reports';
   if (tab === 'statistics') return '/statistics';
   if (tab === 'hrm-integration') return '/integrations/hrm';
+  if (tab === 'master-data') return '/master-data';
   return '/';
 }
 
@@ -111,7 +114,7 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics', 'hrm-integration'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics', 'hrm-integration', 'master-data'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'support-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -126,6 +129,7 @@ export default function App() {
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'master-data' && currentUser.vai_tro !== 'Admin')
         || (activeTab === 'hrm-integration' && !['Admin', 'HR'].includes(currentUser.vai_tro))
       )
         ? personalWorkspace
@@ -163,42 +167,6 @@ export default function App() {
       setToast(null);
     }, 3500);
   }, []);
-
-  const createMasterItem = async (kind, name) => {
-    const response = await apiFetch(`/api/master/${kind}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(kind === 'departments' ? { ten_phong_ban: name } : { ten_truong: name }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || 'Không thể thêm danh mục.');
-    if (kind === 'departments') {
-      setDepartments((current) => current.some((item) => item.ma_phong_ban === data.ma_phong_ban) ? current : [...current, data]);
-    } else {
-      setUniversities((current) => current.some((item) => item.ma_truong === data.ma_truong) ? current : [...current, data]);
-    }
-    showToast(kind === 'departments' ? 'Đã thêm phòng ban mới.' : 'Đã thêm trường đại học mới.');
-    return data;
-  };
-
-  const createDepartment = async (departmentName) => {
-    const response = await apiFetch('/api/master/departments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ten_phong_ban: departmentName }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(result.detail || 'Không thể lưu phòng ban mới.');
-    }
-
-    setDepartments((previous) => [
-      ...previous.filter((item) => item.ma_phong_ban !== result.ma_phong_ban),
-      result,
-    ].sort((left, right) => left.ma_phong_ban - right.ma_phong_ban));
-    showToast(`Đã thêm phòng ban “${result.ten_phong_ban}”.`);
-    return result;
-  };
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
@@ -569,16 +537,15 @@ export default function App() {
             <InternManagementView
               departments={departments}
               universities={universities}
-              onCreateUniversity={(name) => createMasterItem('universities', name)}
               onShowToast={showToast}
-              onCreateDepartment={createDepartment}
+              isAdmin={currentUser?.vai_tro === 'Admin'}
+              onNavigateMasterData={() => navigateToTab('master-data')}
             />
           )}
 
           {canManageRecords && visibleActiveTab === 'mentors' && (
             <MentorManagementView
               departments={departments}
-              onCreateDepartment={canManageRecords ? createDepartment : undefined}
               onShowToast={showToast}
               currentUser={currentUser}
             />
@@ -587,7 +554,6 @@ export default function App() {
           {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'programs' && (
             <ProgramManagementView
               departments={departments}
-              onCreateDepartment={canManageRecords ? createDepartment : undefined}
               onShowToast={showToast}
               currentUser={currentUser}
             />
@@ -621,7 +587,6 @@ export default function App() {
           {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
             <AccountManagementView
               departments={departments}
-              onCreateDepartment={createDepartment}
               onShowToast={showToast}
               currentUser={currentUser}
             />
@@ -630,6 +595,12 @@ export default function App() {
           {visibleActiveTab === 'hrm-integration' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải trạng thái tích hợp HRM…</div>}>
               <HrmIntegrationView currentUser={currentUser} />
+            </Suspense>
+          )}
+
+          {visibleActiveTab === 'master-data' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải danh mục dùng chung…</div>}>
+              <MasterDataManagementView onShowToast={showToast} />
             </Suspense>
           )}
 
