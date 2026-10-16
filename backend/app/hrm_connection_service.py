@@ -174,7 +174,9 @@ def _tables_ready(db) -> bool:
             "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
             "AND TABLE_NAME IN ('HRM_CONNECTIONS', 'HRM_ACTIVE_CONNECTION', 'HRM_CONNECTION_AUDIT')"
         ).fetchall()
-        return CONNECTION_TABLES.issubset({row["TABLE_NAME"] for row in rows})
+        # information_schema preserves the on-disk table-name casing, which may
+        # be lowercase on Windows/MySQL even when migrations use uppercase SQL.
+        return CONNECTION_TABLES.issubset({str(row["TABLE_NAME"]).upper() for row in rows})
     rows = db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
     return CONNECTION_TABLES.issubset({row["name"] for row in rows})
 

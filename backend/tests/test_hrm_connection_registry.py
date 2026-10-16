@@ -41,6 +41,24 @@ class HRMConnectionRegistryTests(unittest.TestCase):
             self.db, name, f"http://127.0.0.1:{port}", "local-test-key-value-long-enough-123456789", self.admin_id,
         )
 
+    def test_mysql_connection_schema_check_ignores_table_name_case(self):
+        class MetadataResult:
+            def fetchall(self):
+                return [{"TABLE_NAME": name} for name in (
+                    "hrm_connections", "hrm_active_connection", "hrm_connection_audit",
+                )]
+
+        class MetadataDatabase:
+            def execute(self, statement):
+                self.statement = statement
+                return MetadataResult()
+
+        db = MetadataDatabase()
+        with patch.object(database, "DATABASE_BACKEND", "mysql"):
+            self.assertTrue(service._tables_ready(db))
+
+        self.assertIn("information_schema.TABLES", db.statement)
+
     def test_endpoint_allowlist_rejects_external_urls_and_other_ports(self):
         self.assertEqual(service.validate_endpoint("http://localhost:8100/"), "http://127.0.0.1:8100")
         for endpoint in ("https://127.0.0.1:8100", "http://example.test:8100", "http://127.0.0.1:8000", "http://127.0.0.1:8100/path"):
