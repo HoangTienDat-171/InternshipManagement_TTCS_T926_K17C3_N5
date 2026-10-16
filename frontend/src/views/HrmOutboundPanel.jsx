@@ -10,10 +10,32 @@ async function requestJson(path, options) {
   return payload;
 }
 
+const OUTBOUND_STATUS_LABELS = {
+  AVAILABLE: 'Chưa đề xuất',
+  PENDING: 'Chờ HRM xử lý',
+  PENDING_RECONCILIATION: 'Chờ đối soát',
+  ACCEPTED: 'Đã chấp nhận',
+  REJECTED: 'Đã từ chối',
+  FAILED: 'Lỗi gửi yêu cầu',
+};
+
 function dateLabel(value) {
   if (!value) return '—';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('vi-VN');
+}
+
+function formatOutboundMessage(msg, fallback = '') {
+  if (!msg) return fallback;
+  if (msg.includes('reconciled with the Sandbox')) return 'Đã đối soát thành công đề xuất IMS với bản ghi Sandbox.';
+  if (msg.includes('still reports')) return 'HRM Sandbox vẫn giữ nguyên trạng thái; không cần cập nhật.';
+  if (msg.includes('sent to the HRM Sandbox')) return 'Đã gửi đề xuất ứng viên vào hộp thư HRM Sandbox.';
+  if (msg.includes('approval recorded')) return 'Đã ghi nhận quyết định tuyển dụng của HR và phê duyệt gửi.';
+  if (msg.includes('was uncertain')) return 'Phản hồi từ Sandbox chưa chắc chắn; cần đối soát lại trước khi gửi mới.';
+  if (msg.includes('Candidate request status: ACCEPTED')) return 'Hồ sơ đề xuất đã được chấp nhận.';
+  if (msg.includes('Candidate request status: REJECTED')) return 'Hồ sơ đề xuất đã bị từ chối.';
+  if (msg.includes('Candidate request status: PENDING')) return 'Hồ sơ đề xuất đang chờ xử lý tại HRM Sandbox.';
+  return msg;
 }
 
 export default function HrmOutboundPanel({ currentUser }) {
@@ -49,7 +71,7 @@ export default function HrmOutboundPanel({ currentUser }) {
       setInbox(inboxData.items || []);
       setHistory(historyData.items || []);
     } catch (cause) {
-      setError(cause.message || 'Could not load HRM Sandbox outbound status.');
+      setError(cause.message || 'Không tải được trạng thái kết nối HRM Sandbox.');
     }
   }, []);
 
@@ -70,7 +92,7 @@ export default function HrmOutboundPanel({ currentUser }) {
       setPreview({ ...result, approved: false });
       setDecisionReason('');
     } catch (cause) {
-      setError(cause.message || 'Could not create candidate preview.');
+      setError(cause.message || 'Không tạo được bản xem trước ứng viên.');
     } finally { setBusy(''); }
   };
 
@@ -88,7 +110,7 @@ export default function HrmOutboundPanel({ currentUser }) {
       setPreview((current) => ({ ...current, approved: true }));
       setNotice('HR đã lưu quyết định tuyển dụng và phê duyệt gửi snapshot này.');
       await refresh();
-    } catch (cause) { setError(cause.message || 'Could not save HR approval.'); }
+    } catch (cause) { setError(cause.message || 'Không lưu được quyết định phê duyệt của HR.'); }
     finally { setBusy(''); }
   };
 
@@ -101,10 +123,10 @@ export default function HrmOutboundPanel({ currentUser }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preview_id: preview.preview_id }),
       });
-      setNotice(result.message || `Candidate request status: ${result.status}.`);
+      setNotice(formatOutboundMessage(result.message, `Trạng thái đề xuất: ${result.status}.`));
       setPreview(null);
       await refresh();
-    } catch (cause) { setError(cause.message || 'Could not send candidate request.'); }
+    } catch (cause) { setError(cause.message || 'Không gửi được yêu cầu ứng viên sang HRM Sandbox.'); }
     finally { setBusy(''); }
   };
 
@@ -126,7 +148,7 @@ export default function HrmOutboundPanel({ currentUser }) {
         ? `Sandbox đã chấp nhận và tạo nhân viên ${result.external_employee_id}.`
         : 'Sandbox đã từ chối; lịch sử TTS trong IMS vẫn được giữ nguyên.');
       await refresh();
-    } catch (cause) { setError(cause.message || 'Could not save Sandbox decision.'); }
+    } catch (cause) { setError(cause.message || 'Không lưu được quyết định từ Sandbox.'); }
     finally { setBusy(''); }
   };
 
@@ -135,9 +157,9 @@ export default function HrmOutboundPanel({ currentUser }) {
     setError('');
     try {
       const result = await requestJson(`/api/integrations/hrm/outbound/reconcile/${profileId}`, { method: 'POST' });
-      setNotice(result.message || `Reconciliation status: ${result.status}.`);
+      setNotice(formatOutboundMessage(result.message, `Trạng thái đối soát: ${result.status}.`));
       await refresh();
-    } catch (cause) { setError(cause.message || 'Could not reconcile this request.'); }
+    } catch (cause) { setError(cause.message || 'Không thể đối soát yêu cầu này.'); }
     finally { setBusy(''); }
   };
 
@@ -156,8 +178,14 @@ export default function HrmOutboundPanel({ currentUser }) {
       {notice && <div className="hrm-message is-success" role="status"><CheckCircle2 size={18} />{notice}</div>}
       <div className={`hrm-status-card ${status?.enabled ? 'is-connected' : 'is-waiting'}`}>
         <div className="hrm-status-icon">{status?.enabled ? <CheckCircle2 size={22} /> : <Clock3 size={22} />}</div>
-        <div className="hrm-status-copy"><span className="hrm-status-label">SANDBOX MODE</span><h3>{status?.enabled ? 'Outbound UAT enabled' : 'Outbound disabled'}</h3><p>{status?.message || 'Checking configuration…'}</p></div>
-        <span className={`hrm-status-badge ${status?.enabled ? 'is-connected' : ''}`}>{status?.environment || 'checking'}</span>
+        <div className="hrm-status-copy">
+          <span className="hrm-status-label">CHẾ ĐỘ SANDBOX</span>
+          <h3>{status?.enabled ? 'Đã kích hoạt UAT Outbound' : 'Chưa kích hoạt Outbound'}</h3>
+          <p>{status?.message?.includes('Only explicitly completed') ? 'Chỉ hồ sơ TTS hoàn thành chương trình thực tập mới đủ điều kiện đề xuất. Cần HR duyệt trước khi gửi; Sandbox chấp nhận sẽ tạo nhân viên mới.' : status?.message || 'Đang kiểm tra cấu hình…'}</p>
+        </div>
+        <span className={`hrm-status-badge ${status?.enabled ? 'is-connected' : ''}`}>
+          {status?.environment === 'isolated local MySQL UAT' ? 'Môi trường MySQL UAT cục bộ' : status?.environment === 'isolated SQLite UAT' ? 'Môi trường SQLite UAT cục bộ' : status?.environment || 'Đang kiểm tra'}
+        </span>
       </div>
       <div className="hrm-outbound-scope">
         <strong>Gói dữ liệu gửi</strong>
@@ -175,7 +203,7 @@ export default function HrmOutboundPanel({ currentUser }) {
                 <td><strong>#{item.profile_id} · {item.full_name}</strong></td>
                 <td>{item.completed_programs.map((program) => <small key={program.program_reference}>{program.program_name} · {program.completion_date || 'Ngày hoàn thành chưa ghi'}</small>)}</td>
                 <td>{item.hiring_decision === 'APPROVED' ? `Đã duyệt · ${dateLabel(item.decision_at)}` : item.hiring_decision === 'REVOKED' ? 'Đã thu hồi' : 'Chưa ghi nhận'}</td>
-                <td><span className={`hrm-action-badge tone-${item.status === 'ACCEPTED' ? 'new' : item.status === 'REJECTED' ? 'conflict' : 'unchanged'}`}>{item.status}</span>{item.external_employee_id && <small>Mã NV HRM: {item.external_employee_id}</small>}</td>
+                <td><span className={`hrm-action-badge tone-${item.status === 'ACCEPTED' ? 'new' : item.status === 'REJECTED' || item.status === 'FAILED' ? 'invalid' : item.status === 'PENDING' || item.status === 'PENDING_RECONCILIATION' ? 'conflict' : 'unchanged'}`}>{OUTBOUND_STATUS_LABELS[item.status] || item.status}</span>{item.external_employee_id && <small>Mã NV HRM: {item.external_employee_id}</small>}</td>
                 <td className="hrm-outbound-actions">
                   {canApprove && ['AVAILABLE', 'REJECTED', 'FAILED'].includes(item.status) && <button type="button" className="btn btn-secondary" onClick={() => createPreview(item.profile_id)} disabled={Boolean(busy)}>{busy === `preview:${item.profile_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Xem trước</button>}
                   {['PENDING', 'PENDING_RECONCILIATION'].includes(item.status) && <button type="button" className="btn btn-secondary" onClick={() => reconcile(item.profile_id)} disabled={Boolean(busy)}>{busy === `reconcile:${item.profile_id}` ? <LoaderCircle className="hrm-spin" size={15} /> : <RefreshCw size={15} />} {item.status === 'PENDING' ? 'Lấy quyết định HRM' : 'Đối soát'}</button>}
@@ -216,7 +244,7 @@ export default function HrmOutboundPanel({ currentUser }) {
               <input aria-label={`Lý do từ chối ${item.payload.full_name}`} maxLength={500} value={rejectReasons[item.external_reference] || ''} onChange={(event) => setRejectReasons((current) => ({ ...current, [item.external_reference]: event.target.value }))} placeholder="Lý do từ chối (bắt buộc nếu từ chối)" />
               <button type="button" className="btn btn-primary" onClick={() => decide(item, 'ACCEPT')} disabled={Boolean(busy)}>{busy === `decision:${item.external_reference}` ? <LoaderCircle className="hrm-spin" size={15} /> : <Check size={15} />} Chấp nhận</button>
               <button type="button" className="btn btn-secondary" onClick={() => decide(item, 'REJECT')} disabled={Boolean(busy)}>Từ chối</button>
-            </div> : <span className="hrm-action-badge tone-unchanged">Read only</span>}
+            </div> : <span className="hrm-action-badge tone-unchanged">Chỉ xem</span>}
           </article>
         ))}
       </section>

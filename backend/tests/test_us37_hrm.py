@@ -185,7 +185,9 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.assertEqual(len(first_page["items"]), 2)
         self.assertGreaterEqual(first_page["total_pages"], 2)
         original = get_employee("NV001")
-        updated = update_employee("NV001", SandboxEmployeePatch(phone="0901999000", department_code="TECH"))
+        updated = update_employee("NV001", SandboxEmployeePatch(
+            phone="0901999000", department_code="TECH", expected_updated_at=original["updated_at"],
+        ))
         self.assertNotEqual(updated.updated_at, original["updated_at"])
         self.assertEqual(get_employee("NV001")["phone"], "0901999000")
 
@@ -194,7 +196,8 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.assertEqual(first_load["total"], 18)
         self.assertEqual(len({row["employee_id"] for row in first_load["items"]}), 18)
         self.assertEqual({row["employment_status"] for row in first_load["items"]}, {"ACTIVE", "INACTIVE"})
-        update_employee("NV001", SandboxEmployeePatch(phone="0901999000"))
+        original = get_employee("NV001")
+        update_employee("NV001", SandboxEmployeePatch(phone="0901999000", expected_updated_at=original["updated_at"]))
 
         initialize_database()
         second_load = list_employees(page=1, page_size=100)

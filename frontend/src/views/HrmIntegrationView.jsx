@@ -21,14 +21,14 @@ import HrmDepartmentMappingPanel from './HrmDepartmentMappingPanel';
 import './HrmIntegrationView.css';
 
 const ACTIONS = [
-  { key: 'NEW', label: 'Mới', tone: 'new' },
-  { key: 'UPDATE', label: 'Cập nhật', tone: 'update' },
-  { key: 'MENTOR_UPDATE', label: 'Mentor linked update', tone: 'update' },
-  { key: 'MENTOR_DIRECTORY_UPDATE', label: 'HRM directory only', tone: 'update' },
-  { key: 'UNCHANGED', label: 'Không đổi', tone: 'unchanged' },
-  { key: 'MENTOR_UNCHANGED', label: 'Mentor unchanged', tone: 'unchanged' },
-  { key: 'CONFLICT', label: 'Xung đột', tone: 'conflict' },
-  { key: 'INVALID', label: 'Không hợp lệ', tone: 'invalid' },
+  { key: 'NEW', label: 'Tạo mới danh bạ', tone: 'new' },
+  { key: 'UPDATE', label: 'Cập nhật danh bạ', tone: 'update' },
+  { key: 'MENTOR_UPDATE', label: 'Cập nhật hồ sơ Mentor', tone: 'update' },
+  { key: 'MENTOR_DIRECTORY_UPDATE', label: 'Chỉ cập nhật danh bạ HRM', tone: 'update' },
+  { key: 'UNCHANGED', label: 'Dữ liệu không đổi', tone: 'unchanged' },
+  { key: 'MENTOR_UNCHANGED', label: 'Mentor không đổi', tone: 'unchanged' },
+  { key: 'CONFLICT', label: 'Xung đột dữ liệu', tone: 'conflict' },
+  { key: 'INVALID', label: 'Bản ghi không hợp lệ', tone: 'invalid' },
 ];
 
 const ACTION_LABELS = Object.fromEntries(ACTIONS.map(({ key, label }) => [key, label]));
@@ -171,7 +171,7 @@ function AdminHrmIntegrationView({ currentUser }) {
         item.linked_user_id ? String(item.linked_user_id) : '',
       ])));
     } catch (cause) {
-      setError(cause.message || 'Could not load explicit Mentor mappings.');
+      setError(cause.message || 'Không tải được danh sách liên kết Mentor.');
     } finally { setBusy(''); }
   };
 
@@ -190,7 +190,7 @@ function AdminHrmIntegrationView({ currentUser }) {
       setPreview(null);
       setNotice('Admin đã xác nhận liên kết external ID HRM ↔ Mentor IMS. Tạo preview mới để xem các thay đổi HRM-owned.');
       await loadMentorMappings();
-    } catch (cause) { setError(cause.message || 'Could not save the external-ID mapping.'); }
+    } catch (cause) { setError(cause.message || 'Không thể lưu liên kết external ID.'); }
     finally { setBusy(''); }
   };
 
@@ -218,7 +218,7 @@ function AdminHrmIntegrationView({ currentUser }) {
     const directoryOnlyCount = previewCounts.MENTOR_DIRECTORY_UPDATE || 0;
     const skipCount = (previewCounts.CONFLICT || 0) + (previewCounts.INVALID || 0);
     const confirmed = window.confirm(
-      `Apply ${newCount} new HRM directory records, ${updateCount} HRM directory updates, ${directoryOnlyCount} directory-only changes for linked Mentors, and ${mentorUpdateCount} supported Mentor profile updates? ${skipCount} conflicts/invalid rows will be skipped. Roles, login status, assignments, and history stay unchanged.`,
+      `Áp dụng ${newCount} bản ghi mới vào danh bạ HRM, ${updateCount} cập nhật danh bạ, ${directoryOnlyCount} thay đổi danh bạ cho Mentor đã liên kết, và ${mentorUpdateCount} cập nhật hồ sơ Mentor? ${skipCount} dòng xung đột/không hợp lệ sẽ được bỏ qua. Vai trò, đăng nhập, phân công và lịch sử được giữ nguyên.`,
     );
     if (!confirmed) return;
     setBusy('apply');
@@ -269,7 +269,7 @@ function AdminHrmIntegrationView({ currentUser }) {
           <p>{current.message || 'Đang tải cấu hình kết nối.'}</p>
           {current.endpoint && <code className="hrm-endpoint">{current.endpoint}</code>}
         </div>
-        <span className={`hrm-status-badge ${connected ? 'is-connected' : ''}`}>{connected ? 'CONNECTED' : current.state || 'Đang tải'}</span>
+        <span className={`hrm-status-badge ${connected ? 'is-connected' : ''}`}>{connected ? 'ĐÃ KẾT NỐI' : current.state || 'Đang tải'}</span>
       </section>
 
       <div className="hrm-summary-grid">
@@ -398,7 +398,7 @@ function AdminHrmIntegrationView({ currentUser }) {
 
       {preview && (
         <section className="hrm-panel">
-          <div className="hrm-panel-heading"><div><h2>Preview ({preview.total})</h2><p>Apply directory changes and Admin-approved Mentor links according to their separate scopes. Conflicts and invalid records remain for review.</p></div></div>
+          <div className="hrm-panel-heading"><div><h2>Bản xem trước ({preview.total})</h2><p>Áp dụng thay đổi danh bạ và liên kết Mentor được Admin phê duyệt theo từng phạm vi riêng biệt. Bản ghi xung đột và không hợp lệ sẽ được giữ lại để kiểm tra.</p></div></div>
           <div className="hrm-table-wrap">
             <table className="hrm-table">
               <thead><tr><th>Mã NV</th><th>Nhân viên</th><th>Phòng ban HRM → IMS</th><th>Chức danh</th><th>Trạng thái</th><th>Hành động</th><th>Ghi chú</th></tr></thead>

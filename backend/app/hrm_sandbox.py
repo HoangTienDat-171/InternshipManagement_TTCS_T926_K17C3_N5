@@ -93,6 +93,8 @@ class SandboxEmployeePatch(BaseModel):
     department_name: str | None = Field(default=None, max_length=200)
     job_title: str | None = Field(default=None, max_length=200)
     employment_status: Literal["ACTIVE", "INACTIVE"] | None = None
+    expected_updated_at: str | None = Field(default=None, min_length=1, max_length=64)
+    reason: str | None = Field(default=None, max_length=500)
 
     @field_validator("work_email")
     @classmethod
@@ -104,6 +106,74 @@ class SandboxEmployeePatch(BaseModel):
             return None
         if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
             raise ValueError("Email công việc không hợp lệ.")
+        return value
+
+
+class SandboxEmployeeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    employee_id: str = Field(min_length=1, max_length=128)
+    full_name: str = Field(min_length=1, max_length=200)
+    work_email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    department_code: str | None = Field(default=None, max_length=128)
+    job_title: str | None = Field(default=None, max_length=200)
+    employment_status: Literal["ACTIVE", "INACTIVE"] = "ACTIVE"
+
+    @field_validator("employee_id", "full_name")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError("Giá trị bắt buộc không hợp lệ.")
+        return value
+
+    @field_validator("work_email")
+    @classmethod
+    def normalize_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().casefold()
+        if not value:
+            return None
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("Email công việc không hợp lệ.")
+        return value
+
+
+class SandboxDepartmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    department_code: str = Field(min_length=1, max_length=32)
+    department_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("department_code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{0,31}", value):
+            raise ValueError("Mã phòng ban chỉ được gồm chữ Latin, số, dấu gạch ngang hoặc gạch dưới.")
+        return value
+
+
+class SandboxDepartmentPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    department_code: str | None = Field(default=None, min_length=1, max_length=32)
+    department_name: str | None = Field(default=None, min_length=1, max_length=200)
+    is_active: bool | None = None
+    expected_updated_at: str = Field(min_length=1, max_length=64)
+    confirm_ims_mapping_impact: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("department_code")
+    @classmethod
+    def normalize_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9_-]{0,31}", value):
+            raise ValueError("Mã phòng ban chỉ được gồm chữ Latin, số, dấu gạch ngang hoặc gạch dưới.")
         return value
 
 
@@ -175,6 +245,25 @@ def initialize_database() -> None:
             updated_at TEXT NOT NULL
         )""")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_employees_name ON sandbox_employees(full_name)")
+        connection.execute("""CREATE TABLE IF NOT EXISTS sandbox_departments (
+            department_code TEXT PRIMARY KEY COLLATE NOCASE,
+            department_name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        connection.execute("""CREATE TABLE IF NOT EXISTS sandbox_change_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK(entity_type IN ('EMPLOYEE', 'DEPARTMENT')),
+            entity_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            before_json TEXT NULL,
+            after_json TEXT NULL,
+            reason TEXT NULL,
+            changed_at TEXT NOT NULL
+        )""")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_change_history_entity ON sandbox_change_history(entity_type, entity_id, id DESC)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_change_history_time ON sandbox_change_history(changed_at DESC, id DESC)")
         connection.execute("""CREATE TABLE IF NOT EXISTS candidate_requests (
             candidate_request_id TEXT PRIMARY KEY,
             external_reference TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -225,6 +314,24 @@ def initialize_database() -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             samples,
         )
+        connection.execute(
+            """INSERT OR IGNORE INTO sandbox_departments (department_code, department_name, is_active, created_at, updated_at)
+               SELECT department_code, COALESCE(NULLIF(TRIM(department_name), ''), department_code), 1,
+                      MIN(updated_at), MAX(updated_at)
+               FROM sandbox_employees
+               WHERE department_code IS NOT NULL AND TRIM(department_code) <> ''
+               GROUP BY department_code"""
+        )
+        duplicate_email = connection.execute(
+            """SELECT 1 FROM sandbox_employees WHERE work_email IS NOT NULL AND TRIM(work_email) <> ''
+               GROUP BY LOWER(TRIM(work_email)) HAVING COUNT(*) > 1 LIMIT 1"""
+        ).fetchone()
+        if not duplicate_email:
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_employees_work_email
+                   ON sandbox_employees(LOWER(TRIM(work_email)))
+                   WHERE work_email IS NOT NULL AND TRIM(work_email) <> ''"""
+            )
         connection.commit()
     finally:
         connection.close()
@@ -244,27 +351,9 @@ app = FastAPI(title="HRM Sandbox", version="1.0.0", docs_url=None, redoc_url=Non
 
 @app.get("/", response_class=HTMLResponse)
 def sandbox_console():
-    """Small local console for HRM staff to review candidate drafts."""
-    return HTMLResponse(r"""<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HRM Sandbox · Hộp thư tuyển dụng</title>
-<style>
-:root{font-family:Segoe UI,Arial,sans-serif;color:#172033;background:#f4f6fb}*{box-sizing:border-box}body{margin:0;padding:28px}main{max-width:1050px;margin:auto}.top,.card,.login{background:#fff;border:1px solid #dfe5f0;border-radius:16px;box-shadow:0 8px 26px #15234a0c}.top{padding:24px;margin-bottom:18px}.eyebrow{color:#5948de;font-size:12px;font-weight:800;letter-spacing:.12em}h1{margin:7px 0;font-size:26px}.muted{color:#65738b;line-height:1.5}.login{display:grid;grid-template-columns:1fr auto;gap:10px;padding:16px;margin-bottom:18px}.login label{grid-column:1/-1;font-weight:650}input,select,button{font:inherit;border-radius:9px}input,select{min-height:42px;padding:9px 11px;border:1px solid #cfd7e5;background:white;color:#172033;width:100%}button{min-height:40px;padding:8px 14px;border:1px solid #d6ddeb;background:#fff;color:#18233a;font-weight:650;cursor:pointer}button.primary{background:#5546e8;color:white;border-color:#5546e8}button.danger{color:#b42318;border-color:#f3c8c4}button:disabled{opacity:.55;cursor:wait}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:20px 0 12px}.toolbar h2{font-size:18px;margin:0}.toolbar select{width:auto;min-width:160px}.card{padding:18px;margin:12px 0}.card h3{margin:0 0 6px;font-size:17px}.meta{font-size:13px;color:#65738b}.programs{padding:11px 13px;margin:12px 0;background:#f2f5fb;border-radius:10px}.programs div{padding:4px 0}.actions{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;align-items:center}.notice{padding:12px;border-radius:10px;background:#e8f8ef;color:#176b3a;margin:12px 0}.error{padding:12px;border-radius:10px;background:#fff0ef;color:#a42318;margin:12px 0}.empty{padding:30px;text-align:center;color:#65738b}.hidden{display:none!important}small{color:#65738b}@media(max-width:640px){body{padding:14px}.login{grid-template-columns:1fr}.login label{grid-column:auto}.toolbar{align-items:flex-start;flex-direction:column}.toolbar select{width:100%}.actions{grid-template-columns:1fr}.top{padding:18px}}
-</style></head><body><main>
-<header class="top"><div class="eyebrow">HRM SANDBOX · LOCAL DEMO</div><h1>Hộp thư đề xuất tuyển dụng</h1><div class="muted">Xem xét hồ sơ nháp do IMS gửi. Chấp nhận sẽ tạo nhân viên trong cơ sở dữ liệu Sandbox; từ chối cần ghi lý do. Dữ liệu này độc lập với IMS và MySQL.</div></header>
-<form class="login" id="login"><label for="key">Sandbox API key</label><input id="key" type="password" autocomplete="off" required minlength="32" placeholder="Nhập key local đã cấu hình cho HRM Sandbox"><button class="primary">Kết nối</button></form>
-<div id="message" aria-live="polite"></div><section id="inbox" class="hidden"><div class="toolbar"><h2>Hồ sơ đề xuất</h2><div><select id="filter" aria-label="Lọc trạng thái"><option value="PENDING">Đang chờ</option><option value="ACCEPTED">Đã chấp nhận</option><option value="REJECTED">Đã từ chối</option><option value="">Tất cả</option></select> <button id="refresh" type="button">Làm mới</button></div></div><div id="items"></div></section>
-</main><script>
-let apiKey='';const msg=document.querySelector('#message'),box=document.querySelector('#inbox'),items=document.querySelector('#items'),filter=document.querySelector('#filter');
-function message(text,bad=false){msg.className=bad?'error':'notice';msg.textContent=text}
-async function api(path,options={}){const response=await fetch('/api/v1/'+path,{...options,headers:{'Authorization':'Bearer '+apiKey,'Accept':'application/json','Content-Type':'application/json',...(options.headers||{})}});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||'HTTP '+response.status);return body}
-function element(tag,text,cls){const node=document.createElement(tag);node.textContent=text;if(cls)node.className=cls;return node}
-function render(data){items.replaceChildren();if(!data.items.length){items.append(element('div','Không có hồ sơ ở trạng thái này.','empty'));return}for(const item of data.items){const card=document.createElement('article');card.className='card';card.append(element('h3',item.payload.full_name));card.append(element('div',item.external_reference+' · revision '+item.revision+' · '+item.status,'meta'));card.append(element('div','Gửi lúc: '+new Date(item.created_at).toLocaleString('vi-VN')+(item.decided_at?' · Quyết định: '+new Date(item.decided_at).toLocaleString('vi-VN'):''),'meta'));const programs=document.createElement('div');programs.className='programs';programs.append(element('strong','Chương trình hoàn thành'));for(const p of item.payload.completed_programs||[]){const label=[p.program_name,p.start_date&&('Bắt đầu '+p.start_date),p.completion_date&&('Hoàn thành '+p.completion_date)].filter(Boolean).join(' · ');programs.append(element('div',label))}card.append(programs);if(item.decision_reason)card.append(element('div','Lý do: '+item.decision_reason,'meta'));if(item.status==='PENDING'){const actions=document.createElement('div');actions.className='actions';const reason=document.createElement('input');reason.maxLength=500;reason.placeholder='Lý do từ chối (bắt buộc khi từ chối)';reason.setAttribute('aria-label','Lý do từ chối');const accept=document.createElement('button');accept.className='primary';accept.textContent='Chấp nhận và tạo nhân viên';accept.onclick=()=>decide(item,'ACCEPT',reason);const reject=document.createElement('button');reject.className='danger';reject.textContent='Từ chối';reject.onclick=()=>decide(item,'REJECT',reason);actions.append(reason,accept,reject);card.append(actions)}else if(item.employee_id){card.append(element('strong','Mã nhân viên Sandbox: '+item.employee_id))}items.append(card)}}
-async function load(){try{const q=filter.value?'?status='+encodeURIComponent(filter.value)+'&page=1&page_size=100':'?page=1&page_size=100';const data=await api('candidate-requests'+q);render(data);box.classList.remove('hidden');message('Đã kết nối · '+data.total+' hồ sơ trong hộp thư.')}catch(error){message(error.message,true);box.classList.add('hidden')}}
-async function decide(item,decision,reasonInput){const reason=reasonInput.value.trim();if(decision==='REJECT'&&!reason){message('Nhập lý do trước khi từ chối.',true);reasonInput.focus();return}if(decision==='ACCEPT'&&!confirm('Chấp nhận hồ sơ nháp và tạo nhân viên trong HRM Sandbox?'))return;try{const result=await api('candidate-requests/by-reference/'+encodeURIComponent(item.external_reference)+'/decision',{method:'POST',body:JSON.stringify({decision,reason:reason||null})});message(result.status==='ACCEPTED'?'Đã chấp nhận · mã nhân viên '+result.employee_id:'Đã từ chối và lưu lý do.');await load()}catch(error){message(error.message,true)}}
-document.querySelector('#login').addEventListener('submit',async e=>{e.preventDefault();apiKey=document.querySelector('#key').value.trim();try{await api('health');document.querySelector('#key').value='';await load()}catch(error){apiKey='';message(error.message,true)}});document.querySelector('#refresh').addEventListener('click',load);filter.addEventListener('change',load);
-</script></body></html>""")
-
+    """Serve the local HRM management console; no credential is embedded in the page."""
+    page = Path(__file__).with_name("hrm_sandbox_console.html").read_text(encoding="utf-8")
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 @app.on_event("startup")
 def on_startup() -> None:
@@ -279,15 +368,33 @@ def health():
 
 
 @app.get("/api/v1/employees", dependencies=[Depends(require_api_key)])
-def list_employees(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=MAX_PAGE_SIZE)):
+def list_employees(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=MAX_PAGE_SIZE),
+    q: str | None = Query(default=None, max_length=100),
+    department_code: str | None = Query(default=None, max_length=32),
+    employment_status: Literal["ACTIVE", "INACTIVE"] | None = Query(default=None),
+):
     connection = _connect()
     try:
-        total = int(connection.execute("SELECT COUNT(*) FROM sandbox_employees").fetchone()[0])
+        conditions = []
+        params: list = []
+        if isinstance(q, str) and q.strip():
+            term = f"%{q.strip().replace('%', r'\%').replace('_', r'\_')}%"
+            conditions.append("(employee_id LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR work_email LIKE ? ESCAPE '\\' OR job_title LIKE ? ESCAPE '\\')")
+            params.extend([term] * 4)
+        if isinstance(department_code, str) and department_code:
+            conditions.append("department_code = ?")
+            params.append(department_code.strip())
+        if employment_status in {"ACTIVE", "INACTIVE"}:
+            conditions.append("employment_status = ?")
+            params.append(employment_status)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        total = int(connection.execute(f"SELECT COUNT(*) FROM sandbox_employees {where}", params).fetchone()[0])
         rows = connection.execute(
-            "SELECT employee_id, full_name, work_email, phone, department_code, department_name, "
-            "job_title, employment_status, updated_at FROM sandbox_employees "
+            f"SELECT {', '.join(EMPLOYEE_FIELDS)} FROM sandbox_employees {where} "
             "ORDER BY employee_id LIMIT ? OFFSET ?",
-            (page_size, (page - 1) * page_size),
+            (*params, page_size, (page - 1) * page_size),
         ).fetchall()
         total_pages = max(1, (total + page_size - 1) // page_size)
         return {
@@ -297,6 +404,195 @@ def list_employees(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, 
             "page_size": page_size,
             "total_pages": total_pages,
         }
+    finally:
+        connection.close()
+
+
+@app.post("/api/v1/employees", response_model=SandboxEmployee, status_code=201, dependencies=[Depends(require_api_key)])
+def create_employee(employee: SandboxEmployeeCreate):
+    connection = _connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute("SELECT 1 FROM sandbox_employees WHERE employee_id = ?", (employee.employee_id,)).fetchone():
+            raise HTTPException(status_code=409, detail="Employee ID đã tồn tại; mã nhân viên là định danh ổn định và không được dùng lại.")
+        _check_employee_email(connection, employee.work_email)
+        department = _get_active_department(connection, employee.department_code)
+        now = _timestamp()
+        values = {
+            "employee_id": employee.employee_id,
+            "full_name": employee.full_name,
+            "work_email": employee.work_email,
+            "phone": employee.phone,
+            "department_code": department["department_code"] if department else None,
+            "department_name": department["department_name"] if department else None,
+            "job_title": employee.job_title,
+            "employment_status": employee.employment_status,
+            "updated_at": now,
+        }
+        validated = SandboxEmployee.model_validate(values)
+        connection.execute(
+            f"INSERT INTO sandbox_employees ({', '.join(EMPLOYEE_FIELDS)}) VALUES ({', '.join('?' for _ in EMPLOYEE_FIELDS)})",
+            tuple(values[field] for field in EMPLOYEE_FIELDS),
+        )
+        _record_change(connection, "EMPLOYEE", employee.employee_id, "CREATE", None, values, "Tạo hồ sơ từ HRM Sandbox.")
+        connection.commit()
+        return validated
+    except sqlite3.IntegrityError as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Employee ID hoặc email công việc đã tồn tại.") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+@app.get("/api/v1/departments", dependencies=[Depends(require_api_key)])
+def list_departments(include_inactive: bool = Query(default=True)):
+    connection = _connect()
+    try:
+        where = "WHERE d.is_active = 1" if not include_inactive else ""
+        rows = connection.execute(
+            f"""SELECT d.department_code, d.department_name, d.is_active, d.created_at, d.updated_at,
+                       COUNT(e.employee_id) AS employee_count
+                FROM sandbox_departments d LEFT JOIN sandbox_employees e ON e.department_code = d.department_code
+                {where} GROUP BY d.department_code ORDER BY d.is_active DESC, d.department_name COLLATE NOCASE"""
+        ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": len(rows)}
+    finally:
+        connection.close()
+
+
+@app.post("/api/v1/departments", status_code=201, dependencies=[Depends(require_api_key)])
+def create_department(department: SandboxDepartmentCreate):
+    connection = _connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute("SELECT 1 FROM sandbox_departments WHERE department_code = ?", (department.department_code,)).fetchone():
+            raise HTTPException(status_code=409, detail="Mã phòng ban đã tồn tại; hãy dùng mã khác.")
+        now = _timestamp()
+        values = {
+            "department_code": department.department_code,
+            "department_name": " ".join(department.department_name.split()),
+            "is_active": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        connection.execute(
+            "INSERT INTO sandbox_departments (department_code, department_name, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+            (values["department_code"], values["department_name"], now, now),
+        )
+        _record_change(connection, "DEPARTMENT", department.department_code, "CREATE", None, values, "Tạo danh mục phòng ban.")
+        connection.commit()
+        return {**values, "employee_count": 0}
+    except sqlite3.IntegrityError as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Mã phòng ban đã tồn tại.") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+@app.patch("/api/v1/departments/{department_code}", dependencies=[Depends(require_api_key)])
+def update_department(department_code: str, changes: SandboxDepartmentPatch):
+    connection = _connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT department_code, department_name, is_active, created_at, updated_at FROM sandbox_departments WHERE department_code = ?",
+            (department_code,),
+        ).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phòng ban. Tải lại danh mục để kiểm tra mã.")
+        if current["updated_at"] != changes.expected_updated_at:
+            raise HTTPException(status_code=409, detail="Phòng ban vừa được thay đổi ở nơi khác. Tải lại danh mục trước khi lưu.")
+        new_code = changes.department_code or current["department_code"]
+        new_name = " ".join((changes.department_name or current["department_name"]).split())
+        is_active = current["is_active"] if changes.is_active is None else int(changes.is_active)
+        if new_code == current["department_code"] and new_name == current["department_name"] and is_active == current["is_active"]:
+            raise HTTPException(status_code=400, detail="Không có thay đổi để lưu.")
+        code_changed = new_code.casefold() != current["department_code"].casefold()
+        if code_changed and not changes.confirm_ims_mapping_impact:
+            raise HTTPException(status_code=409, detail="Đổi mã có thể làm mất khớp ánh xạ phòng ban IMS. Hãy xác nhận cảnh báo rồi thử lại.")
+        if code_changed and connection.execute("SELECT 1 FROM sandbox_departments WHERE department_code = ?", (new_code,)).fetchone():
+            raise HTTPException(status_code=409, detail="Mã phòng ban mới đã được sử dụng.")
+        assigned = connection.execute(
+            "SELECT employee_id, full_name, department_code, department_name, updated_at FROM sandbox_employees WHERE department_code = ? ORDER BY employee_id",
+            (current["department_code"],),
+        ).fetchall()
+        if not is_active and assigned:
+            raise HTTPException(status_code=409, detail=f"Chưa thể ngừng phòng ban: còn {len(assigned)} nhân viên đang gán. Hãy chuyển họ sang phòng ban khác trước.")
+        now = _timestamp()
+        before_department = dict(current)
+        after_department = {
+            "department_code": new_code,
+            "department_name": new_name,
+            "is_active": is_active,
+            "created_at": current["created_at"],
+            "updated_at": now,
+        }
+        connection.execute(
+            "UPDATE sandbox_departments SET department_code = ?, department_name = ?, is_active = ?, updated_at = ? WHERE department_code = ?",
+            (new_code, new_name, is_active, now, current["department_code"]),
+        )
+        for employee in assigned:
+            before_employee = dict(employee)
+            after_employee = dict(employee)
+            after_employee["department_code"] = new_code
+            after_employee["department_name"] = new_name
+            after_employee["updated_at"] = now
+            connection.execute(
+                "UPDATE sandbox_employees SET department_code = ?, department_name = ?, updated_at = ? WHERE employee_id = ?",
+                (new_code, new_name, now, employee["employee_id"]),
+            )
+            changed = {key for key in after_employee if after_employee[key] != before_employee[key]}
+            if changed:
+                _record_change(connection, "EMPLOYEE", employee["employee_id"], "UPDATE", before_employee, after_employee,
+                               changes.reason or "Thông tin phòng ban được cập nhật trong danh mục HRM Sandbox.")
+        _record_change(connection, "DEPARTMENT", new_code, "UPDATE", before_department, after_department,
+                       changes.reason or ("Đổi mã phòng ban; cần rà soát lại mapping HRM → IMS." if code_changed else None))
+        connection.commit()
+        result = {**after_department, "employee_count": len(assigned), "code_changed": code_changed}
+        if code_changed:
+            result["mapping_warning"] = "Mã phòng ban đã đổi. Mapping HRM → IMS dùng mã cũ sẽ không tự chuyển; Admin cần ánh xạ mã mới trong IMS và tạo preview lại."
+        return result
+    except sqlite3.IntegrityError as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Mã phòng ban hoặc dữ liệu liên quan bị trùng. Tải lại danh mục rồi thử lại.") from exc
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+@app.get("/api/v1/changes", dependencies=[Depends(require_api_key)])
+def list_changes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=MAX_PAGE_SIZE),
+    entity_type: Literal["EMPLOYEE", "DEPARTMENT"] | None = Query(default=None),
+    entity_id: str | None = Query(default=None, max_length=128),
+):
+    connection = _connect()
+    try:
+        conditions = []
+        params: list = []
+        if entity_type:
+            conditions.append("entity_type = ?")
+            params.append(entity_type)
+        if entity_id:
+            conditions.append("entity_id = ?")
+            params.append(entity_id)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        total = int(connection.execute(f"SELECT COUNT(*) FROM sandbox_change_history {where}", params).fetchone()[0])
+        rows = connection.execute(
+            f"SELECT id, entity_type, entity_id, action, before_json, after_json, reason, changed_at FROM sandbox_change_history {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, (page - 1) * page_size),
+        ).fetchall()
+        return {"items": _history_items(rows), "total": total, "page": page, "page_size": page_size,
+                "total_pages": max(1, (total + page_size - 1) // page_size)}
     finally:
         connection.close()
 
@@ -317,13 +613,73 @@ def get_employee(employee_id: str):
         connection.close()
 
 
+EMPLOYEE_FIELDS = (
+    "employee_id", "full_name", "work_email", "phone", "department_code",
+    "department_name", "job_title", "employment_status", "updated_at",
+)
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _serialize(value) -> str | None:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True) if value is not None else None
+
+
+def _record_change(connection: sqlite3.Connection, entity_type: str, entity_id: str, action: str,
+                   before: dict | None, after: dict | None, reason: str | None = None) -> None:
+    connection.execute(
+        """INSERT INTO sandbox_change_history
+           (entity_type, entity_id, action, before_json, after_json, reason, changed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (entity_type, entity_id, action, _serialize(before), _serialize(after), reason, _timestamp()),
+    )
+
+
+def _get_active_department(connection: sqlite3.Connection, department_code: str | None):
+    if department_code is None:
+        return None
+    department = connection.execute(
+        "SELECT department_code, department_name, is_active FROM sandbox_departments WHERE department_code = ?",
+        (department_code,),
+    ).fetchone()
+    if not department:
+        raise HTTPException(status_code=422, detail="Mã phòng ban chưa có trong danh mục HRM Sandbox. Hãy tạo phòng ban trước.")
+    if not department["is_active"]:
+        raise HTTPException(status_code=422, detail="Phòng ban đã ngừng sử dụng. Hãy kích hoạt lại hoặc chọn phòng ban đang hoạt động.")
+    return department
+
+
+def _check_employee_email(connection: sqlite3.Connection, email: str | None, employee_id: str | None = None) -> None:
+    if not email:
+        return
+    existing = connection.execute(
+        "SELECT employee_id FROM sandbox_employees WHERE LOWER(TRIM(work_email)) = LOWER(TRIM(?)) AND employee_id <> ? LIMIT 1",
+        (email, employee_id or ""),
+    ).fetchone()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email công việc đã được một nhân viên khác sử dụng.")
+
+
+def _history_items(rows) -> list[dict]:
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["before"] = json.loads(item.pop("before_json")) if item.get("before_json") else None
+        item["after"] = json.loads(item.pop("after_json")) if item.get("after_json") else None
+        items.append(item)
+    return items
+
+
 @app.patch("/api/v1/employees/{employee_id}", response_model=SandboxEmployee, dependencies=[Depends(require_api_key)])
 def update_employee(employee_id: str, changes: SandboxEmployeePatch):
-    updates = changes.model_dump(exclude_unset=True)
+    updates = changes.model_dump(exclude_unset=True, exclude={"expected_updated_at", "reason"})
     if not updates:
         raise HTTPException(status_code=400, detail="Cần có ít nhất một trường thay đổi.")
     connection = _connect()
     try:
+        connection.execute("BEGIN IMMEDIATE")
         current = connection.execute(
             "SELECT employee_id, full_name, work_email, phone, department_code, department_name, "
             "job_title, employment_status, updated_at FROM sandbox_employees WHERE employee_id = ?",
@@ -331,10 +687,26 @@ def update_employee(employee_id: str, changes: SandboxEmployeePatch):
         ).fetchone()
         if not current:
             raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên trong HRM Sandbox.")
+        if not changes.expected_updated_at:
+            raise HTTPException(status_code=428, detail="Thiếu mã phiên bản. Tải lại hồ sơ rồi thử cập nhật lại.")
+        if changes.expected_updated_at != current["updated_at"]:
+            raise HTTPException(status_code=409, detail="Hồ sơ vừa được cập nhật ở nơi khác. Tải lại dữ liệu mới trước khi lưu.")
+        if "department_name" in updates and "department_code" not in updates:
+            raise HTTPException(status_code=422, detail="Hãy chọn phòng ban theo mã trong danh mục; không nhập tên phòng ban tự do.")
         candidate = dict(current)
         candidate.update(updates)
-        candidate["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        if "department_code" in updates:
+            department = _get_active_department(connection, candidate["department_code"])
+            if department:
+                if "department_name" in updates and updates["department_name"] != department["department_name"]:
+                    raise HTTPException(status_code=422, detail="Tên phòng ban không khớp với mã đã chọn. Hãy tải lại danh mục.")
+                candidate["department_code"] = department["department_code"]
+                candidate["department_name"] = department["department_name"]
+            else:
+                candidate["department_name"] = None
+        candidate["updated_at"] = _timestamp()
         validated = SandboxEmployee.model_validate(candidate)
+        _check_employee_email(connection, validated.work_email, employee_id)
         connection.execute(
             """UPDATE sandbox_employees SET full_name = ?, work_email = ?, phone = ?,
                department_code = ?, department_name = ?, job_title = ?, employment_status = ?, updated_at = ?
@@ -345,8 +717,15 @@ def update_employee(employee_id: str, changes: SandboxEmployeePatch):
                 validated.employment_status, validated.updated_at, employee_id,
             ),
         )
+        _record_change(connection, "EMPLOYEE", employee_id, "UPDATE", dict(current), validated.model_dump(), changes.reason)
         connection.commit()
         return validated
+    except sqlite3.IntegrityError as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Mã nhân viên hoặc email đã tồn tại. Kiểm tra lại danh sách rồi thử lại.") from exc
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
@@ -482,6 +861,22 @@ def decide_candidate_request(external_reference: str, decision: CandidateRequest
             connection.execute(
                 "INSERT INTO sandbox_employees (employee_id, full_name, employment_status, updated_at) VALUES (?, ?, 'ACTIVE', ?)",
                 (employee_id, candidate_data["full_name"], now),
+            )
+            _record_change(
+                connection, "EMPLOYEE", employee_id, "CREATE", None,
+                {
+                    "employee_id": employee_id,
+                    "full_name": candidate_data["full_name"],
+                    "work_email": None,
+                    "phone": None,
+                    "department_code": None,
+                    "department_name": None,
+                    "job_title": None,
+                    "employment_status": "ACTIVE",
+                    "updated_at": now,
+                    "source_candidate_reference": external_reference,
+                },
+                f"Tạo từ đề xuất tuyển dụng IMS {external_reference} đã được HRM chấp nhận.",
             )
         connection.execute(
             "UPDATE candidate_requests SET status = ?, employee_id = ?, decision_reason = ?, updated_at = ?, decided_at = ? "
