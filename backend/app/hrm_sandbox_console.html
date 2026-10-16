@@ -24,7 +24,7 @@
 <body>
   <main class="shell">
     <header class="top">
-      <div class="brand"><div class="brand-mark">H</div><div><div class="eyebrow">HRM SANDBOX · LOCAL DEMO</div><h1>Quản lý nhân viên thử nghiệm</h1><p>Dữ liệu nằm trong SQLite riêng. Lưu tại Sandbox không tự đồng bộ sang IMS.</p></div></div>
+      <div class="brand"><div class="brand-mark">H</div><div><div class="eyebrow">HRM SANDBOX · LOCAL DEMO</div><h1>Quản lý nhân viên thử nghiệm</h1><p>Dữ liệu nằm trong cơ sở dữ liệu riêng. Lưu tại Sandbox không tự đồng bộ sang IMS.</p></div></div>
       <div class="top-actions"><span class="local-pill">Chỉ chạy trên máy này</span><button id="theme-toggle" class="dark-pill" type="button">Giao diện tối</button></div>
     </header>
     <section id="login" class="panel login">
@@ -60,7 +60,7 @@
       </section>
     </section>
   </main>
-  <dialog id="employee-dialog"><form id="employee-form"><div class="dialog-head"><div><h2 id="employee-dialog-title">Thêm nhân viên</h2><div class="hint">Hồ sơ được lưu vào database SQLite riêng của HRM Sandbox.</div></div><button type="button" class="btn btn-small" data-close="employee-dialog">Đóng</button></div><div class="dialog-body"><div class="form-grid">
+  <dialog id="employee-dialog"><form id="employee-form"><div class="dialog-head"><div><h2 id="employee-dialog-title">Thêm nhân viên</h2><div class="hint">Hồ sơ được lưu vào database riêng của HRM Sandbox.</div></div><button type="button" class="btn btn-small" data-close="employee-dialog">Đóng</button></div><div class="dialog-body"><div class="form-grid">
     <div class="field"><label for="emp-id">Employee ID ổn định *</label><input id="emp-id" required maxlength="128"><small id="emp-id-help">Mã này không thể sửa sau khi lưu vì là external ID mapping.</small></div>
     <div class="field"><label for="emp-name">Họ tên *</label><input id="emp-name" required maxlength="200"></div>
     <div class="field"><label for="emp-email">Email công việc</label><input id="emp-email" type="email" maxlength="254"></div>

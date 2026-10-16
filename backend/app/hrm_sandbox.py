@@ -1,4 +1,4 @@
-"""Local-only HRM Sandbox API backed by its own persistent SQLite database."""
+"""Local-only HRM Sandbox API backed by an isolated SQLite or MySQL database."""
 from __future__ import annotations
 
 import hmac
@@ -11,6 +11,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+
+import pymysql
+from pymysql.cursors import DictCursor
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -28,7 +31,18 @@ def _load_api_key() -> str:
         for line in env_path.read_text(encoding="utf-8").splitlines():
             key, separator, candidate = line.partition("=")
             key = key.strip()
-            if separator and key in {"HRM_SANDBOX_API_KEY", "HRM_SANDBOX_DATABASE_PATH", "HRM_SANDBOX_PORT"}:
+            if separator and key in {
+                "HRM_SANDBOX_API_KEY",
+                "HRM_SANDBOX_DATABASE_PATH",
+                "HRM_SANDBOX_DATABASE_BACKEND",
+                "HRM_SANDBOX_MYSQL_HOST",
+                "HRM_SANDBOX_MYSQL_PORT",
+                "HRM_SANDBOX_MYSQL_USER",
+                "HRM_SANDBOX_MYSQL_PASSWORD",
+                "HRM_SANDBOX_MYSQL_DATABASE",
+                "HRM_SANDBOX_SEED_DEMO",
+                "HRM_SANDBOX_PORT",
+            }:
                 value = candidate.strip().strip('"').strip("'")
                 if value:
                     os.environ.setdefault(key, value)
@@ -38,6 +52,13 @@ def _load_api_key() -> str:
 def _database_path() -> Path:
     configured = os.getenv("HRM_SANDBOX_DATABASE_PATH", "").strip()
     return Path(configured).expanduser().resolve() if configured else DEFAULT_DB_PATH
+
+
+def _database_backend() -> str:
+    backend = os.getenv("HRM_SANDBOX_DATABASE_BACKEND", "sqlite").strip().lower()
+    if backend not in {"sqlite", "mysql"}:
+        raise RuntimeError("HRM_SANDBOX_DATABASE_BACKEND must be either sqlite or mysql.")
+    return backend
 
 
 class SandboxEmployee(BaseModel):
@@ -220,7 +241,110 @@ class CandidateRequestDecision(BaseModel):
         return normalized or None
 
 
-def _connect() -> sqlite3.Connection:
+class _MySQLRow(dict):
+    """Keep sqlite-style integer column access alongside named MySQL columns."""
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+
+class _MySQLCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        self._cursor.close()
+        return _MySQLRow(row) if row is not None else None
+
+    def fetchall(self):
+        rows = self._cursor.fetchall()
+        self._cursor.close()
+        return [_MySQLRow(row) for row in rows]
+
+    def __del__(self):
+        try:
+            self._cursor.close()
+        except Exception:
+            pass
+
+
+class _MySQLConnection:
+    """Small SQL compatibility adapter for existing Sandbox repository code."""
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    @staticmethod
+    def _sql(statement: str) -> str:
+        statement = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT IGNORE INTO", statement, flags=re.I)
+        statement = re.sub(r"^\s*BEGIN\s+IMMEDIATE\s*$", "START TRANSACTION", statement, flags=re.I)
+        return statement.replace("?", "%s")
+
+    def execute(self, statement: str, params=()):
+        cursor = self._connection.cursor(DictCursor)
+        try:
+            cursor.execute(self._sql(statement), params)
+        except pymysql.err.IntegrityError as exc:
+            cursor.close()
+            raise sqlite3.IntegrityError(str(exc)) from exc
+        return _MySQLCursor(cursor)
+
+    def executemany(self, statement: str, params):
+        cursor = self._connection.cursor(DictCursor)
+        try:
+            cursor.executemany(self._sql(statement), params)
+        except pymysql.err.IntegrityError as exc:
+            cursor.close()
+            raise sqlite3.IntegrityError(str(exc)) from exc
+        return _MySQLCursor(cursor)
+
+    def commit(self):
+        self._connection.commit()
+
+    def rollback(self):
+        self._connection.rollback()
+
+    def close(self):
+        self._connection.close()
+
+
+def _connect():
+    if _database_backend() == "mysql":
+        host = os.getenv("HRM_SANDBOX_MYSQL_HOST", "").strip().lower()
+        database = os.getenv("HRM_SANDBOX_MYSQL_DATABASE", "").strip()
+        user = os.getenv("HRM_SANDBOX_MYSQL_USER", "").strip()
+        password = os.getenv("HRM_SANDBOX_MYSQL_PASSWORD", "")
+        try:
+            port = int(os.getenv("HRM_SANDBOX_MYSQL_PORT", "3306"))
+        except ValueError as exc:
+            raise RuntimeError("HRM_SANDBOX_MYSQL_PORT must be a valid port.") from exc
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            raise RuntimeError("HRM Sandbox MySQL must use a local host.")
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", database):
+            raise RuntimeError("HRM_SANDBOX_MYSQL_DATABASE is missing or invalid.")
+        if not user or not password or not 1 <= port <= 65535:
+            raise RuntimeError("HRM Sandbox MySQL credentials or port are missing.")
+        try:
+            connection = pymysql.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                charset="utf8mb4",
+                cursorclass=DictCursor,
+                connect_timeout=5,
+                read_timeout=10,
+                write_timeout=10,
+                autocommit=False,
+            )
+        except pymysql.MySQLError as exc:
+            raise RuntimeError(f"HRM Sandbox MySQL connection failed: {type(exc).__name__}.") from exc
+        return _MySQLConnection(connection)
+
     path = _database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=5)
@@ -231,6 +355,10 @@ def _connect() -> sqlite3.Connection:
 
 
 def initialize_database() -> None:
+    if _database_backend() == "mysql":
+        _initialize_mysql_database()
+        return
+
     connection = _connect()
     try:
         connection.execute("""CREATE TABLE IF NOT EXISTS sandbox_employees (
@@ -337,6 +465,106 @@ def initialize_database() -> None:
         connection.close()
 
 
+def _initialize_mysql_database() -> None:
+    connection = _connect()
+    now = _timestamp()
+    departments = (
+        ("TECH", "Kỹ thuật"),
+        ("OPS", "Vận hành"),
+        ("DATA", "Dữ liệu"),
+        ("HR", "Nhân sự"),
+        ("FIN", "Tài chính"),
+    )
+    try:
+        statements = (
+            """CREATE TABLE IF NOT EXISTS sandbox_employees (
+                employee_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                full_name VARCHAR(200) NOT NULL,
+                work_email VARCHAR(254) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+                phone VARCHAR(40) NULL,
+                department_code VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+                department_name VARCHAR(200) NULL,
+                job_title VARCHAR(200) NULL,
+                employment_status VARCHAR(16) NOT NULL,
+                updated_at VARCHAR(64) NOT NULL,
+                PRIMARY KEY (employee_id),
+                UNIQUE KEY uq_sandbox_employee_work_email (work_email),
+                KEY idx_sandbox_employees_name (full_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci""",
+            """CREATE TABLE IF NOT EXISTS sandbox_departments (
+                department_code VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                department_name VARCHAR(200) NOT NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at VARCHAR(64) NOT NULL,
+                updated_at VARCHAR(64) NOT NULL,
+                PRIMARY KEY (department_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci""",
+            """CREATE TABLE IF NOT EXISTS sandbox_change_history (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                entity_type VARCHAR(16) NOT NULL,
+                entity_id VARCHAR(128) NOT NULL,
+                action VARCHAR(16) NOT NULL,
+                before_json LONGTEXT NULL,
+                after_json LONGTEXT NULL,
+                reason VARCHAR(500) NULL,
+                changed_at VARCHAR(64) NOT NULL,
+                PRIMARY KEY (id),
+                KEY idx_sandbox_change_history_entity (entity_type, entity_id, id DESC),
+                KEY idx_sandbox_change_history_time (changed_at, id DESC)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci""",
+            """CREATE TABLE IF NOT EXISTS candidate_requests (
+                candidate_request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                external_reference VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+                payload_json LONGTEXT NOT NULL,
+                payload_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                status VARCHAR(16) NOT NULL,
+                revision INT UNSIGNED NOT NULL DEFAULT 1,
+                employee_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+                decision_reason VARCHAR(500) NULL,
+                created_at VARCHAR(64) NOT NULL,
+                updated_at VARCHAR(64) NOT NULL,
+                decided_at VARCHAR(64) NULL,
+                PRIMARY KEY (candidate_request_id),
+                UNIQUE KEY uq_candidate_external_reference (external_reference),
+                UNIQUE KEY uq_candidate_employee_id (employee_id),
+                KEY idx_candidate_requests_status (status, updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci""",
+            """CREATE TABLE IF NOT EXISTS candidate_request_history (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                candidate_request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+                status VARCHAR(16) NOT NULL,
+                reason VARCHAR(500) NULL,
+                created_at VARCHAR(64) NOT NULL,
+                PRIMARY KEY (id),
+                KEY idx_candidate_request_history_id (candidate_request_id, id),
+                CONSTRAINT fk_candidate_request_history_request
+                    FOREIGN KEY (candidate_request_id) REFERENCES candidate_requests (candidate_request_id)
+                    ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci""",
+        )
+        for statement in statements:
+            connection.execute(statement)
+
+        if os.getenv("HRM_SANDBOX_SEED_DEMO", "0").strip().lower() in {"1", "true", "yes"}:
+            raise RuntimeError("Employee demo seeding is disabled for clean MySQL UAT.")
+
+        for code, name in departments:
+            existing = connection.execute(
+                "SELECT department_code FROM sandbox_departments WHERE department_code = ?", (code,)
+            ).fetchone()
+            if not existing:
+                connection.execute(
+                    "INSERT INTO sandbox_departments (department_code, department_name, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+                    (code, name, now, now),
+                )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
     expected = _load_api_key()
     scheme, _, supplied = (authorization or "").partition(" ")
@@ -353,6 +581,8 @@ app = FastAPI(title="HRM Sandbox", version="1.0.0", docs_url=None, redoc_url=Non
 def sandbox_console():
     """Serve the local HRM management console; no credential is embedded in the page."""
     page = Path(__file__).with_name("hrm_sandbox_console.html").read_text(encoding="utf-8")
+    page = page.replace("Dữ liệu nằm trong SQLite riêng.", "Dữ liệu nằm trong cơ sở dữ liệu riêng của HRM Sandbox.")
+    page = page.replace("database SQLite riêng của HRM Sandbox", "database riêng của HRM Sandbox")
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 @app.on_event("startup")
@@ -364,7 +594,20 @@ def on_startup() -> None:
 
 @app.get("/api/v1/health", dependencies=[Depends(require_api_key)])
 def health():
-    return {"status": "ok", "provider_id": "sandbox", "version": app.version}
+    connection = _connect()
+    try:
+        employee_count = int(connection.execute("SELECT COUNT(*) FROM sandbox_employees").fetchone()[0])
+    finally:
+        connection.close()
+    backend = _database_backend()
+    return {
+        "status": "ok",
+        "provider_id": "sandbox",
+        "version": app.version,
+        "database_backend": backend,
+        "database_name": os.getenv("HRM_SANDBOX_MYSQL_DATABASE") if backend == "mysql" else None,
+        "employee_count": employee_count,
+    }
 
 
 @app.get("/api/v1/employees", dependencies=[Depends(require_api_key)])
@@ -381,7 +624,8 @@ def list_employees(
         params: list = []
         if isinstance(q, str) and q.strip():
             term = f"%{q.strip().replace('%', r'\%').replace('_', r'\_')}%"
-            conditions.append("(employee_id LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\' OR work_email LIKE ? ESCAPE '\\' OR job_title LIKE ? ESCAPE '\\')")
+            escape = " ESCAPE '\\\\'" if _database_backend() == "mysql" else " ESCAPE '\\'"
+            conditions.append(f"(employee_id LIKE ?{escape} OR full_name LIKE ?{escape} OR work_email LIKE ?{escape} OR job_title LIKE ?{escape})")
             params.extend([term] * 4)
         if isinstance(department_code, str) and department_code:
             conditions.append("department_code = ?")
@@ -854,9 +1098,14 @@ def decide_candidate_request(external_reference: str, decision: CandidateRequest
         if requested_status == "ACCEPTED":
             candidate = connection.execute("SELECT payload_json FROM candidate_requests WHERE candidate_request_id = ?", (row["candidate_request_id"],)).fetchone()
             candidate_data = json.loads(candidate["payload_json"])
-            latest = connection.execute(
-                "SELECT COALESCE(MAX(CAST(SUBSTR(employee_id, 3) AS INTEGER)), 0) FROM sandbox_employees WHERE employee_id GLOB 'NV[0-9]*'"
-            ).fetchone()[0]
+            if _database_backend() == "mysql":
+                latest = connection.execute(
+                    "SELECT COALESCE(MAX(CAST(SUBSTRING(employee_id, 3) AS UNSIGNED)), 0) FROM sandbox_employees WHERE employee_id REGEXP '^NV[0-9]+$'"
+                ).fetchone()[0]
+            else:
+                latest = connection.execute(
+                    "SELECT COALESCE(MAX(CAST(SUBSTR(employee_id, 3) AS INTEGER)), 0) FROM sandbox_employees WHERE employee_id GLOB 'NV[0-9]*'"
+                ).fetchone()[0]
             employee_id = f"NV{int(latest) + 1:03d}"
             connection.execute(
                 "INSERT INTO sandbox_employees (employee_id, full_name, employment_status, updated_at) VALUES (?, ?, 'ACTIVE', ?)",

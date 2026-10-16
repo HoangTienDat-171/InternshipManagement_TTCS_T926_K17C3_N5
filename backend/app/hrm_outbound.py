@@ -13,6 +13,7 @@ from .hrm_storage import PROVIDER_ID, db_timestamp, parse_timestamp
 
 PREVIEW_TTL_SECONDS = 900
 MAX_COMPLETED_PROGRAMS = 20
+LOCAL_UAT_DATABASES = {"internship_management_us37_uat", "ims_us37_clean_uat"}
 
 
 def outbound_enabled() -> bool:
@@ -27,7 +28,7 @@ def outbound_enabled() -> bool:
         return False
     host = os.getenv("MYSQL_HOST", "").strip().lower()
     return (
-        os.getenv("MYSQL_DATABASE", "").strip() == "internship_management_us37_uat"
+        os.getenv("MYSQL_DATABASE", "").strip() in LOCAL_UAT_DATABASES
         and host in {"127.0.0.1", "localhost", "::1"}
     )
 
