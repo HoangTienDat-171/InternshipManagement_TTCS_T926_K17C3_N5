@@ -18,15 +18,23 @@ if ($configuredKey.Length -lt 32 -or $configuredKey -match '[^\x21-\x7E]') {
   Remove-Variable configuredKey -ErrorAction SilentlyContinue
   throw 'HRM_SANDBOX_API_KEY must be at least 32 printable ASCII characters.'
 }
+$adminKeyLines = @([IO.File]::ReadAllLines($envPath) | Where-Object { $_ -match '^\s*HRM_SANDBOX_ADMIN_API_KEY\s*=' })
+if ($adminKeyLines.Count -ne 1) { Remove-Variable configuredKey -ErrorAction SilentlyContinue; throw 'backend\.env must contain exactly one HRM_SANDBOX_ADMIN_API_KEY entry.' }
+$configuredAdminKey = ($adminKeyLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
+if ($configuredAdminKey.Length -lt 32 -or $configuredAdminKey -match '[^\x21-\x7E]' -or [string]::Equals($configuredAdminKey, $configuredKey, [StringComparison]::Ordinal)) {
+  Remove-Variable configuredKey, configuredAdminKey -ErrorAction SilentlyContinue
+  throw 'HRM_SANDBOX_ADMIN_API_KEY must be a separate key of at least 32 printable ASCII characters.'
+}
 $portLine = @([IO.File]::ReadAllLines($envPath) | Where-Object { $_ -match '^\s*HRM_SANDBOX_PORT\s*=' })
 $configuredPort = if ($portLine.Count -eq 1) { ($portLine[0] -split '=', 2)[1].Trim().Trim('"').Trim("'") } else { '8100' }
 if ($configuredPort -ne '8100') { Remove-Variable configuredKey -ErrorAction SilentlyContinue; throw 'Standalone Sandbox start script is reserved for port 8100.' }
 $env:HRM_SANDBOX_API_KEY = $configuredKey
+$env:HRM_SANDBOX_ADMIN_API_KEY = $configuredAdminKey
 $dbLine = @([IO.File]::ReadAllLines($envPath) | Where-Object { $_ -match '^\s*HRM_SANDBOX_DATABASE_PATH\s*=' })
 if ($dbLine.Count -eq 1) { $env:HRM_SANDBOX_DATABASE_PATH = ($dbLine[0] -split '=', 2)[1].Trim().Trim('"').Trim("'") }
 else { Remove-Item Env:HRM_SANDBOX_DATABASE_PATH -ErrorAction SilentlyContinue }
 Remove-Variable portLine, configuredPort, dbLine -ErrorAction SilentlyContinue
-Remove-Variable configuredKey -ErrorAction SilentlyContinue
+Remove-Variable configuredKey, configuredAdminKey, adminKeyLines -ErrorAction SilentlyContinue
 
 if (Test-Path -LiteralPath $statePath) {
   $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -54,6 +62,7 @@ if ($existing) { throw "Port 8100 is already owned by PID $($existing.OwningProc
 
 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 $launcher = Start-Process -FilePath $pythonPath -ArgumentList @('-m', $marker) -WorkingDirectory $backendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+Remove-Item Env:HRM_SANDBOX_ADMIN_API_KEY -ErrorAction SilentlyContinue
 $deadline = (Get-Date).AddSeconds(20)
 $listener = $null
 while ((Get-Date) -lt $deadline) {

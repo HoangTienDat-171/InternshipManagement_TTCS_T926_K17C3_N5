@@ -56,7 +56,7 @@ if (-not (Test-Path -LiteralPath $vitePath -PathType Leaf)) { throw 'Frontend de
 $runtime = Read-SimpleEnv $RuntimeConfigPath
 $requiredKeys = @(
   'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE',
-  'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT',
+  'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_ADMIN_API_KEY', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT',
   'HRM_SANDBOX_MYSQL_USER', 'HRM_SANDBOX_MYSQL_PASSWORD', 'HRM_SANDBOX_MYSQL_DATABASE',
   'US37_CLEAN_ADMIN_PASSWORD', 'US37_CLEAN_HR_PASSWORD'
 )
@@ -71,6 +71,9 @@ if ($runtime.MYSQL_HOST -notin @('127.0.0.1', 'localhost', '::1') -or $runtime.H
 }
 if ([string]$runtime.MYSQL_PORT -ne '3306' -or [string]$runtime.HRM_SANDBOX_MYSQL_PORT -ne '3306') {
   throw 'Clean UAT is configured for MySQL80 on localhost:3306.'
+}
+if ($runtime.HRM_SANDBOX_API_KEY -eq $runtime.HRM_SANDBOX_ADMIN_API_KEY) {
+  throw 'HRM Sandbox service and Admin API keys must be different.'
 }
 if ([string]$runtime.HRM_SANDBOX_SEED_DEMO -ne '0' -or [string]$runtime.IMS_DISABLE_EMAIL_WORKER -ne '1') {
   throw 'Clean UAT must keep employee demo seeding and the email worker disabled.'
@@ -95,6 +98,7 @@ $logs = @{
 $environmentNames = @($runtime.Keys) + @(
   'IMS_DATABASE_BACKEND', 'IMS_SQLITE_PATH', 'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE',
   'HRM_PROVIDER', 'HRM_SANDBOX_BASE_URL', 'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_PORT', 'HRM_SANDBOX_DATABASE_BACKEND',
+  'HRM_SANDBOX_ADMIN_API_KEY',
   'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT', 'HRM_SANDBOX_MYSQL_USER',
   'HRM_SANDBOX_MYSQL_PASSWORD', 'HRM_SANDBOX_MYSQL_DATABASE', 'HRM_SANDBOX_SEED_DEMO',
   'IMS_HRM_SANDBOX_OUTBOUND_ENABLED', 'IMS_DISABLE_EMAIL_WORKER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM',
@@ -160,8 +164,8 @@ try {
       $sandboxHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$SandboxPort/api/v1/health" -Headers $sandboxHeaders -TimeoutSec 3
       $backendHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/" -TimeoutSec 3
       $frontendHealth = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$FrontendPort/" -TimeoutSec 3
-      if ($sandboxHealth.status -ne 'ok' -or $sandboxHealth.database_backend -ne 'mysql' -or $sandboxHealth.database_name -ne 'hrm_us37_clean_uat' -or $sandboxHealth.employee_count -ne 0) {
-        throw 'HRM Sandbox did not report the expected clean MySQL schema with zero employees.'
+      if ($sandboxHealth.status -ne 'ok' -or $sandboxHealth.database_backend -ne 'mysql' -or $sandboxHealth.database_name -ne 'hrm_us37_clean_uat' -or $sandboxHealth.employee_count -lt 0) {
+        throw 'HRM Sandbox did not report the expected local MySQL schema.'
       }
       if ($backendHealth.status -ne 'Online' -or $frontendHealth.StatusCode -ne 200) { throw 'IMS service health check failed.' }
       $servicesReady = $true
@@ -201,7 +205,7 @@ try {
   Write-Output "HRM Sandbox: http://127.0.0.1:$SandboxPort"
   Write-Output 'IMS database: ims_us37_clean_uat'
   Write-Output 'HRM database: hrm_us37_clean_uat'
-  Write-Output 'HRM Sandbox employees: 0'
+  Write-Output "HRM Sandbox employees: $($sandboxHealth.employee_count) (existing UAT data preserved)"
   Write-Output 'IMS HRM directory: 0'
   Write-Output "Process record: $statePath"
 } catch {

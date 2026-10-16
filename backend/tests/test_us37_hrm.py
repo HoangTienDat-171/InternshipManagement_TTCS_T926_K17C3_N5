@@ -13,7 +13,18 @@ from pydantic import ValidationError
 from app import database
 from app.hrm_integration import HRMEmployeeRecord, build_import_preview, build_sync_preview, validate_employee_batch
 from app.hrm_provider import HRMProviderError, HRMSandboxConfig, HRMSandboxProvider, get_sandbox_config
-from app.hrm_sandbox import SandboxEmployeePatch, get_employee, initialize_database, list_employees, require_api_key, update_employee
+from app.hrm_sandbox import (
+    SandboxDepartmentCreate,
+    SandboxEmployeeCreate,
+    SandboxEmployeePatch,
+    create_department,
+    create_employee,
+    get_employee,
+    initialize_database,
+    list_employees,
+    require_api_key,
+    update_employee,
+)
 from app.hrm_storage import (
     acquire_sync_lock,
     ensure_hrm_sqlite_schema,
@@ -142,22 +153,26 @@ class US37ContractTests(unittest.TestCase):
             "HRM_PROVIDER": "sandbox",
             "HRM_SANDBOX_BASE_URL": "https://attacker.example/api",
             "HRM_SANDBOX_API_KEY": "local-test-key-value-long-enough-123456",
+            "HRM_SANDBOX_ADMIN_API_KEY": "admin-test-key-value-long-enough-098765",
         }, clear=True):
             config, error = get_sandbox_config()
         self.assertIsNone(config)
         self.assertIn("loopback", error)
 
     def test_status_never_includes_api_key(self):
-        with patch.dict(os.environ, {
-            "HRM_PROVIDER": "sandbox",
-            "HRM_SANDBOX_BASE_URL": "http://127.0.0.1:8100",
-            "HRM_SANDBOX_API_KEY": "top-secret-test-token-value-long-enough-123456",
-        }, clear=True):
+        sources = {"active_connection_id": "sandbox", "items": [{
+            "connection_id": "sandbox", "connection_name": "HRM Sandbox A", "endpoint": "http://127.0.0.1:8100",
+            "state": "PAUSED", "is_active": True, "has_credential": True, "last_check_message": "OK",
+        }]}
+        with patch.object(hrm_routes.hrm_connection_service, "list_connections", return_value=sources):
             with patch.object(hrm_routes, "hrm_schema_ready", return_value=True):
-                payload = hrm_routes.get_status(request_for(), db=None)
+                payload = hrm_routes.get_status(request_for(), db=object())
         self.assertNotIn("top-secret-test-token-value-long-enough-123456", str(payload))
         self.assertEqual(payload["provider_name"], "HRM Sandbox")
         self.assertEqual(payload["endpoint"], "http://127.0.0.1:8100")
+        self.assertEqual(payload["state"], "PAUSED")
+        self.assertFalse(payload["can_preview"])
+        self.assertTrue(payload["sync_history_available"])
 
 
 class US37SandboxPersistenceTests(unittest.TestCase):
@@ -167,15 +182,28 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         self.env_patch = patch.dict(os.environ, {
             "HRM_SANDBOX_DATABASE_PATH": self.db_path,
             "HRM_SANDBOX_API_KEY": "sandbox-test-secret",
+            "HRM_SANDBOX_ADMIN_API_KEY": "sandbox-admin-test-secret-different",
         }, clear=False)
         self.env_patch.start()
         initialize_database()
+        create_department(SandboxDepartmentCreate(department_code="TECH", department_name="Kỹ thuật"), actor_identity="test_admin")
+
+    def create_test_employees(self):
+        for employee_id in ("NV001", "NV002", "NV003"):
+            create_employee(SandboxEmployeeCreate(
+                employee_id=employee_id,
+                full_name=f"Nhân viên kiểm thử {employee_id}",
+                work_email=f"{employee_id.lower()}@example.test",
+                department_code="TECH",
+                employment_status="ACTIVE" if employee_id != "NV003" else "INACTIVE",
+            ), actor_identity="test_admin")
 
     def tearDown(self):
         self.env_patch.stop()
         self.temp_dir.cleanup()
 
     def test_auth_pagination_details_and_patch_persist(self):
+        self.create_test_employees()
         with self.assertRaises(HTTPException) as denied:
             require_api_key("Bearer wrong-key")
         self.assertEqual(denied.exception.status_code, 401)
@@ -187,21 +215,24 @@ class US37SandboxPersistenceTests(unittest.TestCase):
         original = get_employee("NV001")
         updated = update_employee("NV001", SandboxEmployeePatch(
             phone="0901999000", department_code="TECH", expected_updated_at=original["updated_at"],
-        ))
+        ), actor_identity="sandbox_admin_api_key")
         self.assertNotEqual(updated.updated_at, original["updated_at"])
         self.assertEqual(get_employee("NV001")["phone"], "0901999000")
 
-    def test_starter_employees_are_seeded_idempotently(self):
+    def test_startup_does_not_seed_demo_employees_and_preserves_existing_rows(self):
+        self.assertEqual(list_employees(page=1, page_size=100)["total"], 0)
+        create_employee(SandboxEmployeeCreate(
+            employee_id="NV001", full_name="Nhân viên do test tạo", department_code="TECH",
+        ), actor_identity="test_admin")
         first_load = list_employees(page=1, page_size=100)
-        self.assertEqual(first_load["total"], 18)
-        self.assertEqual(len({row["employee_id"] for row in first_load["items"]}), 18)
-        self.assertEqual({row["employment_status"] for row in first_load["items"]}, {"ACTIVE", "INACTIVE"})
+        self.assertEqual(first_load["total"], 1)
         original = get_employee("NV001")
-        update_employee("NV001", SandboxEmployeePatch(phone="0901999000", expected_updated_at=original["updated_at"]))
+        update_employee("NV001", SandboxEmployeePatch(phone="0901999000", expected_updated_at=original["updated_at"]),
+                        actor_identity="sandbox_admin_api_key")
 
         initialize_database()
         second_load = list_employees(page=1, page_size=100)
-        self.assertEqual(second_load["total"], 18)
+        self.assertEqual(second_load["total"], 1)
         self.assertEqual([row["employee_id"] for row in first_load["items"]], [row["employee_id"] for row in second_load["items"]])
         self.assertEqual(get_employee("NV001")["phone"], "0901999000")
 
@@ -229,10 +260,7 @@ class US37SyncWorkflowTests(unittest.TestCase):
             "source_updated_at": "2026-10-15T08:00:00+00:00",
         }]
         self.provider = FakeSandboxProvider(self.records)
-        self.patches = patch.multiple(
-            hrm_routes,
-            _provider_or_error=lambda: self.provider,
-        )
+        self.patches = patch.multiple(hrm_routes, _provider_or_error=lambda *args, **kwargs: self.provider)
         self.patches.start()
         self.db.execute(
             "INSERT INTO HRM_DEPARTMENT_MAPPINGS(provider_id, external_department_key, external_department_code, ma_phong_ban) VALUES ('sandbox', 'tech', 'TECH', 9)"
@@ -243,13 +271,44 @@ class US37SyncWorkflowTests(unittest.TestCase):
         self.patches.stop()
         self.db.close()
 
+    def test_persisted_history_and_directory_remain_readable_while_paused(self):
+        self.db.execute(
+            """INSERT INTO HRM_SYNC_HISTORY
+               (provider_id, actor_user_id, created_at, total_count, created_count,
+                updated_count, unchanged_count, skipped_count, error_count, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("sandbox", 1, "2026-10-16T08:00:00+00:00", 3, 1, 1, 0, 1, 0, "APPLIED"),
+        )
+        self.db.commit()
+        sources = {"active_connection_id": "sandbox", "items": [{
+            "connection_id": "sandbox", "state": "PAUSED", "is_active": True,
+        }]}
+        with patch.object(hrm_routes.hrm_connection_service, "list_connections", return_value=sources):
+            with patch.object(
+                hrm_routes.hrm_connection_service,
+                "make_provider",
+                side_effect=AssertionError("Read-only history must not decrypt credentials."),
+            ):
+                history = hrm_routes.get_sync_history(request_for(), page=1, page_size=20, db=self.db)
+                directory = hrm_routes.get_synced_directory(request_for(), page=1, page_size=20, db=self.db)
+
+        self.assertEqual(history["total"], 1)
+        self.assertEqual(history["items"][0]["total_count"], 3)
+        self.assertEqual(directory["total"], 0)
+
     def call(self, endpoint, *args):
         with patch.object(database, "DATABASE_BACKEND", "sqlite"):
             return asyncio.run(endpoint(*args, db=self.db))
 
     def test_admin_only_test_preview_apply_and_second_sync_is_idempotent(self):
         with patch.object(database, "DATABASE_BACKEND", "sqlite"):
-            self.assertEqual(asyncio.run(hrm_routes.test_connection(request_for()))["state"], "CONNECTED")
+            with patch.object(hrm_routes.hrm_connection_service, "bootstrap_legacy_connection") as bootstrap:
+                with patch.object(hrm_routes.hrm_connection_service, "_active_id", return_value="sandbox"):
+                    async def checked_connection(db, connection_id):
+                        return self.provider, {"state": "CONNECTED", "endpoint": "http://127.0.0.1:8100"}
+                    with patch.object(hrm_routes.hrm_connection_service, "test_connection_id", side_effect=checked_connection):
+                        self.assertEqual(asyncio.run(hrm_routes.test_connection(request_for(), db=self.db))["state"], "CONNECTED")
+                bootstrap.assert_called_once_with(self.db)
         with self.assertRaises(HTTPException) as denied:
             asyncio.run(hrm_routes.create_preview(request_for("HR"), db=self.db))
         self.assertEqual(denied.exception.status_code, 403)

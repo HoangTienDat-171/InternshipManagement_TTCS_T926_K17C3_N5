@@ -11,9 +11,10 @@ own isolated SQLite database.
 ## Local setup
 
 1. Create `backend/.env` from `backend/.env.example` if it does not exist.
-2. Configure one random local API key in the ignored `backend/.env` files used
-   by the IMS backend and Sandbox. This script preserves MySQL/SMTP settings,
-   aligns the same key in both files, and never prints it:
+2. Configure a random service API key in the ignored `backend/.env` files used
+   by the IMS backend and Sandbox, plus a separate Sandbox Admin API key for
+   the management console. This script preserves MySQL/SMTP settings, keeps
+   the credentials separate, and never prints either key:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\scripts\configure_hrm_sandbox.ps1 `
@@ -58,9 +59,10 @@ profile in that isolated IMS database. It is not a real person's data.
 The demo HR account is `hr@internship.vn` / `123456`, also UAT-only.
 
 Open the separate HRM Sandbox review console at
-`http://127.0.0.1:8100/`. Enter the local API key from the ignored
+`http://127.0.0.1:8100/`. Enter `HRM_SANDBOX_ADMIN_API_KEY` from the ignored
 `backend/.env` file in the current PR worktree. The key stays in the page's
-memory only and is never printed by the launcher. This console lists candidate
+memory only and is never printed by the launcher. IMS uses the separate
+`HRM_SANDBOX_API_KEY` service credential. This console lists candidate
 drafts and lets the Sandbox reviewer accept or reject them. Acceptance creates
 an employee only in the independent Sandbox SQLite database.
 
@@ -105,9 +107,14 @@ test IMS database, and then use the repository's `run_server.bat`.
 - `PATCH /api/v1/employees/{employee_id}` — change only synthetic Sandbox data
   for testing incremental synchronization.
 
-Every endpoint requires `Authorization: Bearer <HRM_SANDBOX_API_KEY>`. The API
-rejects missing/incorrect keys, limits page size and response size, and is
-bound to loopback. The adapter accepts only configured loopback URLs, blocks
+Read-only integration endpoints accept either scoped credential. Employee and
+department writes, audit history, and the local Admin console require
+`HRM_SANDBOX_ADMIN_API_KEY`; IMS outbound proposal submission uses
+`HRM_SANDBOX_API_KEY`. HRM decisions can be made via the Admin console or the
+role-checked IMS HR workflow. The API rejects missing/incorrect keys, limits
+page size and response size, and is bound to loopback. Audit responses expose
+metadata and allowlisted field diffs only; contact values are masked by
+default. The adapter accepts only configured loopback URLs, blocks
 redirects, uses bounded timeouts/retries, and never accepts a URL from a
 browser request. The key is not returned by IMS or rendered in the Admin UI.
 

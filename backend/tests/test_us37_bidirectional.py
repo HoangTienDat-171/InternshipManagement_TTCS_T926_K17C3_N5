@@ -71,6 +71,8 @@ class US37BidirectionalE2ETests(unittest.TestCase):
         self.env_patch = patch.dict(os.environ, {
             "HRM_SANDBOX_DATABASE_PATH": str(self.sandbox_path),
             "HRM_SANDBOX_API_KEY": self.api_key,
+            "HRM_SANDBOX_ADMIN_API_KEY": "isolated-us37-sandbox-admin-test-key-2026",
+            "HRM_PROVIDER": "sandbox",
             "IMS_HRM_SANDBOX_OUTBOUND_ENABLED": "1",
         }, clear=False)
         self.env_patch.start()
@@ -169,7 +171,7 @@ class US37BidirectionalE2ETests(unittest.TestCase):
         self.assertTrue(accepted["external_employee_id"])
         final = asyncio.run(self.provider.submit_candidate_request(candidate))
         self.assertEqual(final["employee_id"], accepted["external_employee_id"])
-        self.assertEqual(hrm_sandbox.list_employees(page=1, page_size=100)["total"], 19)
+        self.assertEqual(hrm_sandbox.list_employees(page=1, page_size=100)["total"], 1)
         sandbox_employee = hrm_sandbox.get_employee(accepted["external_employee_id"])
         self.assertIsNone(sandbox_employee["work_email"])
         self.assertIsNone(sandbox_employee["phone"])
@@ -208,7 +210,7 @@ class US37BidirectionalE2ETests(unittest.TestCase):
         repeated_accept = asyncio.run(self.provider.decide_candidate_request(payload["external_reference"], "ACCEPT"))
         self.assertEqual(accepted["status"], "ACCEPTED")
         self.assertEqual(repeated_accept["employee_id"], accepted["employee_id"])
-        self.assertEqual(hrm_sandbox.list_employees(page=1, page_size=100)["total"], 19)
+        self.assertEqual(hrm_sandbox.list_employees(page=1, page_size=100)["total"], 1)
 
     def test_reconcile_pending_proposal_after_hrm_sandbox_acceptance(self):
         profile_id = self.add_completed_intern("external-acceptance")

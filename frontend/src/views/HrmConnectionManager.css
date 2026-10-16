@@ -1,0 +1,41 @@
+.hrm-connection-manager { display: grid; gap: 13px; }
+.hrm-connection-manager-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.hrm-connection-manager-heading h2 { margin:3px 0 5px; color:var(--text-main); font-size:16px; }
+.hrm-connection-manager-heading p { max-width:800px; margin:0; color:var(--text-muted); font-size:12px; line-height:1.5; }
+.hrm-connection-manager-actions,.hrm-connection-item-controls { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.hrm-connection-list { display:grid; gap:9px; }
+.hrm-connection-item { display:grid; grid-template-columns:minmax(220px,1fr) minmax(280px,1.3fr); align-items:center; gap:12px; padding:12px; border:1px solid var(--border-color); border-radius:12px; background:var(--surface-card); }
+.hrm-connection-item.is-current { border-color:color-mix(in srgb,var(--primary-500) 44%,var(--border-color)); background:color-mix(in srgb,var(--primary-500) 4%,var(--surface-card)); }
+.hrm-connection-item-main { display:grid; gap:5px; min-width:0; }
+.hrm-connection-item-title { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.hrm-connection-item-title strong { color:var(--text-main); font-size:13px; }
+.hrm-connection-active,.hrm-connection-state { display:inline-flex; align-items:center; padding:3px 7px; border-radius:999px; font-size:9px; font-weight:800; }
+.hrm-connection-active { background:var(--primary-50); color:var(--primary-700); }
+.hrm-connection-state { background:rgb(100 116 139 / 12%); color:var(--text-muted); }
+.hrm-connection-state.state-connected { background:rgb(16 185 129 / 12%); color:#047857; }
+.hrm-connection-state.state-paused,.hrm-connection-state.state-not_tested { background:rgb(245 158 11 / 12%); color:#92400e; }
+.hrm-connection-state.state-error,.hrm-connection-state.state-disconnected { background:rgb(239 68 68 / 10%); color:#b91c1c; }
+.hrm-connection-item-main code { width:fit-content; max-width:100%; overflow-wrap:anywhere; color:var(--text-body); font-size:11px; }
+.hrm-connection-item-main small { color:var(--text-muted); font-size:10px; }
+.hrm-connection-item-controls { justify-content:flex-end; }
+.hrm-connection-item-controls .btn { min-height:32px; padding:5px 8px; font-size:11px; }
+.hrm-connection-empty { display:grid; justify-items:center; gap:6px; padding:25px 12px; border:1px dashed var(--border-color); border-radius:12px; color:var(--text-muted); text-align:center; }
+.hrm-connection-empty strong { color:var(--text-main); font-size:13px; }
+.hrm-connection-empty span { font-size:11px; }
+.hrm-connection-modal-backdrop { position:fixed; z-index:14000; inset:0; display:grid; place-items:center; overflow-y:auto; padding:18px; background:rgb(15 23 42 / 56%); backdrop-filter:blur(3px); }
+.hrm-connection-modal { display:grid; gap:14px; box-sizing:border-box; width:min(620px,100%); max-height:calc(100vh - 36px); overflow-y:auto; padding:20px; border:1px solid var(--border-color); border-radius:17px; background:var(--surface-card); color:var(--text-body); box-shadow:var(--shadow-xl); }
+.hrm-connection-modal header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.hrm-connection-modal h2 { margin:3px 0 0; color:var(--text-main); font-size:18px; }
+.hrm-connection-modal form { display:grid; gap:12px; }
+.hrm-connection-modal .form-group { display:grid; gap:6px; }
+.hrm-connection-modal footer { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding-top:5px; }
+.hrm-connection-history { display:grid; gap:7px; overflow-y:auto; }
+.hrm-connection-history > div { display:grid; grid-template-columns:140px 130px minmax(0,1fr); align-items:center; gap:8px; padding:9px; border:1px solid var(--border-color); border-radius:9px; font-size:11px; }
+.hrm-connection-history span,.hrm-connection-history small { color:var(--text-muted); }
+.hrm-connection-history strong { color:var(--text-main); }
+:root[data-theme='dark'] .hrm-connection-active { background:rgb(99 102 241 / 18%); color:#c4b5fd; }
+:root[data-theme='dark'] .hrm-connection-state.state-connected { color:#6ee7b7; }
+:root[data-theme='dark'] .hrm-connection-state.state-paused,:root[data-theme='dark'] .hrm-connection-state.state-not_tested { color:#fcd34d; }
+:root[data-theme='dark'] .hrm-connection-state.state-error,:root[data-theme='dark'] .hrm-connection-state.state-disconnected { color:#fca5a5; }
+@media(max-width:900px){.hrm-connection-item{grid-template-columns:1fr}.hrm-connection-item-controls{justify-content:flex-start}}
+@media(max-width:600px){.hrm-connection-manager-heading{align-items:stretch;flex-direction:column}.hrm-connection-manager-actions .btn{flex:1;justify-content:center}.hrm-connection-item-controls .btn{flex:1;justify-content:center}.hrm-connection-modal{padding:15px}.hrm-connection-history>div{grid-template-columns:1fr}.hrm-connection-modal footer .btn{flex:1;justify-content:center}}

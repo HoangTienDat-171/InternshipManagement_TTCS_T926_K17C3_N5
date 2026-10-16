@@ -12,10 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .. import database
 from ..database import get_db
 from ..hrm_integration import HRM_SETUP_REQUIREMENTS, HRM_SYNC_SCOPE, HRM_EXCLUDED_SCOPE
-from ..hrm_provider import HRMProviderError, configured_provider, get_sandbox_config
+from ..hrm_provider import HRMProviderError
+from .. import hrm_connection_service
 from .. import hrm_outbound
 from ..hrm_storage import (
-    PROVIDER_ID,
     acquire_sync_lock,
     apply_rows_and_history,
     delete_employee_department_override,
@@ -132,13 +132,11 @@ def _require_hr_or_admin(request: Request):
     return require_role(request, "HR", "Admin")
 
 
-def _require_outbound_test(request: Request, db) -> None:
+def _require_outbound_test(request: Request, db):
     _require_schema(db)
     if not hrm_outbound.outbound_enabled():
-        raise HTTPException(status_code=503, detail="Outbound candidate staging is enabled only for the isolated SQLite UAT runtime.")
-    provider = _provider_or_error()
-    if provider.provider_id != "sandbox":
-        raise HTTPException(status_code=503, detail="Outbound candidate staging is available only for HRM Sandbox.")
+        raise HTTPException(status_code=503, detail="Outbound candidate staging is enabled only in the isolated local UAT runtime.")
+    return _provider_or_error(db)
 
 
 def _require_schema(db) -> None:
@@ -149,12 +147,8 @@ def _require_schema(db) -> None:
         )
 
 
-def _provider_or_error():
-    provider, configuration_error = configured_provider()
-    if configuration_error:
-        raise HTTPException(status_code=503, detail=configuration_error)
-    if provider is None:
-        raise HTTPException(status_code=503, detail="HRM Sandbox chưa được cấu hình. Hãy đặt HRM_PROVIDER, HRM_SANDBOX_BASE_URL và HRM_SANDBOX_API_KEY.")
+def _provider_or_error(db):
+    provider, _ = hrm_connection_service.make_provider(db)
     return provider
 
 
@@ -166,7 +160,6 @@ def _safe_failure(exc: HRMProviderError) -> HTTPException:
 @router.get("/status")
 def get_status(request: Request, db=Depends(get_db)):
     _require_admin(request)
-    config, configuration_error = get_sandbox_config()
     status: dict[str, Any] = {
         "state": "NOT_CONFIGURED",
         "configured": False,
@@ -180,31 +173,38 @@ def get_status(request: Request, db=Depends(get_db)):
         "missing_requirements": list(HRM_SETUP_REQUIREMENTS),
         "sync_scope": list(HRM_SYNC_SCOPE),
         "excluded_scope": list(HRM_EXCLUDED_SCOPE),
-        "message": "Cấu hình HRM Sandbox qua biến môi trường để bắt đầu kiểm thử.",
+        "message": "Thêm hoặc chọn một kết nối HRM Sandbox trong phần Quản lý kết nối.",
     }
-    if configuration_error:
-        status.update(state="ERROR", message=configuration_error)
+    try:
+        saved_connections = hrm_connection_service.list_connections(db)
+    except HTTPException as exc:
+        status.update(state="SCHEMA_REQUIRED", message=str(exc.detail))
         return status
-    if config is None:
+    active_id = saved_connections["active_connection_id"]
+    active = next((item for item in saved_connections["items"] if item["connection_id"] == active_id), None)
+    if not active:
+        status["connections"] = saved_connections["items"]
         return status
-
     status.update(
-        state=CONNECTION_STATE["state"],
+        state=active["state"],
         configured=True,
         provider_name="HRM Sandbox",
-        endpoint=config.display_endpoint,
-        connection_state=CONNECTION_STATE["state"],
+        endpoint=active["endpoint"],
+        connection_state=active["state"],
         can_test_connection=True,
         missing_requirements=[],
-        message=CONNECTION_STATE["message"],
+        message=active["last_check_message"] or "Kết nối đã lưu; hãy kiểm tra trước khi đồng bộ.",
+        active_connection_id=active_id,
+        connection_name=active["connection_name"],
+        connections=saved_connections["items"],
     )
     try:
         schema_ready = hrm_schema_ready(db) if database.DATABASE_BACKEND == "mysql" else hrm_schema_ready(db)
     except Exception:
         schema_ready = False
     status.update(
-        can_preview=schema_ready,
-        can_sync=schema_ready,
+        can_preview=schema_ready and active["state"] == "CONNECTED",
+        can_sync=schema_ready and active["state"] == "CONNECTED",
         sync_history_available=schema_ready,
     )
     if not schema_ready:
@@ -217,20 +217,17 @@ def get_status(request: Request, db=Depends(get_db)):
 
 
 @router.post("/test-connection")
-async def test_connection(request: Request):
+async def test_connection(request: Request, db=Depends(get_db)):
     _require_admin(request)
-    provider = _provider_or_error()
-    try:
-        await provider.test_connection()
-    except HRMProviderError as exc:
-        raise _safe_failure(exc)
-    CONNECTION_STATE.update(state="CONNECTED", message="Đã kết nối HRM Sandbox thành công.")
-    config, _ = get_sandbox_config()
+    hrm_connection_service.bootstrap_legacy_connection(db)
+    provider, row = await hrm_connection_service.test_connection_id(db, hrm_connection_service._active_id(db))
+    message = "Đã kiểm tra kết nối HRM Sandbox thành công. Kết nối vẫn đang tạm dừng." if row["state"] == "PAUSED" else "Đã kết nối HRM Sandbox thành công."
+    CONNECTION_STATE.update(state=row["state"], message=message)
     return {
-        "state": "CONNECTED",
+        "state": row["state"],
         "provider_name": provider.provider_name,
-        "endpoint": config.display_endpoint if config else None,
-        "message": CONNECTION_STATE["message"],
+        "endpoint": row["endpoint"],
+        "message": message,
     }
 
 
@@ -238,7 +235,7 @@ async def test_connection(request: Request):
 async def get_department_mappings(request: Request, db=Depends(get_db)):
     _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -254,7 +251,7 @@ async def save_department_mapping(
 ):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -281,7 +278,7 @@ async def save_department_mapping(
 async def reset_department_mapping(payload: DepartmentMappingResetRequest, request: Request, db=Depends(get_db)):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         result = delete_global_department_mapping(
             db, provider_id=provider.provider_id, department_code=payload.department_code,
@@ -297,7 +294,7 @@ async def reset_department_mapping(payload: DepartmentMappingResetRequest, reque
 async def get_employee_department_mappings(request: Request, db=Depends(get_db)):
     _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -311,7 +308,7 @@ async def save_employee_department_mapping(
 ):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -357,7 +354,7 @@ async def reset_employee_department_mapping(
 ):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         return delete_employee_department_override(
             db, provider_id=provider.provider_id, external_employee_id=payload.external_employee_id,
@@ -375,14 +372,15 @@ def get_department_mapping_audit(
 ):
     _require_admin(request)
     _require_schema(db)
-    return list_department_mapping_audit(db, page, page_size)
+    provider = _provider_or_error(db)
+    return list_department_mapping_audit(db, page, page_size, provider.provider_id)
 
 
 @router.get("/mentor-mappings")
 async def get_mentor_mappings(request: Request, db=Depends(get_db)):
     _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -393,7 +391,7 @@ async def get_mentor_mappings(request: Request, db=Depends(get_db)):
     ).fetchall()
     links = {row["external_employee_key"].casefold(): dict(row) for row in db.execute(
         "SELECT external_employee_key, external_employee_id, ma_nguoi_dung, approved_by, approved_at "
-        "FROM HRM_MENTOR_LINKS WHERE provider_id = ?", (PROVIDER_ID,),
+        "FROM HRM_MENTOR_LINKS WHERE provider_id = ?", (provider.provider_id,),
     ).fetchall()}
     by_email: dict[str, list[int]] = {}
     for mentor in mentors:
@@ -421,7 +419,7 @@ async def get_mentor_mappings(request: Request, db=Depends(get_db)):
 async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, db=Depends(get_db)):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
     except HRMProviderError as exc:
@@ -438,7 +436,7 @@ async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, d
     external_key = payload.external_employee_id.casefold()
     existing_external = db.execute(
         "SELECT ma_nguoi_dung FROM HRM_MENTOR_LINKS WHERE provider_id = ? AND external_employee_key = ?",
-        (PROVIDER_ID, external_key),
+        (provider.provider_id, external_key),
     ).fetchone()
     if existing_external:
         if int(existing_external["ma_nguoi_dung"]) == payload.ma_nguoi_dung:
@@ -446,7 +444,7 @@ async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, d
         raise HTTPException(status_code=409, detail="This HRM employee is already linked to another IMS Mentor.")
     existing_mentor = db.execute(
         "SELECT external_employee_id FROM HRM_MENTOR_LINKS WHERE provider_id = ? AND ma_nguoi_dung = ?",
-        (PROVIDER_ID, payload.ma_nguoi_dung),
+        (provider.provider_id, payload.ma_nguoi_dung),
     ).fetchone()
     if existing_mentor:
         raise HTTPException(status_code=409, detail="This IMS Mentor is already linked to another HRM employee.")
@@ -454,7 +452,7 @@ async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, d
         db.execute(
             "INSERT INTO HRM_MENTOR_LINKS (provider_id, external_employee_key, external_employee_id, ma_nguoi_dung, approved_by, approved_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (PROVIDER_ID, external_key, payload.external_employee_id, payload.ma_nguoi_dung,
+            (provider.provider_id, external_key, payload.external_employee_id, payload.ma_nguoi_dung,
              int(actor["ma_nguoi_dung"]), datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
         )
         db.commit()
@@ -468,7 +466,13 @@ async def save_mentor_mapping(payload: MentorMappingRequest, request: Request, d
 @router.get("/outbound/status")
 def get_outbound_status(request: Request, db=Depends(get_db)):
     _require_hr_or_admin(request)
-    enabled = hrm_outbound.outbound_enabled() and hrm_schema_ready(db)
+    try:
+        provider = _provider_or_error(db)
+        active_available = True
+    except HTTPException:
+        provider = None
+        active_available = False
+    enabled = hrm_outbound.outbound_enabled() and hrm_schema_ready(db) and active_available
     environment = (
         "isolated local MySQL UAT"
         if enabled and database.DATABASE_BACKEND == "mysql"
@@ -478,9 +482,9 @@ def get_outbound_status(request: Request, db=Depends(get_db)):
     )
     return {
         "enabled": enabled,
-        "provider": "HRM Sandbox",
+        "provider": provider.provider_name if provider else "HRM Sandbox",
         "environment": environment,
-        "message": "Only explicitly completed internship participation is eligible. HR approval is required; Sandbox acceptance creates an employee." if enabled else "Outbound is disabled outside the isolated SQLite UAT runtime.",
+        "message": "Only explicitly completed internship participation is eligible. HR approval is required; Sandbox acceptance creates an employee." if enabled else "Outbound is disabled outside the isolated local UAT runtime.",
     }
 
 
@@ -492,17 +496,16 @@ def get_outbound_candidates(
     db=Depends(get_db),
 ):
     _require_hr_or_admin(request)
-    _require_outbound_test(request, db)
-    return hrm_outbound.list_candidates(db, page, page_size)
+    provider = _require_outbound_test(request, db)
+    return hrm_outbound.list_candidates(db, page, page_size, provider.provider_id)
 
 
 @router.post("/outbound/preview")
 def preview_outbound_candidate(payload: OutboundProfileRequest, request: Request, db=Depends(get_db)):
     actor = _require_hr(request)
-    _require_outbound_test(request, db)
-    provider = _provider_or_error()
+    provider = _require_outbound_test(request, db)
     try:
-        result = hrm_outbound.create_preview(db, int(actor["ma_nguoi_dung"]), payload.profile_id)
+        result = hrm_outbound.create_preview(db, int(actor["ma_nguoi_dung"]), payload.profile_id, provider.provider_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result["provider_name"] = provider.provider_name
@@ -512,10 +515,12 @@ def preview_outbound_candidate(payload: OutboundProfileRequest, request: Request
 @router.post("/outbound/approve")
 def approve_outbound_candidate(payload: OutboundPreviewRequest, request: Request, db=Depends(get_db)):
     actor = _require_hr(request)
-    _require_outbound_test(request, db)
+    provider = _require_outbound_test(request, db)
     preview = hrm_outbound.read_outbound_preview(db, payload.preview_id)
     if not preview:
         raise HTTPException(status_code=404, detail="Outbound preview was not found.")
+    if preview["provider_id"] != provider.provider_id:
+        raise HTTPException(status_code=409, detail="Preview thuộc nguồn HRM khác; hãy tạo preview mới từ kết nối đang dùng.")
     if int(preview["actor_user_id"]) != int(actor["ma_nguoi_dung"]):
         raise HTTPException(status_code=403, detail="Only the HR account that created this preview may approve it.")
     if preview["status"] != "PENDING":
@@ -530,7 +535,7 @@ def approve_outbound_candidate(payload: OutboundPreviewRequest, request: Request
         db.commit()
         raise HTTPException(status_code=409, detail=reason or "Candidate data changed after preview; create a new preview.")
     try:
-        hrm_outbound.approve_preview(db, preview, int(actor["ma_nguoi_dung"]), payload.reason)
+        hrm_outbound.approve_preview(db, preview, int(actor["ma_nguoi_dung"]), payload.reason, provider.provider_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "HR_APPROVED", "preview_id": payload.preview_id, "message": "HR hiring decision and data-transfer approval recorded."}
@@ -539,11 +544,12 @@ def approve_outbound_candidate(payload: OutboundPreviewRequest, request: Request
 @router.post("/outbound/send")
 async def send_outbound_candidate(payload: OutboundPreviewRequest, request: Request, db=Depends(get_db)):
     actor = _require_hr(request)
-    _require_outbound_test(request, db)
-    provider = _provider_or_error()
+    provider = _require_outbound_test(request, db)
     preview = hrm_outbound.read_outbound_preview(db, payload.preview_id)
     if not preview:
         raise HTTPException(status_code=404, detail="Outbound preview was not found.")
+    if preview["provider_id"] != provider.provider_id:
+        raise HTTPException(status_code=409, detail="Preview thuộc nguồn HRM khác; hãy tạo preview mới từ kết nối đang dùng.")
     if int(preview["actor_user_id"]) != int(actor["ma_nguoi_dung"]):
         raise HTTPException(status_code=403, detail="Only the HR account that approved this preview may send it.")
     if preview["status"] != "APPROVED":
@@ -562,7 +568,7 @@ async def send_outbound_candidate(payload: OutboundPreviewRequest, request: Requ
         raise HTTPException(status_code=409, detail=reason or "Candidate data changed after approval; create a new preview.")
     existing_proposal = db.execute(
         "SELECT external_reference, status FROM HRM_OUTBOUND_PROPOSALS WHERE provider_id = ? AND ma_ho_so = ?",
-        (PROVIDER_ID, int(preview["ma_ho_so"])),
+        (provider.provider_id, int(preview["ma_ho_so"])),
     ).fetchone()
     if existing_proposal and existing_proposal["status"] not in {"REJECTED", "FAILED"}:
         raise HTTPException(
@@ -582,15 +588,15 @@ async def send_outbound_candidate(payload: OutboundPreviewRequest, request: Requ
                 response = None
             if response is None:
                 hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), int(preview["ma_ho_so"]),
-                    candidate["external_reference"], "PENDING_RECONCILIATION", preview["snapshot_hash"], reason="Submission response was uncertain; lookup must resolve before another send.")
+                    candidate["external_reference"], "PENDING_RECONCILIATION", preview["snapshot_hash"], reason="Submission response was uncertain; lookup must resolve before another send.", provider_id=provider.provider_id)
                 return {"status": "PENDING_RECONCILIATION", "message": "Submission response was uncertain. The Sandbox will be checked by IMS reference before another send."}
         else:
             hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), int(preview["ma_ho_so"]),
-                candidate["external_reference"], "FAILED", preview["snapshot_hash"], reason="Sandbox rejected the request; review the current preview before retrying.")
+                candidate["external_reference"], "FAILED", preview["snapshot_hash"], reason="Sandbox rejected the request; review the current preview before retrying.", provider_id=provider.provider_id)
             raise _safe_failure(exc)
     if not response or response.get("external_reference") != candidate["external_reference"]:
         hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), int(preview["ma_ho_so"]),
-            candidate["external_reference"], "PENDING_RECONCILIATION", preview["snapshot_hash"], reason="Sandbox response did not match the IMS reference.")
+            candidate["external_reference"], "PENDING_RECONCILIATION", preview["snapshot_hash"], reason="Sandbox response did not match the IMS reference.", provider_id=provider.provider_id)
         return {"status": "PENDING_RECONCILIATION", "message": "The Sandbox response is being reconciled by IMS reference."}
     status = str(response.get("status") or "")
     if status not in {"PENDING", "ACCEPTED", "REJECTED"}:
@@ -598,7 +604,7 @@ async def send_outbound_candidate(payload: OutboundPreviewRequest, request: Requ
     hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), int(preview["ma_ho_so"]),
         candidate["external_reference"], status, preview["snapshot_hash"],
         response.get("candidate_request_id"), response.get("employee_id"),
-        response.get("decision_reason"))
+        response.get("decision_reason"), provider_id=provider.provider_id)
     db.execute("UPDATE HRM_OUTBOUND_PREVIEWS SET status = 'SENT' WHERE preview_id = ?", (payload.preview_id,))
     db.commit()
     return {"status": status, "candidate_request_id": response.get("candidate_request_id"),
@@ -608,8 +614,7 @@ async def send_outbound_candidate(payload: OutboundPreviewRequest, request: Requ
 @router.get("/outbound/sandbox-inbox")
 async def get_sandbox_candidate_inbox(request: Request, db=Depends(get_db)):
     _require_hr_or_admin(request)
-    _require_outbound_test(request, db)
-    provider = _provider_or_error()
+    provider = _require_outbound_test(request, db)
     try:
         items = await provider.fetch_candidate_requests("PENDING")
     except HRMProviderError as exc:
@@ -620,16 +625,15 @@ async def get_sandbox_candidate_inbox(request: Request, db=Depends(get_db)):
 @router.post("/outbound/sandbox-inbox/{external_reference}/decision")
 async def decide_sandbox_candidate(external_reference: str, payload: SandboxDecisionRequest, request: Request, db=Depends(get_db)):
     actor = _require_hr(request)
-    _require_outbound_test(request, db)
+    provider = _require_outbound_test(request, db)
     if payload.decision == "REJECT" and not (payload.reason or "").strip():
         raise HTTPException(status_code=422, detail="A rejection reason is required.")
     local = db.execute(
         "SELECT ma_ho_so, candidate_request_id, last_payload_hash FROM HRM_OUTBOUND_PROPOSALS "
-        "WHERE provider_id = ? AND external_reference = ?", (PROVIDER_ID, external_reference),
+        "WHERE provider_id = ? AND external_reference = ?", (provider.provider_id, external_reference),
     ).fetchone()
     if not local:
         raise HTTPException(status_code=404, detail="No IMS outbound proposal matches this candidate request.")
-    provider = _provider_or_error()
     try:
         response = await provider.decide_candidate_request(external_reference, payload.decision, payload.reason)
     except HRMProviderError as exc:
@@ -639,22 +643,21 @@ async def decide_sandbox_candidate(external_reference: str, payload: SandboxDeci
         raise HTTPException(status_code=502, detail="Sandbox returned an invalid candidate decision.")
     hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), int(local["ma_ho_so"]), external_reference,
         status, local["last_payload_hash"] or "", response.get("candidate_request_id"),
-        response.get("employee_id"), payload.reason if status == "REJECTED" else None)
+        response.get("employee_id"), payload.reason if status == "REJECTED" else None, provider_id=provider.provider_id)
     return {"status": status, "external_employee_id": response.get("employee_id"), "message": "Sandbox candidate decision saved."}
 
 
 @router.post("/outbound/reconcile/{profile_id}")
 async def reconcile_outbound_candidate(profile_id: int, request: Request, db=Depends(get_db)):
     actor = _require_hr_or_admin(request)
-    _require_outbound_test(request, db)
+    provider = _require_outbound_test(request, db)
     local = db.execute(
         "SELECT external_reference, candidate_request_id, status, external_employee_id, last_payload_hash "
         "FROM HRM_OUTBOUND_PROPOSALS WHERE provider_id = ? AND ma_ho_so = ?",
-        (PROVIDER_ID, profile_id),
+        (provider.provider_id, profile_id),
     ).fetchone()
     if not local or local["status"] not in {"PENDING", "PENDING_RECONCILIATION"}:
         raise HTTPException(status_code=409, detail="Only a pending proposal can be reconciled.")
-    provider = _provider_or_error()
     try:
         remote = await provider.get_candidate_request(local["external_reference"])
     except HRMProviderError as exc:
@@ -668,7 +671,7 @@ async def reconcile_outbound_candidate(profile_id: int, request: Request, db=Dep
     if remote_status != local["status"] or remote.get("employee_id") != local["external_employee_id"]:
         hrm_outbound.save_proposal(db, int(actor["ma_nguoi_dung"]), profile_id,
             local["external_reference"], remote_status, local["last_payload_hash"] or "",
-            remote.get("candidate_request_id"), remote.get("employee_id"), remote.get("decision_reason"))
+            remote.get("candidate_request_id"), remote.get("employee_id"), remote.get("decision_reason"), provider_id=provider.provider_id)
     message = (
         "IMS proposal was reconciled with the Sandbox record."
         if remote_status != local["status"] or remote.get("employee_id") != local["external_employee_id"]
@@ -686,15 +689,15 @@ def get_outbound_history(
     db=Depends(get_db),
 ):
     _require_hr_or_admin(request)
-    _require_outbound_test(request, db)
-    return hrm_outbound.list_history(db, page, page_size)
+    provider = _require_outbound_test(request, db)
+    return hrm_outbound.list_history(db, page, page_size, provider.provider_id)
 
 
 @router.post("/preview")
 async def create_preview(request: Request, db=Depends(get_db)):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     try:
         await provider.test_connection()
         records = await provider.fetch_employees()
@@ -721,10 +724,12 @@ async def create_preview(request: Request, db=Depends(get_db)):
 async def apply_sync(payload: ApplySyncRequest, request: Request, db=Depends(get_db)):
     actor = _require_admin(request)
     _require_schema(db)
-    provider = _provider_or_error()
+    provider = _provider_or_error(db)
     saved_preview = read_preview(db, payload.preview_id)
     if not saved_preview:
         raise HTTPException(status_code=404, detail="Không tìm thấy bản xem trước. Hãy tạo lại trước khi đồng bộ.")
+    if saved_preview["provider_id"] != provider.provider_id:
+        raise HTTPException(status_code=409, detail="Preview belongs to a different HRM source; create a new preview before syncing.")
     if int(saved_preview["actor_user_id"]) != int(actor["ma_nguoi_dung"]):
         raise HTTPException(status_code=403, detail="Bản xem trước thuộc phiên Admin khác.")
     if saved_preview["status"] != "PENDING":
@@ -743,7 +748,7 @@ async def apply_sync(payload: ApplySyncRequest, request: Request, db=Depends(get
             await provider.test_connection()
             records = await provider.fetch_employees()
         except HRMProviderError as exc:
-            record_failed_sync(db, int(actor["ma_nguoi_dung"]))
+            record_failed_sync(db, int(actor["ma_nguoi_dung"]), provider_id=provider.provider_id)
             raise _safe_failure(exc)
         context = load_sync_context(db, provider.provider_id)
         rows = preview_rows(records, context)
@@ -752,7 +757,7 @@ async def apply_sync(payload: ApplySyncRequest, request: Request, db=Depends(get
             db.execute("UPDATE HRM_SYNC_PREVIEWS SET status = 'STALE' WHERE preview_id = ?", (payload.preview_id,))
             db.commit()
             raise HTTPException(status_code=409, detail="Dữ liệu HRM hoặc mapping đã thay đổi sau preview. Hãy xem trước lại.")
-        summary = apply_rows_and_history(db, int(actor["ma_nguoi_dung"]), rows, payload.preview_id)
+        summary = apply_rows_and_history(db, int(actor["ma_nguoi_dung"]), rows, payload.preview_id, provider.provider_id)
         CONNECTION_STATE.update(state="CONNECTED", message="Đồng bộ HRM Sandbox đã hoàn tất.")
         return summary
     finally:
@@ -768,7 +773,8 @@ def get_sync_history(
 ):
     _require_admin(request)
     _require_schema(db)
-    return list_history(db, page, page_size)
+    provider_id = hrm_connection_service.list_connections(db)["active_connection_id"] or ""
+    return list_history(db, page, page_size, provider_id)
 
 
 @router.get("/directory")
@@ -780,4 +786,5 @@ def get_synced_directory(
 ):
     _require_admin(request)
     _require_schema(db)
-    return list_directory(db, page, page_size)
+    provider_id = hrm_connection_service.list_connections(db)["active_connection_id"] or ""
+    return list_directory(db, page, page_size, provider_id)

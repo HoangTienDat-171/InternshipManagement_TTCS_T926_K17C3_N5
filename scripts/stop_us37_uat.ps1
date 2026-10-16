@@ -1,7 +1,30 @@
 $ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $stateDir = Join-Path $env:LOCALAPPDATA 'IMS-US37-UAT'
-$statePath = Join-Path $stateDir 'processes.json'
-if (-not (Test-Path -LiteralPath $statePath)) {
+$statePath = $null
+foreach ($candidate in (Get-ChildItem -LiteralPath $stateDir -Filter 'mysql-processes-*.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+  try {
+    $candidateState = Get-Content -LiteralPath $candidate.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]::Equals($candidateState.source_root, $repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      $statePath = $candidate.FullName
+      break
+    }
+  } catch { }
+}
+if (-not $statePath) {
+  $legacyPath = Join-Path $stateDir 'processes.json'
+  if (Test-Path -LiteralPath $legacyPath) {
+    try {
+      $legacyState = Get-Content -LiteralPath $legacyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ([string]::Equals($legacyState.source_root, $repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          [string]::Equals($legacyState.repo_root, $repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          [string]::Equals($legacyState.root, $repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $statePath = $legacyPath
+      }
+    } catch { }
+  }
+}
+if (-not $statePath -or -not (Test-Path -LiteralPath $statePath)) {
   Write-Output 'No US37 UAT process record found; nothing was stopped.'
   return
 }

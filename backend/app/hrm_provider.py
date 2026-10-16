@@ -77,8 +77,9 @@ class HRMSandboxProvider:
     provider_name = "HRM Sandbox"
     provider_id = "sandbox"
 
-    def __init__(self, config: HRMSandboxConfig):
+    def __init__(self, config: HRMSandboxConfig, connection_id: str = "sandbox"):
         self.config = config
+        self.provider_id = connection_id
         self._opener = build_opener(_NoRedirect)
 
     def _read_json(self, path: str) -> dict:
@@ -130,7 +131,8 @@ class HRMSandboxProvider:
 
     async def test_connection(self) -> None:
         payload = await self._get_json("health")
-        if payload.get("status") != "ok" or payload.get("provider_id") != self.provider_id:
+        # Sandbox installation identity is separate from the IMS source scope.
+        if payload.get("status") != "ok" or payload.get("provider_id") != "sandbox":
             raise HRMProviderError("Dịch vụ phản hồi không đúng contract HRM Sandbox.")
 
     async def fetch_employees(self) -> list[dict]:

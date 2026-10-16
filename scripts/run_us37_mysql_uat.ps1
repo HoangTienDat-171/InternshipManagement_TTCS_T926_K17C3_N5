@@ -1,3 +1,10 @@
+param(
+  [ValidateRange(1, 65535)][int]$FrontendPort = 3000,
+  [ValidateRange(1, 65535)][int]$BackendPort = 8000,
+  [ValidateRange(1, 65535)][int]$SandboxPort = 8100,
+  [string]$SandboxDatabasePath = ''
+)
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $backendDir = Join-Path $repoRoot 'backend'
@@ -13,6 +20,10 @@ $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runDir = Join-Path $localStateDir "mysql-$runId"
 $statePath = Join-Path $localStateDir "mysql-processes-$runId.json"
 $backendEnvPath = Join-Path $backendDir '.env'
+if (-not $SandboxDatabasePath) { $SandboxDatabasePath = Join-Path $localStateDir 'hrm-sandbox-mysql-uat.sqlite3' }
+if ((@($FrontendPort, $BackendPort, $SandboxPort) | Select-Object -Unique).Count -ne 3) {
+  throw 'Frontend, backend, and Sandbox ports must be distinct.'
+}
 
 function Read-SimpleEnv([string]$Path) {
   $result = @{}
@@ -61,9 +72,16 @@ $sandboxKeyLines = @([IO.File]::ReadAllLines($backendEnvPath) | Where-Object { $
 if ($sandboxKeyLines.Count -ne 1) { throw 'Feature worktree backend/.env must contain exactly one HRM_SANDBOX_API_KEY entry.' }
 $sandboxKey = ($sandboxKeyLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
 if ($sandboxKey.Length -lt 32 -or $sandboxKey -match '[^\x21-\x7E]') { throw 'HRM_SANDBOX_API_KEY is missing or invalid.' }
+$adminKeyLines = @([IO.File]::ReadAllLines($backendEnvPath) | Where-Object { $_ -match '^\s*HRM_SANDBOX_ADMIN_API_KEY\s*=' })
+if ($adminKeyLines.Count -ne 1) { Remove-Variable sandboxKey -ErrorAction SilentlyContinue; throw 'Feature worktree backend/.env must contain exactly one HRM_SANDBOX_ADMIN_API_KEY entry.' }
+$sandboxAdminKey = ($adminKeyLines[0] -split '=', 2)[1].Trim().Trim('"').Trim("'")
+if ($sandboxAdminKey.Length -lt 32 -or $sandboxAdminKey -match '[^\x21-\x7E]' -or [string]::Equals($sandboxAdminKey, $sandboxKey, [StringComparison]::Ordinal)) {
+  Remove-Variable sandboxKey, sandboxAdminKey -ErrorAction SilentlyContinue
+  throw 'HRM_SANDBOX_ADMIN_API_KEY must be a separate key of at least 32 printable ASCII characters.'
+}
 
 $busy = @()
-foreach ($port in @(3000, 8000, 8100)) {
+foreach ($port in @($FrontendPort, $BackendPort, $SandboxPort)) {
   $listenerPid = Get-ListeningPid $port
   if ($listenerPid) { $busy += "$port (PID $listenerPid)" }
 }
@@ -80,8 +98,9 @@ $logs = @{
 }
 $environmentNames = @(
   'IMS_DATABASE_BACKEND', 'IMS_SQLITE_PATH', 'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE',
-  'HRM_PROVIDER', 'HRM_SANDBOX_BASE_URL', 'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_PORT',
-  'IMS_HRM_SANDBOX_OUTBOUND_ENABLED', 'IMS_DISABLE_EMAIL_WORKER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM'
+  'HRM_PROVIDER', 'HRM_SANDBOX_BASE_URL', 'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_ADMIN_API_KEY', 'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_PORT',
+  'IMS_HRM_SANDBOX_OUTBOUND_ENABLED', 'IMS_DISABLE_EMAIL_WORKER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM',
+  'VITE_API_PROXY_TARGET'
 )
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
@@ -96,10 +115,11 @@ try {
   $env:MYSQL_PASSWORD = $mysql.MYSQL_PASSWORD
   $env:MYSQL_DATABASE = $mysql.MYSQL_DATABASE
   $env:HRM_PROVIDER = 'sandbox'
-  $env:HRM_SANDBOX_BASE_URL = 'http://127.0.0.1:8100'
+  $env:HRM_SANDBOX_BASE_URL = "http://127.0.0.1:$SandboxPort"
   $env:HRM_SANDBOX_API_KEY = $sandboxKey
-  $env:HRM_SANDBOX_DATABASE_PATH = Join-Path $localStateDir 'hrm-sandbox-mysql-uat.sqlite3'
-  $env:HRM_SANDBOX_PORT = '8100'
+  $env:HRM_SANDBOX_DATABASE_PATH = [IO.Path]::GetFullPath($SandboxDatabasePath)
+  $env:HRM_SANDBOX_PORT = [string]$SandboxPort
+  $env:VITE_API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
   $env:IMS_HRM_SANDBOX_OUTBOUND_ENABLED = '1'
   $env:IMS_DISABLE_EMAIL_WORKER = '1'
   $env:SMTP_HOST = ''
@@ -121,13 +141,15 @@ try {
 
   Push-Location -LiteralPath $backendDir
   try {
+    $env:HRM_SANDBOX_ADMIN_API_KEY = $sandboxAdminKey
     $sandbox = Start-Process -FilePath $pythonPath -ArgumentList @('-m', 'app.hrm_sandbox') -WorkingDirectory $backendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logs.sandboxOut -RedirectStandardError $logs.sandboxErr
-    $started += @{ name = 'hrm-sandbox'; id = $sandbox.Id; executable = $pythonPath; marker = 'app.hrm_sandbox'; port = 8100 }
-    $backend = Start-Process -FilePath $pythonPath -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--log-level', 'warning') -WorkingDirectory $backendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logs.backendOut -RedirectStandardError $logs.backendErr
-    $started += @{ name = 'ims-backend'; id = $backend.Id; executable = $pythonPath; marker = 'uvicorn app.main:app'; port = 8000 }
+    $started += @{ name = 'hrm-sandbox'; id = $sandbox.Id; executable = $pythonPath; marker = 'app.hrm_sandbox'; port = $SandboxPort }
+    Remove-Item Env:HRM_SANDBOX_ADMIN_API_KEY -ErrorAction SilentlyContinue
+    $backend = Start-Process -FilePath $pythonPath -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', [string]$BackendPort, '--log-level', 'warning') -WorkingDirectory $backendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logs.backendOut -RedirectStandardError $logs.backendErr
+    $started += @{ name = 'ims-backend'; id = $backend.Id; executable = $pythonPath; marker = 'uvicorn app.main:app'; port = $BackendPort }
   } finally { Pop-Location }
-  $frontend = Start-Process -FilePath $nodePath -ArgumentList @($vitePath, '--host', '127.0.0.1', '--port', '3000', '--strictPort') -WorkingDirectory $frontendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logs.frontendOut -RedirectStandardError $logs.frontendErr
-  $started += @{ name = 'ims-frontend'; id = $frontend.Id; executable = $nodePath; marker = 'vite'; port = 3000 }
+  $frontend = Start-Process -FilePath $nodePath -ArgumentList @($vitePath, '--host', '127.0.0.1', '--port', [string]$FrontendPort, '--strictPort') -WorkingDirectory $frontendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput $logs.frontendOut -RedirectStandardError $logs.frontendErr
+  $started += @{ name = 'ims-frontend'; id = $frontend.Id; executable = $nodePath; marker = 'vite'; port = $FrontendPort }
 
   $deadline = (Get-Date).AddSeconds(45)
   $ready = $false
@@ -137,9 +159,9 @@ try {
     if (-not $alive) { throw 'A UAT service exited during startup. Inspect the run-specific logs in %LOCALAPPDATA%\IMS-US37-UAT.' }
     try {
       $headers = @{ Authorization = "Bearer $sandboxKey" }
-      $sandboxHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8100/api/v1/health' -Headers $headers -TimeoutSec 2
-      $backendHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/' -TimeoutSec 2
-      $frontendHealth = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000/' -TimeoutSec 2
+      $sandboxHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$SandboxPort/api/v1/health" -Headers $headers -TimeoutSec 2
+      $backendHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/" -TimeoutSec 2
+      $frontendHealth = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$FrontendPort/" -TimeoutSec 2
       if ($sandboxHealth.status -eq 'ok' -and $backendHealth.status -eq 'Online' -and $frontendHealth.StatusCode -eq 200) { $ready = $true; break }
     } catch { Start-Sleep -Milliseconds 500 }
   }
@@ -153,13 +175,14 @@ try {
     database_directory = $localStateDir
     log_directory = $runDir
     started_at = (Get-Date).ToString('o')
+    ports = @{ frontend = $FrontendPort; backend = $BackendPort; sandbox = $SandboxPort }
     processes = $started
   }
   $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statePath -Encoding UTF8
   Write-Output 'MySQL UAT IMS + HRM Sandbox is ready.'
-  Write-Output 'Frontend: http://127.0.0.1:3000'
-  Write-Output 'Backend: http://127.0.0.1:8000'
-  Write-Output 'HRM Sandbox: http://127.0.0.1:8100'
+  Write-Output "Frontend: http://127.0.0.1:$FrontendPort"
+  Write-Output "Backend: http://127.0.0.1:$BackendPort"
+  Write-Output "HRM Sandbox: http://127.0.0.1:$SandboxPort"
   Write-Output "Process record: $statePath"
 } catch {
   Stop-StartedServices $started

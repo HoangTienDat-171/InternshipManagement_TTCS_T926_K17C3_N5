@@ -177,11 +177,18 @@ class Department(BaseModel):
     ma_phong_ban: int
     ten_phong_ban: str
     mo_ta: Optional[str] = None
+    ma_dinh_danh: Optional[str] = None
+    is_active: bool = True
+    updated_at: Optional[str] = None
+    mentor_count: int = 0
+    intern_count: int = 0
 
 class DepartmentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ten_phong_ban: str = Field(min_length=1, max_length=100)
+    ma_dinh_danh: Optional[str] = Field(default=None, min_length=2, max_length=32)
+    mo_ta: Optional[str] = Field(default=None, max_length=500)
 
     @field_validator("ten_phong_ban", mode="before")
     @classmethod
@@ -195,35 +202,74 @@ class DepartmentCreate(BaseModel):
             raise ValueError("Tên phòng ban không được vượt quá 100 ký tự.")
         return normalized
 
+    @field_validator("ma_dinh_danh", mode="before")
+    @classmethod
+    def normalize_department_code(cls, value):
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        if normalized and not normalized.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("Mã phòng ban chỉ được gồm chữ, số, dấu gạch ngang hoặc gạch dưới.")
+        return normalized or None
+
+
+class DepartmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_phong_ban: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    mo_ta: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+    @field_validator("ten_phong_ban", mode="before")
+    @classmethod
+    def normalize_optional_department_name(cls, value):
+        if value is None:
+            return None
+        normalized = " ".join(str(value).split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        return normalized
+
 class University(BaseModel):
     ma_truong: int
     ten_truong: str
     dia_chi: Optional[str] = None
     nguoi_lien_he: Optional[str] = None
     email_lien_he: Optional[str] = None
-
-
-class DepartmentCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    ten_phong_ban: str = Field(min_length=1, max_length=150)
-
-    @field_validator("ten_phong_ban")
-    @classmethod
-    def normalize_department_name(cls, value):
-        normalized = " ".join(value.split())
-        if not normalized:
-            raise ValueError("Tên phòng ban không được để trống.")
-        return normalized
+    ma_dinh_danh: Optional[str] = None
+    ten_viet_tat: Optional[str] = None
+    is_active: bool = True
+    updated_at: Optional[str] = None
+    intern_count: int = 0
 
 
 class UniversityCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ten_truong: str = Field(min_length=1, max_length=255)
+    ma_dinh_danh: Optional[str] = Field(default=None, max_length=32)
+    ten_viet_tat: Optional[str] = Field(default=None, max_length=50)
 
     @field_validator("ten_truong")
     @classmethod
     def normalize_university_name(cls, value):
         normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên trường đại học không được để trống.")
+        return normalized
+
+
+class UniversityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_truong: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    ma_dinh_danh: Optional[str] = Field(default=None, max_length=32)
+    ten_viet_tat: Optional[str] = Field(default=None, max_length=50)
+    is_active: Optional[bool] = None
+
+    @field_validator("ten_truong", mode="before")
+    @classmethod
+    def normalize_optional_university_name(cls, value):
+        if value is None:
+            return None
+        normalized = " ".join(str(value).split())
         if not normalized:
             raise ValueError("Tên trường đại học không được để trống.")
         return normalized

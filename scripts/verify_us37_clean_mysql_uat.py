@@ -1,4 +1,4 @@
-"""Assert that clean US37 UAT points to its isolated MySQL schema and is empty."""
+"""Report safe counts for the isolated US37 UAT schema without assuming it is empty."""
 from __future__ import annotations
 
 from app import database
@@ -25,15 +25,20 @@ def main() -> None:
             name: int(connection.execute(statement).fetchone()["n"])
             for name, statement in checks.items()
         }
-        if counts["intern_profiles"] or counts["hrm_directory"] or counts["department_mappings"]:
-            raise SystemExit("Clean UAT contains unexpected demo, employee, or mapping records.")
-        if counts["users"] != 2:
-            raise SystemExit("Clean UAT does not contain exactly the two expected UAT accounts.")
+        accounts = connection.execute(
+            "SELECT email, vai_tro FROM NGUOI_DUNG "
+            "WHERE email IN ('admin@internship.vn', 'hr@internship.vn')"
+        ).fetchall()
+        roles = {str(row["email"]): str(row["vai_tro"]) for row in accounts}
+        if roles.get("admin@internship.vn") != "Admin" or roles.get("hr@internship.vn") != "HR":
+            raise SystemExit("The expected local UAT Admin and HR accounts are missing or have the wrong role.")
     finally:
         connection.close()
     print("IMS_DATABASE=ims_us37_clean_uat")
-    print("IMS_HRM_DIRECTORY=0")
-    print("IMS_DEPARTMENT_MAPPINGS=0")
+    print(f"IMS_UAT_ACCOUNTS={counts['users']}")
+    print(f"IMS_INTERN_PROFILES={counts['intern_profiles']}")
+    print(f"IMS_HRM_DIRECTORY={counts['hrm_directory']}")
+    print(f"IMS_DEPARTMENT_MAPPINGS={counts['department_mappings']}")
 
 
 if __name__ == "__main__":

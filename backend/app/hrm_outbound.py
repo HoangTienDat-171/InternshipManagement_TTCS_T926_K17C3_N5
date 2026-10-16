@@ -88,7 +88,7 @@ def payload_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def list_candidates(db, page: int, page_size: int) -> dict[str, Any]:
+def list_candidates(db, page: int, page_size: int, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
     where = f"""h.trang_thai_xet_duyet = 'DaDuyet' AND u.vai_tro = 'ThucTapSinh'
         AND EXISTS (SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH a
                     WHERE a.ma_ho_so = h.ma_ho_so AND a.trang_thai = 'DaDuyet'
@@ -124,7 +124,7 @@ def list_candidates(db, page: int, page_size: int) -> dict[str, Any]:
         ).fetchone()
         proposal = db.execute(
             "SELECT status, candidate_request_id, external_employee_id, updated_at FROM HRM_OUTBOUND_PROPOSALS "
-            "WHERE provider_id = ? AND ma_ho_so = ?", (PROVIDER_ID, profile_id),
+            "WHERE provider_id = ? AND ma_ho_so = ?", (provider_id, profile_id),
         ).fetchone()
         items.append({
             "profile_id": profile_id,
@@ -141,13 +141,13 @@ def list_candidates(db, page: int, page_size: int) -> dict[str, Any]:
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
-def create_preview(db, actor_user_id: int, profile_id: int) -> dict[str, Any]:
+def create_preview(db, actor_user_id: int, profile_id: int, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
     payload, reason = build_candidate_payload(db, profile_id)
     if payload is None:
         raise ValueError(reason or "The intern profile is not eligible.")
     proposal = db.execute(
         "SELECT status FROM HRM_OUTBOUND_PROPOSALS WHERE provider_id = ? AND ma_ho_so = ?",
-        (PROVIDER_ID, profile_id),
+        (provider_id, profile_id),
     ).fetchone()
     if proposal and proposal["status"] not in {"REJECTED", "FAILED"}:
         raise ValueError("A candidate request already exists or needs reconciliation.")
@@ -158,7 +158,7 @@ def create_preview(db, actor_user_id: int, profile_id: int) -> dict[str, Any]:
         """INSERT INTO HRM_OUTBOUND_PREVIEWS
            (preview_id, provider_id, actor_user_id, ma_ho_so, snapshot_hash, status, created_at, expires_at)
            VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)""",
-        (preview_id, PROVIDER_ID, actor_user_id, profile_id, payload_digest(payload), db_timestamp(now), expires_at),
+        (preview_id, provider_id, actor_user_id, profile_id, payload_digest(payload), db_timestamp(now), expires_at),
     )
     db.commit()
     return {
@@ -185,11 +185,11 @@ def read_outbound_preview(db, preview_id: str):
     ).fetchone()
 
 
-def approve_preview(db, preview, actor_user_id: int, reason: str | None = None) -> None:
+def approve_preview(db, preview, actor_user_id: int, reason: str | None = None, provider_id: str = PROVIDER_ID) -> None:
     now = db_timestamp()
     existing = db.execute(
         "SELECT status FROM HRM_OUTBOUND_PROPOSALS WHERE provider_id = ? AND ma_ho_so = ?",
-        (PROVIDER_ID, int(preview["ma_ho_so"])),
+        (provider_id, int(preview["ma_ho_so"])),
     ).fetchone()
     if existing and existing["status"] not in {"REJECTED", "FAILED"}:
         raise ValueError("A candidate request already exists or needs reconciliation.")
@@ -211,7 +211,8 @@ def approve_preview(db, preview, actor_user_id: int, reason: str | None = None) 
 
 def save_proposal(db, actor_user_id: int, profile_id: int, external_reference: str,
                   status: str, payload_hash: str, candidate_request_id: str | None = None,
-                  external_employee_id: str | None = None, reason: str | None = None) -> None:
+                  external_employee_id: str | None = None, reason: str | None = None,
+                  provider_id: str = PROVIDER_ID) -> None:
     now = db_timestamp()
     db.execute(
         """INSERT INTO HRM_OUTBOUND_PROPOSALS
@@ -224,27 +225,27 @@ def save_proposal(db, actor_user_id: int, profile_id: int, external_reference: s
              external_employee_id = excluded.external_employee_id,
              last_payload_hash = excluded.last_payload_hash,
              updated_at = excluded.updated_at""",
-        (PROVIDER_ID, profile_id, external_reference, candidate_request_id, status,
+        (provider_id, profile_id, external_reference, candidate_request_id, status,
          external_employee_id, payload_hash, now),
     )
     db.execute(
         """INSERT INTO HRM_OUTBOUND_HISTORY
            (provider_id, actor_user_id, ma_ho_so, external_reference, candidate_request_id,
             event_status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (PROVIDER_ID, actor_user_id, profile_id, external_reference, candidate_request_id,
+        (provider_id, actor_user_id, profile_id, external_reference, candidate_request_id,
          status, reason, now),
     )
     db.commit()
 
 
-def list_history(db, page: int, page_size: int) -> dict[str, Any]:
-    total = int(db.execute("SELECT COUNT(*) AS total FROM HRM_OUTBOUND_HISTORY").fetchone()["total"])
+def list_history(db, page: int, page_size: int, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
+    total = int(db.execute("SELECT COUNT(*) AS total FROM HRM_OUTBOUND_HISTORY WHERE provider_id = ?", (provider_id,)).fetchone()["total"])
     rows = db.execute(
         """SELECT h.id, h.ma_ho_so, h.external_reference, h.candidate_request_id,
                   h.event_status, h.reason, h.created_at, u.ho_ten AS actor_name
            FROM HRM_OUTBOUND_HISTORY h LEFT JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.actor_user_id
-           ORDER BY h.id DESC LIMIT ? OFFSET ?""",
-        (page_size, (page - 1) * page_size),
+           WHERE h.provider_id = ? ORDER BY h.id DESC LIMIT ? OFFSET ?""",
+        (provider_id, page_size, (page - 1) * page_size),
     ).fetchall()
     return {"items": [dict(row) for row in rows], "total": total, "page": page, "page_size": page_size}
 
