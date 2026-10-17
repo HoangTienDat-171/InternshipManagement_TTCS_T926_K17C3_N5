@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight,
-  Clock3, ClipboardCheck, LogIn, LogOut, RefreshCw, QrCode, X,
+  Clock3, ClipboardCheck, LogIn, LogOut, RefreshCw,
 } from 'lucide-react';
-import QRCode from 'qrcode';
 import { apiFetch, readJsonResponse } from '../utils/api';
-import './AttendanceView.css';
 
 function dateLabel(value) {
   if (!value) return '—';
@@ -38,9 +36,6 @@ export default function AttendanceView({ onShowToast }) {
   const [note, setNote] = useState('');
   const [action, setAction] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
-  const [qrCredential, setQrCredential] = useState(null);
-  const [qrImage, setQrImage] = useState('');
-  const [qrLoading, setQrLoading] = useState(false);
 
   const loadToday = useCallback(async (signal) => {
     try {
@@ -108,22 +103,6 @@ export default function AttendanceView({ onShowToast }) {
     }
   };
 
-  const createQrCredential = async () => {
-    setQrLoading(true);
-    try {
-      const response = await apiFetch('/api/interns/me/attendance/qr-token', { method: 'POST' });
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.detail || 'Không thể tạo mã QR chấm công.');
-      const image = await QRCode.toDataURL(data.token, { width: 240, margin: 2, errorCorrectionLevel: 'M' });
-      setQrCredential(data);
-      setQrImage(image);
-    } catch (error) {
-      onShowToast?.(error.message || 'Không thể tạo mã QR chấm công.', 'error');
-    } finally {
-      setQrLoading(false);
-    }
-  };
-
   const retry = () => {
     setTodayLoading(true);
     setHistoryLoading(true);
@@ -181,9 +160,6 @@ export default function AttendanceView({ onShowToast }) {
             {today?.can_check_in && <button type="button" className="btn btn-primary" disabled={Boolean(action)} onClick={() => submitAction('check-in')}>
               <LogIn size={16} />{action === 'check-in' ? 'Đang Check-in…' : 'Check-in'}
             </button>}
-            {today?.can_check_in && <button type="button" className="btn btn-secondary" disabled={qrLoading || Boolean(action)} onClick={createQrCredential}>
-              <QrCode size={16} />{qrLoading ? 'Đang tạo mã…' : 'Tạo mã QR'}
-            </button>}
             {today?.can_check_out && <button type="button" className="btn btn-primary" disabled={Boolean(action)} onClick={() => submitAction('check-out')}>
               <LogOut size={16} />{action === 'check-out' ? 'Đang Check-out…' : 'Check-out'}
             </button>}
@@ -228,16 +204,5 @@ export default function AttendanceView({ onShowToast }) {
       </>}
     </section>
 
-    {qrCredential && <div className="attendance-qr-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setQrCredential(null); setQrImage(''); } }}>
-      <section className="attendance-qr-dialog" role="dialog" aria-modal="true" aria-labelledby="attendance-qr-title">
-        <header><div><span className="workspace-eyebrow">MÃ CHẤM CÔNG MỘT LẦN</span><h3 id="attendance-qr-title">Đưa mã này cho Admin/HR quét</h3></div>
-          <button type="button" className="btn btn-secondary btn-sm" aria-label="Đóng mã QR" onClick={() => { setQrCredential(null); setQrImage(''); }}><X size={17} /></button>
-        </header>
-        {qrImage && <img src={qrImage} alt="Mã QR chấm công tạm thời" />}
-        <p>Mã hết hạn lúc {new Date(qrCredential.expires_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}. Mỗi mã chỉ dùng được một lần.</p>
-        <div className="attendance-qr-limit"><AlertTriangle size={16} />QR một lần giúp chống phát lại; mã QR không tự xác minh bạn đang có mặt tại nơi làm việc.</div>
-        <button type="button" className="btn btn-secondary" onClick={() => { setQrCredential(null); setQrImage(''); }}>Đóng</button>
-      </section>
-    </div>}
   </div>;
 }

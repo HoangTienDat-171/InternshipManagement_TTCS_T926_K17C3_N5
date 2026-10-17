@@ -14,7 +14,6 @@ from pydantic import ValidationError
 from app import audit_service, database
 from app.attendance_service import InternAttendanceService, _write_transaction
 from app.routes import attendance_routes
-from app.routes.attendance_routes import AttendanceQrCheckIn
 from app.schemas import InternAttendanceCheckIn, InternAttendanceCheckOut
 
 
@@ -181,83 +180,6 @@ class InternAttendanceTests(unittest.TestCase):
             results = list(pool.map(lambda _index: attempt(), range(2)))
         self.assertEqual(results[0]["id"], results[1]["id"])
         self.assertEqual(self.db.execute("SELECT COUNT(*) AS total FROM CHAM_CONG").fetchone()["total"], 1)
-
-    def test_qr_check_in_uses_existing_attendance_service_and_rejects_replay(self):
-        self.add_shift()
-        issued = self.service.issue_qr_credential(self.user_id)
-        stored = self.db.execute(
-            "SELECT token_hash, used_at FROM IMS_ATTENDANCE_QR_CREDENTIALS ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        self.assertNotEqual(stored["token_hash"], issued["token"])
-
-        record = self.service.check_in_with_qr(
-            issued["token"], scanner={"ma_nguoi_dung": self.admin_id, "ho_ten": "Test Admin"},
-        )
-        self.assertEqual(record["source"], "QR")
-        self.assertEqual(self.db.execute("SELECT used_at FROM IMS_ATTENDANCE_QR_CREDENTIALS").fetchone()["used_at"] is not None, True)
-        self.assertEqual(
-            self.db.execute("SELECT COUNT(*) AS total FROM CHAM_CONG").fetchone()["total"], 1,
-        )
-        with self.assertRaises(HTTPException) as context:
-            self.service.check_in_with_qr(issued["token"], scanner={"ma_nguoi_dung": self.admin_id})
-        self.assertEqual(context.exception.status_code, 409)
-        self.assertEqual(
-            self.db.execute("SELECT COUNT(*) AS total FROM IMS_AUDIT_LOG WHERE action='ATTENDANCE_CHECK_IN'").fetchone()["total"], 1,
-        )
-
-    def test_qr_expiration_and_ineligible_profile_are_rejected_without_attendance(self):
-        self.add_shift()
-        expired = self.service.issue_qr_credential(self.user_id)
-        self.db.execute(
-            "UPDATE IMS_ATTENDANCE_QR_CREDENTIALS SET expires_at='2000-01-01 00:00:00' WHERE token_hash=?",
-            (__import__('hashlib').sha256(expired["token"].encode()).hexdigest(),),
-        )
-        self.db.commit()
-        with self.assertRaises(HTTPException) as context:
-            self.service.check_in_with_qr(expired["token"], scanner={"ma_nguoi_dung": self.admin_id})
-        self.assertEqual(context.exception.status_code, 410)
-
-        issued = self.service.issue_qr_credential(self.user_id)
-        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_thuc_tap='HoanThanh' WHERE ma_ho_so=?", (self.profile_id,))
-        self.db.commit()
-        with self.assertRaises(HTTPException) as context:
-            self.service.check_in_with_qr(issued["token"], scanner={"ma_nguoi_dung": self.admin_id})
-        self.assertEqual(context.exception.status_code, 409)
-        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_thuc_tap='DangThucTap' WHERE ma_ho_so=?", (self.profile_id,))
-        self.db.commit()
-        self.assertEqual(self.db.execute("SELECT COUNT(*) AS total FROM CHAM_CONG").fetchone()["total"], 0)
-
-    def test_concurrent_qr_scans_consume_one_token_once(self):
-        self.add_shift()
-        issued = self.service.issue_qr_credential(self.user_id)
-        barrier = Barrier(2)
-
-        def attempt():
-            conn = database.get_db_connection()
-            try:
-                barrier.wait(timeout=3)
-                return InternAttendanceService(conn).check_in_with_qr(
-                    issued["token"], scanner={"ma_nguoi_dung": self.admin_id},
-                )
-            except HTTPException as exc:
-                return exc.status_code
-            finally:
-                conn.close()
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _index: attempt(), range(2)))
-        self.assertEqual(sum(isinstance(result, dict) for result in results), 1)
-        self.assertEqual(sum(result == 409 for result in results), 1)
-        self.assertEqual(self.db.execute("SELECT COUNT(*) AS total FROM CHAM_CONG").fetchone()["total"], 1)
-
-    def test_qr_scanner_requires_hr_or_admin_role(self):
-        with self.assertRaises(HTTPException) as context:
-            attendance_routes.check_in_by_qr(
-                AttendanceQrCheckIn(token="untrusted"),
-                request_for({"ma_nguoi_dung": self.user_id, "vai_tro": "ThucTapSinh"}),
-                db=self.db,
-            )
-        self.assertEqual(context.exception.status_code, 403)
 
     def test_attendance_transaction_uses_mysql_syntax_for_mysql_backend(self):
         class FakeConnection:

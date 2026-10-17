@@ -1,8 +1,6 @@
 """US21 self-service attendance using the US23 work-shift resolver."""
 import logging
 import sqlite3
-import hashlib
-import secrets
 from calendar import monthrange
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
@@ -223,7 +221,6 @@ class InternAttendanceService:
         user_id: int,
         *,
         note: str | None = None,
-        source: str = "MANUAL",
         audit_actor: dict | None = None,
     ) -> tuple[dict, bool]:
         profile = self._profile(user_id, for_update=True)
@@ -254,8 +251,8 @@ class InternAttendanceService:
             raise
         attendance_id = int(cursor.lastrowid)
         self.db.execute(
-            "INSERT INTO IMS_ATTENDANCE_SOURCES(attendance_id, source) VALUES (?, ?)",
-            (attendance_id, source),
+            "INSERT INTO IMS_ATTENDANCE_SOURCES(attendance_id, source) VALUES (?, 'MANUAL')",
+            (attendance_id,),
         )
         row = self.db.execute(self._record_query() + " WHERE a.id = ?", (attendance_id,)).fetchone()
         record = self._public_record(row)
@@ -266,78 +263,15 @@ class InternAttendanceService:
             resource="ATTENDANCE",
             resource_id=attendance_id,
             outcome="SUCCESS",
-            metadata={"source": source, "shift_id": shift["id"]},
+            metadata={"source": "MANUAL", "shift_id": shift["id"]},
         )
         return record, True
 
     def check_in(self, user_id: int, note: str | None = None, *, audit_actor: dict | None = None) -> dict:
         with _write_transaction(self.db):
             record, _created = self._check_in_in_transaction(
-                user_id, note=note, source="MANUAL", audit_actor=audit_actor,
+                user_id, note=note, audit_actor=audit_actor,
             )
-            return record
-
-    def issue_qr_credential(self, user_id: int, *, lifetime_seconds: int = 120) -> dict:
-        if not 30 <= lifetime_seconds <= 300:
-            raise ValueError("QR lifetime must be between 30 and 300 seconds")
-        token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        with _write_transaction(self.db):
-            self._profile(user_id, for_update=True)
-            row = self.db.execute("SELECT CURRENT_TIMESTAMP AS server_now").fetchone()
-            raw_now = row["server_now"]
-            now = raw_now if isinstance(raw_now, datetime) else datetime.fromisoformat(str(raw_now))
-            expires_at = (now.replace(tzinfo=None) + timedelta(seconds=lifetime_seconds)).isoformat(sep=" ", timespec="seconds")
-            # A TTS can keep only one pending short-lived code at a time.
-            self.db.execute(
-                "UPDATE IMS_ATTENDANCE_QR_CREDENTIALS SET expires_at=CURRENT_TIMESTAMP "
-                "WHERE ma_nguoi_dung=? AND used_at IS NULL AND expires_at>CURRENT_TIMESTAMP",
-                (user_id,),
-            )
-            self.db.execute(
-                """INSERT INTO IMS_ATTENDANCE_QR_CREDENTIALS
-                   (token_hash, ma_nguoi_dung, issued_at, expires_at)
-                   VALUES (?, ?, ?, ?)""",
-                (token_hash, user_id, now.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds"), expires_at),
-            )
-            write_audit_event(
-                self.db,
-                actor={"ma_nguoi_dung": user_id},
-                action="ATTENDANCE_QR_ISSUED",
-                resource="ATTENDANCE",
-                outcome="SUCCESS",
-                metadata={"expires_in_seconds": lifetime_seconds},
-            )
-        return {"token": token, "expires_at": expires_at, "expires_in_seconds": lifetime_seconds}
-
-    def check_in_with_qr(self, token: str, *, scanner: dict) -> dict:
-        if not token or len(token) > 128:
-            raise HTTPException(status_code=422, detail="Mã QR không hợp lệ hoặc đã hết hạn.")
-        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        with _write_transaction(self.db):
-            lock = " FOR UPDATE" if database.DATABASE_BACKEND == "mysql" else ""
-            credential = self.db.execute(
-                """SELECT id, ma_nguoi_dung, expires_at, used_at,
-                          CASE WHEN expires_at > CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS is_unexpired
-                   FROM IMS_ATTENDANCE_QR_CREDENTIALS WHERE token_hash = ?""" + lock,
-                (token_hash,),
-            ).fetchone()
-            if not credential or credential["used_at"] is not None:
-                raise HTTPException(status_code=409, detail="Mã QR không tồn tại, đã được dùng hoặc đã bị thay thế.")
-            if not credential["is_unexpired"]:
-                raise HTTPException(status_code=410, detail="Mã QR đã hết hạn. TTS cần tạo mã mới.")
-            record, created = self._check_in_in_transaction(
-                int(credential["ma_nguoi_dung"]), source="QR", audit_actor=scanner,
-            )
-            if not created:
-                raise HTTPException(status_code=409, detail="TTS đã có lượt check-in trong ca hiện tại; mã QR chưa được ghi nhận.")
-            updated = self.db.execute(
-                """UPDATE IMS_ATTENDANCE_QR_CREDENTIALS
-                   SET used_at=CURRENT_TIMESTAMP, attendance_id=? WHERE id=? AND used_at IS NULL""",
-                (record["id"], credential["id"]),
-            )
-            if updated.rowcount != 1:
-                raise HTTPException(status_code=409, detail="Mã QR vừa được sử dụng bởi một yêu cầu khác.")
             return record
 
     def check_out(self, user_id: int, *, audit_actor: dict | None = None) -> dict:
