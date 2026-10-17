@@ -55,6 +55,22 @@ if (-not (Test-Path -LiteralPath $vitePath -PathType Leaf)) { throw 'Frontend de
 
 $runtime = Read-SimpleEnv $RuntimeConfigPath
 $sandboxDatabaseName = [string]$runtime.HRM_SANDBOX_MYSQL_DATABASE
+$smtpEnvironmentKeys = @(
+  'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM',
+  'SMTP_USE_SSL', 'SMTP_USE_STARTTLS', 'SMTP_TIMEOUT_SECONDS', 'EMAIL_WORKER_INTERVAL_SECONDS'
+)
+$smtpSettings = @{}
+$smtpEnvPath = Join-Path $backendDir '.env'
+if (Test-Path -LiteralPath $smtpEnvPath -PathType Leaf) {
+  $localSettings = Read-SimpleEnv $smtpEnvPath
+  foreach ($key in $smtpEnvironmentKeys) {
+    if ($localSettings.ContainsKey($key)) { $smtpSettings[$key] = [string]$localSettings[$key] }
+  }
+}
+$smtpSender = [string]$smtpSettings.SMTP_FROM
+if (-not $smtpSender) { $smtpSender = [string]$smtpSettings.SMTP_USERNAME }
+$meetingEmailEnabled = -not [string]::IsNullOrWhiteSpace([string]$smtpSettings.SMTP_HOST) -and
+  -not [string]::IsNullOrWhiteSpace($smtpSender)
 $requiredKeys = @(
   'MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE',
   'HRM_SANDBOX_API_KEY', 'HRM_SANDBOX_ADMIN_API_KEY', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT',
@@ -77,7 +93,7 @@ if ($runtime.HRM_SANDBOX_API_KEY -eq $runtime.HRM_SANDBOX_ADMIN_API_KEY) {
   throw 'HRM Sandbox service and Admin API keys must be different.'
 }
 if ([string]$runtime.HRM_SANDBOX_SEED_DEMO -ne '0' -or [string]$runtime.IMS_DISABLE_EMAIL_WORKER -ne '1') {
-  throw 'Clean UAT must keep employee demo seeding and the email worker disabled.'
+  throw 'Clean UAT requires demo seeding and email delivery to be disabled in the base runtime config.'
 }
 
 $busy = @()
@@ -102,7 +118,9 @@ $environmentNames = @($runtime.Keys) + @(
   'HRM_SANDBOX_ADMIN_API_KEY',
   'HRM_SANDBOX_DATABASE_PATH', 'HRM_SANDBOX_MYSQL_HOST', 'HRM_SANDBOX_MYSQL_PORT', 'HRM_SANDBOX_MYSQL_USER',
   'HRM_SANDBOX_MYSQL_PASSWORD', 'HRM_SANDBOX_MYSQL_DATABASE', 'HRM_SANDBOX_SEED_DEMO',
-  'IMS_HRM_SANDBOX_OUTBOUND_ENABLED', 'IMS_DISABLE_EMAIL_WORKER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM',
+  'IMS_HRM_SANDBOX_OUTBOUND_ENABLED', 'IMS_DISABLE_EMAIL_WORKER', 'EMAIL_WORKER_TEMPLATE_PREFIX',
+  'SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_FROM', 'SMTP_USE_SSL', 'SMTP_USE_STARTTLS',
+  'SMTP_TIMEOUT_SECONDS', 'EMAIL_WORKER_INTERVAL_SECONDS',
   'VITE_API_PROXY_TARGET', 'US37_MYSQL_UAT_SCHEMA', 'US37_CLEAN_ADMIN_PASSWORD', 'US37_CLEAN_HR_PASSWORD', 'PYTHONPATH'
 ) | Select-Object -Unique
 $previousEnvironment = @{}
@@ -122,11 +140,15 @@ try {
   $env:HRM_SANDBOX_MYSQL_DATABASE = $sandboxDatabaseName
   $env:HRM_SANDBOX_SEED_DEMO = '0'
   $env:IMS_HRM_SANDBOX_OUTBOUND_ENABLED = '1'
-  $env:IMS_DISABLE_EMAIL_WORKER = '1'
-  $env:SMTP_HOST = ''
-  $env:SMTP_USERNAME = ''
-  $env:SMTP_PASSWORD = ''
-  $env:SMTP_FROM = ''
+  $env:IMS_DISABLE_EMAIL_WORKER = if ($meetingEmailEnabled) { '0' } else { '1' }
+  $env:EMAIL_WORKER_TEMPLATE_PREFIX = if ($meetingEmailEnabled) { 'meeting_' } else { '' }
+  foreach ($key in $smtpEnvironmentKeys) {
+    if ($meetingEmailEnabled -and $smtpSettings.ContainsKey($key)) {
+      [Environment]::SetEnvironmentVariable($key, [string]$smtpSettings[$key], 'Process')
+    } else {
+      [Environment]::SetEnvironmentVariable($key, '', 'Process')
+    }
+  }
   $env:VITE_API_PROXY_TARGET = "http://127.0.0.1:$BackendPort"
   $env:US37_MYSQL_UAT_SCHEMA = 'ims_us37_clean_uat'
   $env:PYTHONPATH = $backendDir
@@ -208,6 +230,7 @@ try {
   Write-Output "HRM database: $sandboxDatabaseName"
   Write-Output "HRM Sandbox employees: $($sandboxHealth.employee_count) (existing UAT data preserved)"
   Write-Output 'IMS HRM directory: 0'
+  Write-Output "Meeting email worker: $(if ($meetingEmailEnabled) { 'enabled for meeting templates only' } else { 'disabled because SMTP host/sender are not configured' })"
   Write-Output "Process record: $statePath"
 } catch {
   for ($index = $started.Count - 1; $index -ge 0; $index--) {
@@ -222,5 +245,5 @@ try {
   throw
 } finally {
   foreach ($name in $environmentNames) { [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process') }
-  Remove-Variable runtime, login, sandboxHeaders, imsHeaders, loginBody -ErrorAction SilentlyContinue
+  Remove-Variable runtime, login, sandboxHeaders, imsHeaders, loginBody, localSettings, smtpSettings, smtpSender -ErrorAction SilentlyContinue
 }

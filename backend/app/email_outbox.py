@@ -49,17 +49,22 @@ def _smtp_config():
 def _claim_one():
     db = get_db_connection()
     try:
+        template_prefix = os.getenv("EMAIL_WORKER_TEMPLATE_PREFIX", "").strip()
+        template_scope = " AND SUBSTR(template_type, 1, ?) = ?" if template_prefix else ""
+        template_scope_params = (len(template_prefix), template_prefix) if template_prefix else ()
         stale_before = (_database_now(db) - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
-            """UPDATE EMAIL_OUTBOX
+            f"""UPDATE EMAIL_OUTBOX
                SET body=CASE WHEN template_type='temporary_credentials' THEN '' ELSE body END,
                    status='FAILED', last_error=COALESCE(last_error, 'Email retry limit reached.'),
                    next_retry_at=NULL, updated_at=CURRENT_TIMESTAMP
                WHERE status IN ('PENDING','RETRY')
-                 AND retry_count >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END"""
+                 AND retry_count >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
+                 {template_scope}""",
+            template_scope_params,
         )
         db.execute(
-            """UPDATE EMAIL_OUTBOX
+            f"""UPDATE EMAIL_OUTBOX
                SET body=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
                                 AND template_type='temporary_credentials' THEN '' ELSE body END,
                    status=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
@@ -69,24 +74,27 @@ def _claim_one():
                    next_retry_at=CASE WHEN retry_count + 1 >= CASE WHEN max_retry < 4 THEN max_retry ELSE 4 END
                                      THEN NULL ELSE CURRENT_TIMESTAMP END,
                    updated_at=CURRENT_TIMESTAMP
-               WHERE status='PROCESSING' AND updated_at < ?""",
-            (stale_before,),
+               WHERE status='PROCESSING' AND updated_at < ?
+                 {template_scope}""",
+            (stale_before, *template_scope_params),
         )
         row = db.execute(
-            """SELECT *
+            f"""SELECT *
                FROM EMAIL_OUTBOX
                WHERE status IN ('PENDING','RETRY')
                  AND (reference_type IS NULL OR reference_type <> 'internal_message')
                  AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
-               ORDER BY created_at, id LIMIT 1"""
+                 {template_scope}
+               ORDER BY created_at, id LIMIT 1""",
+            template_scope_params,
         ).fetchone()
         if not row:
             db.commit()
             return None
         claimed = db.execute(
-            """UPDATE EMAIL_OUTBOX SET status='PROCESSING', updated_at=CURRENT_TIMESTAMP
-               WHERE id=? AND status IN ('PENDING','RETRY')""",
-            (row["id"],),
+            f"""UPDATE EMAIL_OUTBOX SET status='PROCESSING', updated_at=CURRENT_TIMESTAMP
+               WHERE id=? AND status IN ('PENDING','RETRY'){template_scope}""",
+            (row["id"], *template_scope_params),
         )
         db.commit()
         return dict(row) if claimed.rowcount == 1 else None

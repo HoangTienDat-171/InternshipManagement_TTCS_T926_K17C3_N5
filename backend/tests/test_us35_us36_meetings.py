@@ -178,6 +178,28 @@ class US35MeetingTests(unittest.TestCase):
         self.assertEqual(self._counts("THONG_BAO"), 1)
         self.assertEqual(self._counts("EMAIL_OUTBOX"), 0)
 
+    def test_worker_template_scope_claims_only_meeting_notifications(self):
+        self.db.execute(
+            """INSERT INTO EMAIL_OUTBOX
+               (recipient_email, subject, body, template_type, reference_type, reference_id, deduplication_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("account@test.invalid", "Other notification", "body", "temporary_credentials",
+             "account", "1", "worker-scope-account-1"),
+        )
+        self.db.commit()
+        self._create([self.intern_a["ma_nguoi_dung"]])
+
+        with patch.dict(os.environ, {"EMAIL_WORKER_TEMPLATE_PREFIX": "meeting_"}):
+            claimed = email_outbox._claim_one()
+
+        self.assertIsNotNone(claimed)
+        self.assertTrue(claimed["template_type"].startswith("meeting_"))
+        account_email = self.db.execute(
+            "SELECT status FROM EMAIL_OUTBOX WHERE deduplication_key = ?",
+            ("worker-scope-account-1",),
+        ).fetchone()
+        self.assertEqual(account_email["status"], "PENDING")
+
     def test_smtp_failure_retries_without_losing_meeting_or_notification(self):
         meeting, _ = self._create([self.intern_a["ma_nguoi_dung"]])
         with patch.dict(os.environ, {
