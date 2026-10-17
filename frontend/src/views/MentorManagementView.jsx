@@ -253,10 +253,10 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
 
   return (
     <div className="mentor-management-page">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div className="mentor-page-header">
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Quản lý Mentor</h2>
-          <p style={{ fontSize: '13px', color: '#64748b' }}>
+          <h2>Quản lý Mentor</h2>
+          <p>
             Danh sách và quản lý thông tin người hướng dẫn thực tập sinh
           </p>
         </div>
@@ -312,8 +312,6 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                 />
               </div>
 
-              <p className="form-hint">Hệ thống sẽ gửi email đăng nhập kèm mật khẩu tạm và yêu cầu đổi mật khẩu lần đầu.</p>
-
               <PhoneField value={form.so_dien_thoai} onChange={(value) => setForm((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0905555666" />
 
               <div className="form-group">
@@ -357,10 +355,10 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
               </div>
 
               <div className="form-full" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddForm(false)}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
                   Hủy
                 </button>
-                <button type="submit" className="btn btn-primary btn-sm">
+                <button type="submit" className="btn btn-primary">
                   <UserPlus size={15} />
                   <span>Xác nhận thêm</span>
                 </button>
@@ -389,18 +387,18 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
               <col className="mentor-col-department" />
               <col className="mentor-col-expertise" />
               <col className="mentor-col-experience" />
-              <col className="mentor-col-count" />
+              <col className="mentor-col-capacity mentor-col-count" />
               <col className="mentor-col-actions" />
             </colgroup>
             <thead>
               <tr>
-                <th>Họ và tên</th>
-                <th>Thông tin liên hệ</th>
-                <th>Phòng ban</th>
-                <th>Chuyên môn</th>
-                <th>Kinh nghiệm</th>
-                <th>TTS đang hướng dẫn</th>
-                <th>Thao tác</th>
+                <th className="mentor-th-name">Họ và tên</th>
+                <th className="mentor-th-contact">Thông tin liên hệ</th>
+                <th className="mentor-th-department">Phòng ban</th>
+                <th className="mentor-th-expertise">Chuyên môn</th>
+                <th className="mentor-th-experience">Kinh nghiệm</th>
+                <th className="mentor-th-capacity">TTS đang hướng dẫn</th>
+                <th className="mentor-th-actions">Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -412,7 +410,7 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                 <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px' }}>Chưa có tài khoản Mentor.</td></tr>
               ) : mentors.map((m) => (
                 <tr key={m.ma_nguoi_dung}>
-                  <td>
+                  <td className="mentor-td-name">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div className="user-avatar" style={{ width: '32px', height: '32px', fontSize: '12px' }}>
                         {m.ho_ten.charAt(0)}
@@ -422,7 +420,7 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                       </div>
                     </div>
                   </td>
-                  <td>
+                  <td className="mentor-td-contact">
                     <div style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Mail size={12} color="var(--text-subtle)" />
                       <span>{m.email}</span>
@@ -434,25 +432,25 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td className="mentor-td-department">
                     <div style={{ fontSize: '13px' }}>{m.phong_ban || 'Chưa phân phòng'}</div>
                   </td>
-                  <td>
+                  <td className="mentor-td-expertise">
                     <span className="badge badge-info" style={{ fontSize: '12px' }}>
                       {m.chuyen_mon || 'Chưa cập nhật'}
                     </span>
                   </td>
-                  <td style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  <td className="mentor-td-experience" style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                     {(m.kinh_nghiem ?? m.years_of_experience ?? m.experience) == null
                       ? 'Chưa cập nhật'
                       : `${m.kinh_nghiem ?? m.years_of_experience ?? m.experience} năm`}
                   </td>
-                  <td>
+                  <td className="mentor-td-capacity">
                     <button type="button" className="mentor-assigned-count" onClick={() => openAssignedInterns(m)} title="Xem danh sách TTS được phân công">
-                      <Users size={14} /> {m.so_tts_dang_huong_dan || 0} TTS
+                      <Users size={14} /> <span>{m.so_tts_dang_huong_dan || 0} TTS</span>
                     </button>
                   </td>
-                  <td>
+                  <td className="mentor-td-actions">
                     <div className="mentor-action-buttons">
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openAssignedInterns(m)} title="Xem TTS đang quản lý">
                         <Users size={14} /><span>Danh sách</span>

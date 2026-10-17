@@ -40,23 +40,29 @@ class MasterDataCatalogTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_hr_can_create_normalized_department_and_duplicate_is_rejected(self):
+    def test_admin_can_create_normalized_department_and_duplicate_is_rejected(self):
         name = f"Engineering {uuid4().hex}"
-        result = create_department(DepartmentCreate(ten_phong_ban=f"  {name}   Team  "), request_as("HR"), self.db)
+        result = create_department(DepartmentCreate(ten_phong_ban=f"  {name}   Team  "), request_as("Admin"), self.db)
         self.assertEqual(result["ten_phong_ban"], f"{name} Team")
 
         with self.assertRaises(HTTPException) as error:
             create_department(DepartmentCreate(ten_phong_ban=f"  {name.upper()} TEAM  "), request_as("Admin"), self.db)
         self.assertEqual(error.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as denied:
+            create_department(DepartmentCreate(ten_phong_ban="HR private catalog"), request_as("HR"), self.db)
+        self.assertEqual(denied.exception.status_code, 403)
 
-    def test_hr_can_create_university_and_duplicate_is_rejected(self):
+    def test_admin_can_create_university_and_duplicate_is_rejected(self):
         name = f"University {uuid4().hex}"
-        result = create_university(UniversityCreate(ten_truong=f"  {name}   Campus  "), request_as("HR"), self.db)
+        result = create_university(UniversityCreate(ten_truong=f"  {name}   Campus  "), request_as("Admin"), self.db)
         self.assertEqual(result["ten_truong"], f"{name} Campus")
 
         with self.assertRaises(HTTPException) as error:
-            create_university(UniversityCreate(ten_truong=f" {name.upper()} CAMPUS "), request_as("HR"), self.db)
+            create_university(UniversityCreate(ten_truong=f" {name.upper()} CAMPUS "), request_as("Admin"), self.db)
         self.assertEqual(error.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as denied:
+            create_university(UniversityCreate(ten_truong="HR private university"), request_as("HR"), self.db)
+        self.assertEqual(denied.exception.status_code, 403)
 
     def test_mentor_cannot_create_catalog_items_and_blank_names_are_invalid(self):
         with self.assertRaises(HTTPException) as error:

@@ -106,6 +106,13 @@ Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, 
 - Migration `migrations/20261008_us25_us26_allowances.sql` và `init_db()` cùng tạo bảng an toàn khi chạy lại. Sao lưu trước khi áp dụng trên MySQL hiện có. FK RESTRICT giữ lịch sử phụ cấp khi có yêu cầu xóa hồ sơ, đơn tham gia hoặc actor đã được ledger tham chiếu.
 - Test cô lập: từ `backend/`, chạy `.venv/Scripts/python -m unittest discover -s tests -p test_us25_us26_allowances.py -v`; không chạy suite vào DB nghiệp vụ.
 
+### Sprint 4 — US37 HRM Sandbox
+
+- Admin → **Tích hợp HRM** kiểm tra kết nối, ánh xạ mã phòng ban, xem trước (`NEW`/`UPDATE`/`UNCHANGED`/`CONFLICT`/`INVALID`), xác nhận đồng bộ và xem lịch sử.
+- Sandbox là dịch vụ demo loopback `127.0.0.1:8100`, dữ liệu HRM lưu trong SQLite riêng. Bản ghi đồng bộ đi vào danh bạ HRM riêng của IMS, không tạo tài khoản hoặc thay đổi vai trò, phân công Mentor hay lịch sử thực tập.
+- Dùng `scripts/run_us37_uat.ps1` để chạy frontend `localhost:3000`, backend `127.0.0.1:8000` và Sandbox với hai SQLite UAT tách biệt; dùng `scripts/stop_us37_uat.ps1` để dừng đúng các process UAT đã ghi nhận.
+- Cấu hình normal runtime, sinh API key thử nghiệm và migration chỉ dành cho database IMS thử nghiệm xem tại [docs/us37-hrm-integration.md](docs/us37-hrm-integration.md). HRM doanh nghiệp thật chưa được tích hợp.
+
 - Sửa lại lỗi đăng kí, Thêm quên mật khẩu, khi hồ sơ được duyệt thì sẽ có email gửi về gmail để xác nhận cho thực tập sinh đã đăng kì thành công và gửi cho mật khẩu để thực tập sinh đăng nhập và đổi mật khẩu mới
 - Thêm Chức năng cho gửi email (gửi ảnh, file tài liệu)
 - Thêm tránh thư trùng lặp cùng một nội dung và không cho gửi

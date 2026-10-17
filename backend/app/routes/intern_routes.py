@@ -13,6 +13,21 @@ from ..personal_schedule import PersonalScheduleService
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
 
 
+def _validate_master_catalog_item(db, *, item_id: int | None, meta_table: str, id_column: str, label: str, unchanged_id: int | None = None) -> None:
+    if item_id is None:
+        return
+    try:
+        row = db.execute(
+            f"SELECT is_active FROM {meta_table} WHERE {id_column} = ?", (item_id,)
+        ).fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Danh mục chưa sẵn sàng; quản trị viên cần áp dụng migration master-data.") from exc
+    if not row:
+        raise HTTPException(status_code=422, detail=f"{label} đã chọn không tồn tại trong danh mục IMS.")
+    if not bool(row["is_active"]) and item_id != unchanged_id:
+        raise HTTPException(status_code=422, detail=f"{label} đã ngừng sử dụng; hãy chọn mục đang hoạt động.")
+
+
 @router.get("/me/schedule")
 def intern_personal_schedule(
     request: Request,
@@ -129,6 +144,14 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
     require_role(request, "Admin", "HR")
     require_password_change_schema(db)
     validate_phone_number(data.so_dien_thoai)
+    _validate_master_catalog_item(
+        db, item_id=data.ma_phong_ban, meta_table="IMS_DEPARTMENT_CATALOG_META",
+        id_column="ma_phong_ban", label="Phòng ban",
+    )
+    _validate_master_catalog_item(
+        db, item_id=data.ma_truong, meta_table="IMS_UNIVERSITY_CATALOG_META",
+        id_column="ma_truong", label="Trường đại học",
+    )
     email = data.email.strip().lower()
     cursor = db.cursor()
 
@@ -297,7 +320,8 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
     
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
-        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.ma_truong, u.ma_phong_ban,
+               h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
@@ -309,6 +333,15 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
         )
 
     ma_nguoi_dung = record["ma_nguoi_dung"]
+
+    _validate_master_catalog_item(
+        db, item_id=data.ma_phong_ban, meta_table="IMS_DEPARTMENT_CATALOG_META",
+        id_column="ma_phong_ban", label="Phòng ban", unchanged_id=record["ma_phong_ban"],
+    )
+    _validate_master_catalog_item(
+        db, item_id=data.ma_truong, meta_table="IMS_UNIVERSITY_CATALOG_META",
+        id_column="ma_truong", label="Trường đại học", unchanged_id=record["ma_truong"],
+    )
 
     # Kiểm tra nếu đổi email thì email mới không được trùng với người dùng khác
     cursor.execute("""
