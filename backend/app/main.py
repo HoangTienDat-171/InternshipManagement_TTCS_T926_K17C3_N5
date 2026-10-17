@@ -121,7 +121,8 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     global _backup_scheduler_stop, _backup_scheduler_task
-    init_db()
+    if os.getenv("IMS_SKIP_STARTUP_DB_INIT") != "1":
+        init_db()
     if DATABASE_BACKEND == "sqlite":
         db = get_db_connection()
         try:
