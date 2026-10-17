@@ -72,6 +72,21 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(restored_upload.read_bytes()).hexdigest(), manifest["upload_files"][0]["sha256"])
         self.assertEqual(result["manifest"]["upload_file_count"], 1)
 
+    def test_mysql_event_privilege_failure_is_classified_without_logging_client_output(self):
+        stderr = b"mysqldump: Couldn't execute 'SHOW EVENTS': Access denied for user 'private_user'@'private_host'"
+        options_file = self.root / "mysql-client.cnf"
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary_directory:
+            with patch.dict(os.environ, {"MYSQL_DATABASE": "ims_test"}), \
+                 patch.object(backup_service, "_find_mysql_tool", return_value="mysqldump"), \
+                 patch.object(backup_service, "_mysql_client_file", return_value=options_file), \
+                 patch.object(backup_service.subprocess, "run", return_value=SimpleNamespace(returncode=2, stderr=stderr)):
+                with self.assertLogs(backup_service.logger, level="WARNING") as logs:
+                    with self.assertRaises(backup_service.BackupError) as context:
+                        backup_service._dump_mysql(Path(temporary_directory) / "database.sql", Path(temporary_directory))
+        self.assertEqual(context.exception.code, "MYSQLDUMP_EVENT_PRIVILEGE_MISSING")
+        self.assertNotIn("private_user", "\n".join(logs.output))
+        self.assertNotIn("private_host", "\n".join(logs.output))
+
     def test_low_disk_failure_is_persisted_and_audited(self):
         with patch.object(backup_service.shutil, "disk_usage", return_value=SimpleNamespace(free=0)):
             with self.assertRaises(backup_service.BackupError) as context:

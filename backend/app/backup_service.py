@@ -41,7 +41,10 @@ def backup_schema_ready(db) -> bool:
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?, ?, ?)",
             tuple(required),
         ).fetchall()
-        return required.issubset({row["TABLE_NAME"] for row in rows})
+        # Windows MySQL commonly reports table names in lowercase when
+        # lower_case_table_names is enabled. Compare normalized names so the
+        # feature remains available regardless of the server's identifier case.
+        return required.issubset({str(row["TABLE_NAME"]).upper() for row in rows})
     rows = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?)",
         tuple(required),
@@ -125,12 +128,30 @@ def _dump_mysql(destination: Path, temporary_directory: Path) -> tuple[str, list
     try:
         with destination.open("wb") as output:
             result = subprocess.run(args, stdout=output, stderr=subprocess.PIPE, timeout=3600, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BackupError("MYSQLDUMP_FAILED") from exc
+    except subprocess.TimeoutExpired as exc:
+        logger.warning("MySQL dump timed out after the configured limit.")
+        raise BackupError("MYSQLDUMP_TIMEOUT") from exc
+    except OSError as exc:
+        logger.warning("MySQL dump executable could not be started (OS error %s).", exc.errno)
+        raise BackupError("MYSQLDUMP_EXECUTION_FAILED") from exc
     finally:
         options_file.unlink(missing_ok=True)
     if result.returncode != 0:
-        raise BackupError("MYSQLDUMP_FAILED")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        if re.search(r"show events[\s\S]*access denied|access denied[\s\S]*show events", stderr, re.IGNORECASE):
+            code = "MYSQLDUMP_EVENT_PRIVILEGE_MISSING"
+        elif re.search(r"access denied|need .* privilege|permission denied", stderr, re.IGNORECASE):
+            code = "MYSQLDUMP_PRIVILEGE_MISSING"
+        elif re.search(r"unknown (?:variable|option)|unknown option", stderr, re.IGNORECASE):
+            code = "MYSQLDUMP_UNSUPPORTED_OPTION"
+        elif re.search(r"can't connect|connection refused|unable to connect", stderr, re.IGNORECASE):
+            code = "MYSQLDUMP_CONNECTION_FAILED"
+        else:
+            code = "MYSQLDUMP_FAILED"
+        # Keep stderr out of logs and the database: client diagnostics can contain
+        # account, host, and schema identifiers. The stable category is sufficient.
+        logger.warning("MySQL dump exited with code %s; classified as %s.", result.returncode, code)
+        raise BackupError(code)
     tables = _list_mysql_tables()
     return database_name, tables, _count_mysql_rows(tables)
 

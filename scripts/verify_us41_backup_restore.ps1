@@ -4,18 +4,24 @@
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$BackupJobId,
     [Parameter(Mandatory = $true)][ValidatePattern('^ims_restore_drill_[A-Za-z0-9_]{1,48}$')][string]$RestoreDatabase,
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$ActorUserId,
+    [switch]$UsePrecreatedRestoreDatabase,
     [string]$MysqlClient = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$envFile = Join-Path $repoRoot 'backend/.env'
+$envFiles = @(
+    (Join-Path $env:LOCALAPPDATA 'IMS-US37-CLEAN-UAT\runtime.env'),
+    (Join-Path $repoRoot 'backend/.env')
+)
+$envFile = $envFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 
-# Load local DB values for this process only; never print them or put them in arguments.
-if (Test-Path -LiteralPath $envFile) {
+# Load only database settings needed by this process; do not import SMTP or HRM secrets.
+if ($envFile) {
     foreach ($line in Get-Content -LiteralPath $envFile) {
         if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$' -and -not $line.TrimStart().StartsWith('#')) {
             $key = $Matches[1]
+            if ($key -notin @('MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE')) { continue }
             $value = $Matches[2].Trim().Trim('"').Trim("'")
             if (-not [Environment]::GetEnvironmentVariable($key, 'Process')) {
                 [Environment]::SetEnvironmentVariable($key, $value, 'Process')
@@ -120,11 +126,16 @@ try {
 
     $schemaCheck = & $MysqlClient "--defaults-extra-file=$cnfPath" '--batch' '--skip-column-names' '--execute' "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='$RestoreDatabase'" 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Không kết nối được MySQL để kiểm tra schema đích.' }
-    if ($schemaCheck) { throw "Schema đích $RestoreDatabase đã tồn tại. Không ghi đè; hãy chọn tên mới chưa dùng." }
-
-    $createSql = "CREATE DATABASE ``$RestoreDatabase`` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
-    & $MysqlClient "--defaults-extra-file=$cnfPath" '--execute' $createSql 2>$null
-    if ($LASTEXITCODE -ne 0) { throw 'Tài khoản MySQL hiện tại không có quyền tạo schema restore. Nhờ DBA cấp quyền tạm cho schema ims_restore_drill_* rồi chạy lại.' }
+    if ($schemaCheck) {
+        if (-not $UsePrecreatedRestoreDatabase) { throw "Schema đích $RestoreDatabase đã tồn tại. Không ghi đè; hãy chọn tên mới chưa dùng." }
+        $existingTableCount = & $MysqlClient "--defaults-extra-file=$cnfPath" '--batch' '--skip-column-names' '--execute' "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$RestoreDatabase'" 2>$null
+        if ($LASTEXITCODE -ne 0 -or [int]$existingTableCount -ne 0) { throw 'Schema restore DBA tạo sẵn phải rỗng; script sẽ không ghi đè bảng hiện có.' }
+    } else {
+        if ($UsePrecreatedRestoreDatabase) { throw 'Không tìm thấy schema restore DBA tạo sẵn. Tạo đúng schema và cấp quyền riêng trước khi chạy lại.' }
+        $createSql = "CREATE DATABASE ``$RestoreDatabase`` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+        & $MysqlClient "--defaults-extra-file=$cnfPath" '--execute' $createSql 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Không tạo được schema restore. Nhờ DBA tạo một schema ims_restore_drill_* rỗng và chỉ cấp quyền trên schema đó cho tài khoản backend.' }
+    }
 
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = $MysqlClient
