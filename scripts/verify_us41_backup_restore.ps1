@@ -234,28 +234,32 @@ try {
         restored_upload_directory = $restoreUploadsDirectory
         source_backup_id = $BackupJobId
     }
-    $verification | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding UTF8
 
     $actorSql = [string]$ActorUserId
-    $jobJson = ($verification | ConvertTo-Json -Depth 6 -Compress).Replace("'", "''")
-    $auditJson = ([pscustomobject]@{
+    # Pass JSON through hex literals so Windows PowerShell's native argument
+    # quoting cannot add backslashes to JSON quotes before mysql.exe parses it.
+    $jobJsonText = $verification | ConvertTo-Json -Depth 6 -Compress
+    $jobJsonHex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($jobJsonText)).Replace('-', '')
+    $auditJsonText = [pscustomobject]@{
         source_backup_id = $BackupJobId
         restore_database = $RestoreDatabase
         table_count = $checks.Count
         foreign_key_constraints = $foreignKeys.Count
         upload_file_count = @($manifest.upload_files).Count
         checksum_status = 'VALID'
-    } | ConvertTo-Json -Compress).Replace("'", "''")
+    } | ConvertTo-Json -Compress
+    $auditJsonHex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($auditJsonText)).Replace('-', '')
     $recordSql = @"
 START TRANSACTION;
 INSERT INTO IMS_BACKUP_JOBS (backup_type,status,started_by,started_at,finished_at,checksum_sha256,checksum_status,checksum_checked_at,manifest)
-VALUES ('RESTORE_VERIFICATION','SUCCESS',$actorSql,CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6),'$($actualHash.ToLowerInvariant())','VALID',CURRENT_TIMESTAMP(6),CAST('$jobJson' AS JSON));
+VALUES ('RESTORE_VERIFICATION','SUCCESS',$actorSql,CURRENT_TIMESTAMP(6),CURRENT_TIMESTAMP(6),'$($actualHash.ToLowerInvariant())','VALID',CURRENT_TIMESTAMP(6),CAST(CONVERT(0x$jobJsonHex USING utf8mb4) AS JSON));
 INSERT INTO IMS_AUDIT_LOG (actor_user_id,actor_name,action,resource,resource_id,outcome,metadata,created_at)
-VALUES ($actorSql,(SELECT ho_ten FROM NGUOI_DUNG WHERE ma_nguoi_dung=$actorSql),'BACKUP_RESTORE_VERIFIED','BACKUP','$BackupJobId','SUCCESS',CAST('$auditJson' AS JSON),CURRENT_TIMESTAMP(6));
+VALUES ($actorSql,(SELECT ho_ten FROM NGUOI_DUNG WHERE ma_nguoi_dung=$actorSql),'BACKUP_RESTORE_VERIFIED','BACKUP','$BackupJobId','SUCCESS',CAST(CONVERT(0x$auditJsonHex USING utf8mb4) AS JSON),CURRENT_TIMESTAMP(6));
 COMMIT;
 "@
     & $MysqlClient "--defaults-extra-file=$cnfPath" '--database' $env:MYSQL_DATABASE '--execute' $recordSql 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Restore đã qua kiểm tra nhưng không ghi được kết quả/audit vào IMS UAT. Schema thử và uploads vẫn được giữ.' }
+    $verification | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $reportPath -Encoding UTF8
     Write-Host "RESTORE DRILL PASS: $RestoreDatabase"
     Write-Host "Báo cáo kiểm tra: $reportPath"
     Write-Host "Uploads restore: $restoreUploadsDirectory"
