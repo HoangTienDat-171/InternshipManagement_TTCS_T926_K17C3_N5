@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
-from .. import database as database_module
+from .. import audit_service, database as database_module
 from ..database import get_db, hash_password, verify_password, has_password_change_column, has_temporary_password_metadata
 from ..account_credentials import (
     create_temporary_password,
@@ -127,6 +127,31 @@ def record_login_attempt(email: str, success: bool, reason: str, ip: str, db: sq
                 last_attempt = CURRENT_TIMESTAMP
         """, (email, new_count, locked_until_str, new_count, locked_until_str))
     
+    if commit:
+        db.commit()
+
+
+def _record_auth_audit(db, request: Request, *, outcome: str, reason: str, user=None, commit: bool = True):
+    """Write safe auth activity without putting submitted email/password in the event."""
+    if not audit_service.audit_schema_ready(db):
+        return
+    actor = None
+    if user is not None:
+        actor = {
+            "ma_nguoi_dung": user["ma_nguoi_dung"],
+            "ho_ten": user["ho_ten"],
+            "session_id": getattr(request.state, "audit_session_id", None),
+        }
+    audit_service.write_audit_event(
+        db,
+        actor=actor,
+        action="AUTH_LOGIN_SUCCESS" if outcome == "SUCCESS" else "AUTH_LOGIN_FAILURE",
+        resource="AUTHENTICATION",
+        outcome=outcome,
+        metadata={"reason": reason, "method": "password"},
+        ip_address=request.client.host if request.client else None,
+        request_id=request.headers.get("x-request-id"),
+    )
     if commit:
         db.commit()
 
@@ -343,7 +368,11 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     email_clean = data.email.strip().lower()
 
     # 1. Kiểm tra trạng thái khóa do Brute-force
-    check_account_lockout(email_clean, db)
+    try:
+        check_account_lockout(email_clean, db)
+    except HTTPException:
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_LOCKED")
+        raise
 
     cursor = db.cursor()
     password_flag = "u.must_change_password" if has_password_change_column(db) else "0 AS must_change_password"
@@ -367,6 +396,7 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     if not user:
         verify_password(data.mat_khau, DUMMY_BCRYPT_HASH)
         record_login_attempt(email_clean, False, "Tài khoản không tồn tại (Timing mitigation)", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="INVALID_CREDENTIALS")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email hoặc mật khẩu không chính xác!"
@@ -376,6 +406,7 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     is_valid = verify_password(data.mat_khau, user["mat_khau"])
     if not is_valid:
         record_login_attempt(email_clean, False, "Sai mật khẩu", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="INVALID_CREDENTIALS", user=user)
         cursor.execute("SELECT failed_count FROM FAILED_LOGIN_ATTEMPTS WHERE email = ?", (email_clean,))
         row = cursor.fetchone()
         current_fails = row["failed_count"] if row else 1
@@ -395,12 +426,14 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     # 4. Yêu cầu: Sau khi tạo tài khoản thì phải đợi Quản lý thực tập sinh xét duyệt
     if user["trang_thai"] == "ChoDuyet":
         record_login_attempt(email_clean, False, "Đăng nhập bị từ chối: Đang chờ xét duyệt", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_PENDING", user=user)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tài khoản của bạn đang chờ Quản lý thực tập sinh xét duyệt. Vui lòng quay lại sau khi được phê duyệt!"
         )
     elif user["trang_thai"] != "HoatDong":
         record_login_attempt(email_clean, False, "Tài khoản bị khóa", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_DISABLED", user=user)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tài khoản đã bị khóa hoặc vô hiệu hóa bởi Quản trị viên!"
@@ -419,6 +452,7 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
                 expired = True
         if temporary_consumed is not None or expired:
             record_login_attempt(email_clean, False, "Temporary password expired or already used", client_ip, db)
+            _record_auth_audit(db, request, outcome="FAILURE", reason="TEMPORARY_PASSWORD_EXPIRED", user=user)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Mật khẩu tạm thời đã hết hạn hoặc đã được sử dụng. Vui lòng liên hệ Admin để đặt lại mật khẩu.",
@@ -450,6 +484,7 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
         if updated.rowcount != 1:
             db.rollback()
             record_login_attempt(email_clean, False, "Temporary password already used", client_ip, db)
+            _record_auth_audit(db, request, outcome="FAILURE", reason="TEMPORARY_PASSWORD_ALREADY_USED", user=user)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Mật khẩu tạm thời đã hết hạn hoặc đã được sử dụng. Vui lòng liên hệ Admin để đặt lại mật khẩu.",
@@ -462,6 +497,8 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
         ON CONFLICT(ma_nguoi_dung) DO UPDATE SET
             token_hash = excluded.token_hash, session_id = excluded.session_id
     """, (user["ma_nguoi_dung"], token_digest(session_token), session_id))
+    request.state.audit_session_id = session_id
+    _record_auth_audit(db, request, outcome="SUCCESS", reason="AUTHENTICATED", user=user, commit=False)
     db.commit()
     if previous_session:
         background_tasks.add_task(publish_force_logout, user["ma_nguoi_dung"], previous_session["session_id"])

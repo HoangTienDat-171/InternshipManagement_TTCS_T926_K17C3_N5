@@ -22,6 +22,9 @@ const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView')
 const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
 const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
 const AttendanceView = lazy(() => import('./views/AttendanceView'));
+const AttendanceQrManagementView = lazy(() => import('./views/AttendanceQrManagementView'));
+const BackupManagementView = lazy(() => import('./views/BackupManagementView'));
+const ActivityAuditView = lazy(() => import('./views/ActivityAuditView'));
 const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
 const AllowanceManagementView = lazy(() => import('./views/AllowanceManagementView'));
 const SupportRequestView = lazy(() => import('./views/SupportRequestView'));
@@ -44,6 +47,7 @@ function tabForPath(path) {
   if (path === '/schedule') return 'intern-schedule';
   if (/^\/meetings(?:\/\d+)?$/.test(path)) return 'meetings';
   if (path === '/attendance') return 'intern-attendance';
+  if (path === '/attendance/qr') return 'attendance-qr';
   if (path === '/leave-requests') return 'leave-requests';
   if (/^\/support-requests(?:\/\d+)?$/.test(path)) return 'support-requests';
   if (/^\/allowances(?:\/\d+)?$/.test(path)) return 'allowances';
@@ -56,6 +60,8 @@ function tabForPath(path) {
   if (path === '/statistics') return 'statistics';
   if (path === '/integrations/hrm') return 'hrm-integration';
   if (path === '/master-data') return 'master-data';
+  if (path === '/admin/backups') return 'backup-management';
+  if (path === '/admin/activity-log') return 'activity-log';
   return 'interns';
 }
 
@@ -63,6 +69,7 @@ function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
   if (tab === 'meetings') return '/meetings';
   if (tab === 'intern-attendance') return '/attendance';
+  if (tab === 'attendance-qr') return '/attendance/qr';
   if (tab === 'leave-requests') return '/leave-requests';
   if (tab === 'support-requests') return '/support-requests';
   if (tab === 'allowances') return '/allowances';
@@ -75,6 +82,8 @@ function pathForTab(tab) {
   if (tab === 'statistics') return '/statistics';
   if (tab === 'hrm-integration') return '/integrations/hrm';
   if (tab === 'master-data') return '/master-data';
+  if (tab === 'backup-management') return '/admin/backups';
+  if (tab === 'activity-log') return '/admin/activity-log';
   return '/';
 }
 
@@ -114,7 +123,7 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics', 'hrm-integration', 'master-data'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics', 'hrm-integration', 'master-data', 'attendance-qr'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'support-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -130,6 +139,8 @@ export default function App() {
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
         || (activeTab === 'master-data' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'backup-management' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'activity-log' && currentUser.vai_tro !== 'Admin')
         || (activeTab === 'hrm-integration' && !['Admin', 'HR'].includes(currentUser.vai_tro))
       )
         ? personalWorkspace
@@ -569,6 +580,24 @@ export default function App() {
           {canManageRecords && visibleActiveTab === 'work-shifts' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở cấu hình ca làm việc…</div>}>
               <WorkShiftManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {canManageRecords && visibleActiveTab === 'attendance-qr' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở bộ quét QR…</div>}>
+              <AttendanceQrManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {visibleActiveTab === 'backup-management' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải quản lý sao lưu…</div>}>
+              <BackupManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {visibleActiveTab === 'activity-log' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải nhật ký hoạt động…</div>}>
+              <ActivityAuditView />
             </Suspense>
           )}
 

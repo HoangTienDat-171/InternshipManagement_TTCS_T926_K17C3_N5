@@ -1,0 +1,42 @@
+.attendance-qr-page { display: grid; gap: 18px; }
+.attendance-qr-instructions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.attendance-qr-step { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.attendance-qr-step > span { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--primary-50); color: var(--primary-700); font-weight: 800; }
+.attendance-qr-step strong { display: block; color: var(--text-main); font-size: 14px; }
+.attendance-qr-step p { margin: 6px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+.attendance-qr-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.attendance-qr-card-heading h3, .attendance-qr-methods-card h3 { margin: 4px 0 0; color: var(--text-main); font-size: 19px; }
+.attendance-qr-camera { position: relative; display: grid; min-height: 250px; place-items: center; overflow: hidden; border: 1px dashed var(--border-color); border-radius: 14px; background: var(--surface-card-hover); color: var(--text-muted); }
+.attendance-qr-camera > div { display: grid; justify-items: center; gap: 10px; padding: 24px; text-align: center; }
+.attendance-qr-camera > div svg { color: var(--primary-500); }
+.attendance-qr-camera video { display: none; width: 100%; max-height: 480px; object-fit: cover; }
+.attendance-qr-camera.is-active video { display: block; }
+.attendance-qr-camera.is-active { border-style: solid; }
+.attendance-qr-manual { display: grid; gap: 8px; margin-top: 18px; }
+.attendance-qr-manual label { color: var(--text-main); font-size: 13px; font-weight: 700; }
+.attendance-qr-manual > div { display: flex; gap: 10px; }
+.attendance-qr-manual input { flex: 1; min-width: 0; height: 44px; padding: 0 13px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--surface-card); color: var(--text-main); }
+.attendance-qr-error, .attendance-qr-success { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.attendance-qr-success { padding: 13px 15px; border: 1px solid var(--success-border); border-radius: 12px; background: var(--success-bg); color: var(--success-text); }
+.attendance-qr-success div { display: grid; gap: 3px; }
+.attendance-qr-success span { font-size: 13px; }
+.attendance-qr-methods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.attendance-qr-methods > div { display: grid; grid-template-columns: auto 1fr; align-content: start; align-items: center; gap: 7px 9px; padding: 14px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--surface-card-hover); }
+.attendance-qr-methods > div > svg { color: var(--success-text); }
+.attendance-qr-methods > div > strong { color: var(--text-main); font-size: 14px; }
+.attendance-qr-methods > div > span { grid-column: 1 / -1; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.attendance-qr-methods > .is-unavailable > svg { color: var(--warning-text); }
+.attendance-qr-loading { padding: 20px 0; color: var(--text-muted); }
+.attendance-method-note { margin-top: 12px; color: var(--text-muted); font-size: 13px; }
+.attendance-history-source { display: block; margin-top: 5px; color: var(--text-muted); font-size: 11px; }
+
+html[data-theme="dark"] .attendance-qr-step > span { background: var(--primary-900); color: var(--primary-200); }
+
+@media (max-width: 900px) {
+  .attendance-qr-instructions, .attendance-qr-methods { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .attendance-qr-manual > div { align-items: stretch; flex-direction: column; }
+  .attendance-qr-card-heading { align-items: flex-start; flex-direction: column; }
+}

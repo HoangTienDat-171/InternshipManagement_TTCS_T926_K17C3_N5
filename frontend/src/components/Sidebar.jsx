@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Award,
+  Archive,
   BarChart3,
   BadgeDollarSign,
   Briefcase,
@@ -16,11 +17,13 @@ import {
   FolderOpen,
   GraduationCap,
   HelpCircle,
+  History,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
   ShieldCheck,
   SquareCheck,
+  QrCode,
   Tags,
   UserCheck,
   Users,
@@ -49,6 +52,7 @@ const MENU_CONFIG = [
   { id: 'programs', label: 'Chương trình thực tập', icon: Briefcase, roles: ['manager'] },
   { id: 'documents', label: 'Quản lý Tài liệu', icon: FolderKanban, roles: ['manager'] },
   { id: 'work-shifts', label: 'Quản lý ca làm việc', icon: CalendarDays, roles: ['manager'] },
+  { id: 'attendance-qr', label: 'Quét QR chấm công', icon: QrCode, roles: ['manager'] },
   { id: 'meetings', label: 'Lịch họp', icon: CalendarDays, roles: ['manager'] },
   { id: 'final-reports', label: 'Báo cáo cuối kỳ', icon: FileText, roles: ['manager'] },
   { id: 'statistics', label: 'Thống kê thực tập sinh', icon: BarChart3, roles: ['manager'] },
@@ -57,6 +61,8 @@ const MENU_CONFIG = [
   { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },
   { id: 'accounts', label: 'Quản trị Người dùng', icon: ShieldCheck, roles: ['manager'], adminOnly: true },
   { id: 'master-data', label: 'Quản lý danh mục', icon: Tags, roles: ['manager'], adminOnly: true },
+  { id: 'backup-management', label: 'Sao lưu & khôi phục', icon: Archive, roles: ['manager'], adminOnly: true },
+  { id: 'activity-log', label: 'Nhật ký hoạt động', icon: History, roles: ['manager'], adminOnly: true },
   { id: 'hrm-integration', label: 'Tích hợp HRM', icon: Database, roles: ['manager'] },
 
   // Mentor

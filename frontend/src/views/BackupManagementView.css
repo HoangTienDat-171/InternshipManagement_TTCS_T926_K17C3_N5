@@ -1,0 +1,43 @@
+.backup-management-page { display: grid; gap: 18px; }
+.backup-heading-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.backup-error { display: flex; align-items: center; gap: 10px; }
+.backup-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.backup-summary-card { display: grid; gap: 7px; }
+.backup-summary-card > span { color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.backup-summary-card > strong { color: var(--text-main); font-size: 19px; overflow-wrap: anywhere; }
+.backup-summary-card > small { color: var(--text-muted); font-size: 12px; }
+.backup-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+.backup-section-heading > svg { color: var(--primary-500); }
+.backup-section-heading h3 { margin: 4px 0 0; color: var(--text-main); font-size: 19px; }
+.backup-storage-path { display: grid; gap: 6px; margin-bottom: 15px; }
+.backup-storage-path span { color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.backup-storage-path code { display: block; overflow-wrap: anywhere; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card-hover); color: var(--text-main); font-size: 12px; }
+.backup-settings-form { display: grid; grid-template-columns: minmax(190px, 1.4fr) repeat(2, minmax(130px, 1fr)) auto; gap: 13px; align-items: end; }
+.backup-settings-form > label:not(.backup-checkbox) { display: grid; gap: 6px; color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.backup-settings-form input[type="number"] { height: 42px; width: 100%; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); font: inherit; }
+.backup-settings-form input:disabled { opacity: .55; }
+.backup-settings-form small { font-size: 11px; font-weight: 400; }
+.backup-checkbox { display: flex; align-items: center; gap: 9px; min-height: 42px; color: var(--text-main); font-size: 13px; font-weight: 700; }
+.backup-checkbox input { accent-color: var(--primary-600); width: 16px; height: 16px; }
+.backup-settings-note { display: flex; align-items: flex-start; gap: 8px; margin: 13px 0 0; color: var(--warning-text); font-size: 12px; line-height: 1.5; }
+.backup-settings-note svg { flex: 0 0 auto; margin-top: 1px; }
+.backup-loading { padding: 20px 0; color: var(--text-muted); }
+.backup-empty { display: grid; min-height: 160px; justify-items: center; align-content: center; gap: 8px; color: var(--text-muted); text-align: center; }
+.backup-empty strong { color: var(--text-main); }
+.backup-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border-color); border-radius: 12px; }
+.backup-table { width: 100%; min-width: 750px; border-collapse: collapse; color: var(--text-main); font-size: 13px; }
+.backup-table th { padding: 12px; background: var(--surface-card-hover); color: var(--text-muted); text-align: left; font-size: 11px; text-transform: uppercase; }
+.backup-table td { padding: 12px; border-top: 1px solid var(--border-color); vertical-align: middle; }
+.backup-table td small { display: block; max-width: 250px; margin-top: 4px; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.backup-status, .backup-checksum { display: inline-flex; padding: 5px 9px; border-radius: 999px; background: var(--surface-card-hover); color: var(--text-muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.backup-status.is-success, .backup-checksum.is-valid { background: var(--success-bg); color: var(--success-text); }
+.backup-status.is-failed, .backup-checksum.is-invalid { background: var(--danger-bg); color: var(--danger-text); }
+.backup-status.is-running { background: var(--warning-bg); color: var(--warning-text); }
+.backup-status.is-expired { opacity: .72; }
+.backup-restore-guide ol { display: grid; gap: 8px; padding-left: 21px; color: var(--text-main); font-size: 13px; line-height: 1.55; }
+.backup-restore-guide code { padding: 2px 5px; border-radius: 5px; background: var(--surface-card-hover); font-size: 12px; }
+.backup-restore-guide > p { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; color: var(--warning-text); font-size: 12px; line-height: 1.5; }
+html[data-theme="dark"] .backup-status.is-success, html[data-theme="dark"] .backup-checksum.is-valid { background: color-mix(in srgb, var(--success-bg) 45%, #0f172a); }
+
+@media (max-width: 900px) { .backup-settings-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .backup-summary-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .backup-settings-form { grid-template-columns: 1fr; } .backup-heading-actions { width: 100%; } }
