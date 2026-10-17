@@ -649,7 +649,8 @@ def on_startup() -> None:
         raise RuntimeError("HRM_SANDBOX_API_KEY and HRM_SANDBOX_ADMIN_API_KEY must both be configured.")
     if hmac.compare_digest(_load_api_key(), _load_admin_api_key()):
         raise RuntimeError("HRM Sandbox service and admin keys must be different.")
-    initialize_database()
+    if os.getenv("HRM_SANDBOX_SKIP_STARTUP_DB_INIT") != "1":
+        initialize_database()
 
 
 @app.get("/api/v1/health", dependencies=[Depends(require_api_key)])

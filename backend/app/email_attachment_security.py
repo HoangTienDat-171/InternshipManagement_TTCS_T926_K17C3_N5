@@ -27,7 +27,12 @@ BLOCKED_EXTENSIONS = {
     ".docm", ".xlsm", ".pptm"  # Macro-enabled Office files
 }
 
-ATTACHMENT_ROOT = Path(__file__).resolve().parents[1] / "uploads" / "email_attachments"
+ATTACHMENT_ROOT = Path(
+    os.getenv(
+        "EMAIL_ATTACHMENT_ROOT",
+        str(Path(__file__).resolve().parents[1] / "uploads" / "email_attachments"),
+    )
+).expanduser().resolve()
 ATTACHMENT_ROOT.mkdir(parents=True, exist_ok=True)
 
 
