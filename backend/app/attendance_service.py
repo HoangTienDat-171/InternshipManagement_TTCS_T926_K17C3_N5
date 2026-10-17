@@ -4,10 +4,12 @@ import sqlite3
 from calendar import monthrange
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
+from typing import Protocol
 
 from fastapi import HTTPException
 
 from . import database
+from .audit_service import write_audit_event
 from .work_shift_service import resolve_applicable_shifts
 
 
@@ -19,7 +21,9 @@ NO_CHECK_IN_MESSAGE = "Bạn chưa Check-in cho ca làm hôm nay."
 @contextmanager
 def _write_transaction(db):
     try:
-        db.execute("BEGIN IMMEDIATE")
+        # MySQL has no BEGIN IMMEDIATE syntax; use its transaction start while
+        # keeping SQLite's write reservation for the existing concurrency tests.
+        db.execute("BEGIN IMMEDIATE" if database.DATABASE_BACKEND == "sqlite" else "START TRANSACTION")
         yield
         db.commit()
     except Exception:
@@ -103,12 +107,13 @@ class InternAttendanceService:
     def _record_query() -> str:
         return """
             SELECT a.id, a.attendance_date, a.check_in_at, a.check_out_at,
-                   a.status, a.note,
+                   a.status, a.note, COALESCE(src.source, 'MANUAL') AS source,
                    s.id AS shift_id, s.name AS shift_name,
                    s.start_time AS shift_start_time, s.end_time AS shift_end_time,
                    s.scope_type AS shift_scope_type
             FROM CHAM_CONG a
             JOIN CA_LAM_VIEC s ON s.id = a.ca_lam_viec_id
+            LEFT JOIN IMS_ATTENDANCE_SOURCES src ON src.attendance_id = a.id
         """
 
     def _today_records(self, profile_id: int, day: date, *, for_update: bool = False) -> list[dict]:
@@ -211,38 +216,65 @@ class InternAttendanceService:
             "total_pages": (total + page_size - 1) // page_size,
         }
 
-    def check_in(self, user_id: int, note: str | None = None) -> dict:
-        with _write_transaction(self.db):
-            profile = self._profile(user_id, for_update=True)
-            day, server_now = self._server_clock()
+    def _check_in_in_transaction(
+        self,
+        user_id: int,
+        *,
+        note: str | None = None,
+        audit_actor: dict | None = None,
+    ) -> tuple[dict, bool]:
+        profile = self._profile(user_id, for_update=True)
+        day, server_now = self._server_clock()
+        existing = self._today_records(profile["ma_ho_so"], day, for_update=True)
+        if len(existing) > 1:
+            logger.error("US21 multiple attendance rows for profile_id=%s attendance_date=%s", profile["ma_ho_so"], day)
+            raise HTTPException(status_code=409, detail="Có nhiều bản ghi chấm công trong hôm nay. Vui lòng liên hệ quản trị viên.")
+        if existing:
+            return existing[0], False
+
+        program_id = self._current_program_id(profile["ma_ho_so"])
+        shift = self._applicable_shift(program_id, day)
+        try:
+            cursor = self.db.execute("""
+                INSERT INTO CHAM_CONG
+                    (ma_ho_so, ca_lam_viec_id, attendance_date, check_in_at, status, note)
+                VALUES (?, ?, ?, ?, 'CHECKED_IN', ?)
+            """, (profile["ma_ho_so"], shift["id"], day.isoformat(), server_now, note))
+        except sqlite3.IntegrityError:
+            # The existing profile lock and unique key remain the concurrency guards.
             existing = self._today_records(profile["ma_ho_so"], day, for_update=True)
             if len(existing) > 1:
                 logger.error("US21 multiple attendance rows for profile_id=%s attendance_date=%s", profile["ma_ho_so"], day)
                 raise HTTPException(status_code=409, detail="Có nhiều bản ghi chấm công trong hôm nay. Vui lòng liên hệ quản trị viên.")
             if existing:
-                return existing[0]
+                return existing[0], False
+            raise
+        attendance_id = int(cursor.lastrowid)
+        self.db.execute(
+            "INSERT INTO IMS_ATTENDANCE_SOURCES(attendance_id, source) VALUES (?, 'MANUAL')",
+            (attendance_id,),
+        )
+        row = self.db.execute(self._record_query() + " WHERE a.id = ?", (attendance_id,)).fetchone()
+        record = self._public_record(row)
+        write_audit_event(
+            self.db,
+            actor=audit_actor or {"ma_nguoi_dung": user_id},
+            action="ATTENDANCE_CHECK_IN",
+            resource="ATTENDANCE",
+            resource_id=attendance_id,
+            outcome="SUCCESS",
+            metadata={"source": "MANUAL", "shift_id": shift["id"]},
+        )
+        return record, True
 
-            program_id = self._current_program_id(profile["ma_ho_so"])
-            shift = self._applicable_shift(program_id, day)
-            try:
-                cursor = self.db.execute("""
-                    INSERT INTO CHAM_CONG
-                        (ma_ho_so, ca_lam_viec_id, attendance_date, check_in_at, status, note)
-                    VALUES (?, ?, ?, ?, 'CHECKED_IN', ?)
-                """, (profile["ma_ho_so"], shift["id"], day.isoformat(), server_now, note))
-            except sqlite3.IntegrityError:
-                # The unique key remains the final guard if another writer bypasses the profile lock.
-                existing = self._today_records(profile["ma_ho_so"], day, for_update=True)
-                if len(existing) > 1:
-                    logger.error("US21 multiple attendance rows for profile_id=%s attendance_date=%s", profile["ma_ho_so"], day)
-                    raise HTTPException(status_code=409, detail="Có nhiều bản ghi chấm công trong hôm nay. Vui lòng liên hệ quản trị viên.")
-                if existing:
-                    return existing[0]
-                raise
-            row = self.db.execute(self._record_query() + " WHERE a.id = ?", (cursor.lastrowid,)).fetchone()
-            return self._public_record(row)
+    def check_in(self, user_id: int, note: str | None = None, *, audit_actor: dict | None = None) -> dict:
+        with _write_transaction(self.db):
+            record, _created = self._check_in_in_transaction(
+                user_id, note=note, audit_actor=audit_actor,
+            )
+            return record
 
-    def check_out(self, user_id: int) -> dict:
+    def check_out(self, user_id: int, *, audit_actor: dict | None = None) -> dict:
         with _write_transaction(self.db):
             profile = self._profile(user_id, for_update=True)
             day, server_now = self._server_clock()
@@ -260,4 +292,36 @@ class InternAttendanceService:
                     WHERE id = ? AND check_out_at IS NULL
                 """, (server_now, attendance["id"]))
                 attendance = self._today_records(profile["ma_ho_so"], day, for_update=True)[0]
+                write_audit_event(
+                    self.db,
+                    actor=audit_actor or {"ma_nguoi_dung": user_id},
+                    action="ATTENDANCE_CHECK_OUT",
+                    resource="ATTENDANCE",
+                    resource_id=attendance["id"],
+                    outcome="SUCCESS",
+                    metadata={"source": attendance.get("source", "MANUAL")},
+                )
             return attendance
+
+
+class CardCredentialResolver(Protocol):
+    """Adapter contract only; connect a real reader/UID provider before using CARD."""
+
+    def resolve_user_id(self, credential: str) -> int | None:
+        """Resolve a trusted reader credential to an IMS account, or return None."""
+
+
+def check_in_with_card(db, credential: str, adapter: CardCredentialResolver, *, scanner: dict) -> dict:
+    """Device-neutral CARD extension point; no physical reader is claimed as connected."""
+    if not credential or len(credential) > 256:
+        raise HTTPException(status_code=422, detail="Thẻ không hợp lệ.")
+    user_id = adapter.resolve_user_id(credential)
+    if not user_id:
+        raise HTTPException(status_code=403, detail="Thẻ chưa được ánh xạ hoặc đầu đọc chưa được cấu hình.")
+    with _write_transaction(db):
+        record, created = InternAttendanceService(db)._check_in_in_transaction(
+            int(user_id), source="CARD", audit_actor=scanner,
+        )
+        if not created:
+            raise HTTPException(status_code=409, detail="TTS đã có lượt check-in trong ca hiện tại.")
+        return record

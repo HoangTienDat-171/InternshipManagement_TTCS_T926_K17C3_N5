@@ -45,7 +45,7 @@ def check_in_attendance(
     db=Depends(get_db),
 ):
     intern = require_role(request, "ThucTapSinh")
-    return InternAttendanceService(db).check_in(intern["ma_nguoi_dung"], data.note)
+    return InternAttendanceService(db).check_in(intern["ma_nguoi_dung"], data.note, audit_actor=intern)
 
 
 @router.post("/api/interns/me/attendance/check-out")
@@ -55,4 +55,4 @@ def check_out_attendance(
     db=Depends(get_db),
 ):
     intern = require_role(request, "ThucTapSinh")
-    return InternAttendanceService(db).check_out(intern["ma_nguoi_dung"])
+    return InternAttendanceService(db).check_out(intern["ma_nguoi_dung"], audit_actor=intern)

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Award,
+  Archive,
   BarChart3,
   BadgeDollarSign,
   Briefcase,
@@ -16,6 +17,7 @@ import {
   FolderOpen,
   GraduationCap,
   HelpCircle,
+  History,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
@@ -57,6 +59,8 @@ const MENU_CONFIG = [
   { id: 'support-requests', label: 'Xử lý Yêu cầu hỗ trợ', icon: HelpCircle, roles: ['manager'] },
   { id: 'accounts', label: 'Quản trị Người dùng', icon: ShieldCheck, roles: ['manager'], adminOnly: true },
   { id: 'master-data', label: 'Quản lý danh mục', icon: Tags, roles: ['manager'], adminOnly: true },
+  { id: 'backup-management', label: 'Sao lưu & khôi phục', icon: Archive, roles: ['manager'], adminOnly: true },
+  { id: 'activity-log', label: 'Nhật ký hoạt động', icon: History, roles: ['manager'], adminOnly: true },
   { id: 'hrm-integration', label: 'Tích hợp HRM', icon: Database, roles: ['manager'] },
 
   // Mentor

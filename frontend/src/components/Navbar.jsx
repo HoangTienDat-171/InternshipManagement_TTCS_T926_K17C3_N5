@@ -133,8 +133,13 @@ export default function Navbar({
       case 'my-evaluations': return 'Đánh giá của tôi';
       case 'accounts': return 'Quản trị Người dùng';
       case 'hrm-integration': return 'Tích hợp HRM';
+      case 'backup-management': return 'Sao lưu & khôi phục';
+      case 'activity-log': return 'Nhật ký hoạt động';
+      case 'master-data': return 'Quản lý danh mục';
+      case 'meetings': return 'Lịch họp';
+      case 'support-requests': return 'Xử lý Yêu cầu hỗ trợ';
       case 'profile': return 'Tài khoản cá nhân';
-      default: return 'Quản lý phụ cấp';
+      default: return 'Tổng quan';
     }
   };
 
