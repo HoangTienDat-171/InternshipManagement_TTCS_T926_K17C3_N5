@@ -46,6 +46,14 @@ class FakeSandboxProvider:
 
     def __init__(self, records):
         self.records = records
+        self.departments = list({
+            str(record.get("department_code") or "").strip().upper(): {
+                "department_code": str(record.get("department_code") or "").strip().upper(),
+                "department_name": record.get("department"),
+                "is_active": True,
+            }
+            for record in records if str(record.get("department_code") or "").strip()
+        }.values())
         self.available = True
 
     async def test_connection(self):
@@ -56,6 +64,11 @@ class FakeSandboxProvider:
         if not self.available:
             raise HRMProviderError("Sandbox unavailable in isolated test.")
         return [dict(record) for record in self.records]
+
+    async def fetch_departments(self):
+        if not self.available:
+            raise HRMProviderError("Sandbox unavailable in isolated test.")
+        return [dict(department) for department in self.departments]
 
 
 class US37ContractTests(unittest.TestCase):
@@ -347,6 +360,29 @@ class US37SyncWorkflowTests(unittest.TestCase):
                 request_for(), self.db,
             ))
         self.assertEqual(unknown.exception.status_code, 422)
+
+    def test_department_catalog_includes_source_departments_without_employees(self):
+        self.provider.departments.append({
+            "department_code": "EMPTY",
+            "department_name": "Phòng ban chưa có nhân viên",
+            "is_active": True,
+        })
+        mappings = asyncio.run(hrm_routes.get_department_mappings(request_for(), self.db))
+        empty_department = next(
+            item for item in mappings["hrm_departments"] if item["department_code"] == "EMPTY"
+        )
+        self.assertEqual(empty_department["department_name"], "Phòng ban chưa có nhân viên")
+        self.assertIsNone(empty_department["mapped_department_id"])
+
+        saved = self.call(
+            hrm_routes.save_department_mapping,
+            hrm_routes.DepartmentMappingRequest(
+                department_code="EMPTY", ma_phong_ban=10,
+                expected_ma_phong_ban=None, reason="Map empty source department",
+            ),
+            request_for(),
+        )
+        self.assertEqual(saved["ma_phong_ban"], 10)
 
     def test_employee_override_precedence_bulk_update_reset_and_audit(self):
         self.provider.records.append({**self.records[0], "external_employee_id": "NV002", "full_name": "Second Employee"})

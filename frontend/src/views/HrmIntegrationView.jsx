@@ -312,7 +312,7 @@ function AdminHrmIntegrationView({ currentUser }) {
             <div><span>Provider</span><strong>{current.provider_name || 'HRM Sandbox'}</strong></div>
             <div><span>Endpoint</span><strong>{current.endpoint || 'Chưa cấu hình'}</strong></div>
             <div><span>Xác thực</span><strong>Bearer key · kho bí mật local</strong></div>
-            <div><span>Database HRM</span><strong>SQLite riêng, lưu bền vững</strong></div>
+            <div><span>Database HRM</span><strong>Kho dữ liệu riêng của Sandbox, tách biệt với IMS</strong></div>
           </div>
           <button type="button" className="btn btn-secondary" onClick={checkConnection} disabled={!current.can_test_connection || Boolean(busy)}>
             {busy === 'connection' ? <LoaderCircle className="hrm-spin" size={16} /> : <Link2 size={16} />}

@@ -83,6 +83,9 @@ class HRMProvider(Protocol):
     async def fetch_employees(self) -> Sequence[Mapping[str, Any]]:
         """Return paginated source records for per-record preview validation."""
 
+    async def fetch_departments(self) -> Sequence[Mapping[str, Any]]:
+        """Return the source department catalog, including departments with no employees."""
+
 
 def validate_employee_batch(records: Sequence[HRMEmployeeRecord | Mapping[str, Any]]) -> list[HRMEmployeeRecord]:
     """Validate a provider batch and reject duplicate external IDs before preview."""

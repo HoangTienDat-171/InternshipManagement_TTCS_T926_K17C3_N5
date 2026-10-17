@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Building2, Check, Edit3, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CustomSelect from '../components/CustomSelect';
 import './MasterDataManagementView.css';
 
 const PAGE_SIZE = 10;
@@ -149,11 +150,16 @@ export default function MasterDataManagementView({ onShowToast }) {
             <Search size={17} aria-hidden="true" />
             <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Tìm theo mã, tên hoặc mô tả" />
           </label>
-          <select className="form-select master-catalog-filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} aria-label="Lọc theo trạng thái">
+          <CustomSelect
+            className="master-catalog-filter"
+            value={statusFilter}
+            onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}
+            aria-label="Lọc theo trạng thái"
+          >
             <option value="ALL">Tất cả trạng thái</option>
             <option value="ACTIVE">Đang hoạt động</option>
             <option value="INACTIVE">Đã ngừng sử dụng</option>
-          </select>
+          </CustomSelect>
         </div>
 
         {error && !dialogOpen && <div className="alert-banner error" role="alert">{error}</div>}

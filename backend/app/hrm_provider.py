@@ -13,6 +13,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_EMPLOYEES = 5000
+MAX_DEPARTMENTS = 1000
 MAX_PAGES = 100
 
 
@@ -169,6 +170,31 @@ class HRMSandboxProvider:
                 return employees
             page += 1
         raise HRMProviderError("HRM Sandbox vượt quá giới hạn phân trang.")
+
+    async def fetch_departments(self) -> list[dict]:
+        payload = await self._get_json("departments?include_inactive=true")
+        items = payload.get("items")
+        if not isinstance(items, list) or len(items) > MAX_DEPARTMENTS:
+            raise HRMProviderError("Danh mục phòng ban HRM Sandbox không hợp lệ hoặc vượt giới hạn.")
+        departments: list[dict] = []
+        seen_codes: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                raise HRMProviderError("Danh mục phòng ban HRM Sandbox không hợp lệ.")
+            code = item.get("department_code")
+            name = item.get("department_name")
+            if not isinstance(code, str) or not code.strip() or (name is not None and not isinstance(name, str)):
+                raise HRMProviderError("Mã hoặc tên phòng ban HRM Sandbox không hợp lệ.")
+            code = code.strip().upper()
+            if code.casefold() in seen_codes:
+                raise HRMProviderError("HRM Sandbox trả về mã phòng ban bị trùng.")
+            seen_codes.add(code.casefold())
+            departments.append({
+                "department_code": code,
+                "department": name.strip() if name and name.strip() else None,
+                "is_active": bool(item.get("is_active", True)),
+            })
+        return departments
 
     def _write_json_once(self, path: str, payload: dict) -> dict:
         url = f"{self.config.base_url}/api/v1/{path.lstrip('/')}"

@@ -284,7 +284,8 @@ def load_sync_context(db, provider_id: str = PROVIDER_ID) -> dict[str, Any]:
 
 
 def department_mapping_data(
-    db, provider_departments: Sequence[Mapping[str, str]], provider_id: str = PROVIDER_ID,
+    db, provider_departments: Sequence[Mapping[str, Any]], provider_id: str = PROVIDER_ID,
+    source_departments: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     choices = [dict(row) for row in db.execute(
         "SELECT ma_phong_ban, ten_phong_ban FROM PHONG_BAN ORDER BY ten_phong_ban"
@@ -295,6 +296,17 @@ def department_mapping_data(
         "WHERE m.provider_id = ?",
         (provider_id,),
     ).fetchall()}
+    department_names: dict[str, str] = {}
+    for item in source_departments:
+        code = str(item.get("department_code") or "").strip().upper()
+        name = str(item.get("department") or item.get("department_name") or "").strip()
+        if code:
+            department_names[code] = name
+    for item in provider_departments:
+        code = str(item.get("department_code") or "").strip().upper()
+        name = str(item.get("department") or item.get("department_name") or "").strip()
+        if code:
+            department_names.setdefault(code, name)
     return {
         "ims_departments": choices,
         "hrm_departments": [
@@ -304,10 +316,7 @@ def department_mapping_data(
                 "mapped_department_id": (mappings.get(code.casefold()) or {}).get("ma_phong_ban"),
                 "mapped_department_name": (mappings.get(code.casefold()) or {}).get("ten_phong_ban"),
             }
-            for code, name in sorted(
-                {(str(item.get("department_code") or "").strip().upper(), str(item.get("department") or "").strip())
-                 for item in provider_departments if item.get("department_code")}
-            )
+            for code, name in sorted(department_names.items())
         ],
     }
 
@@ -325,6 +334,7 @@ def preview_rows(records: Sequence[Mapping[str, Any]], context: Mapping[str, Any
 
 def employee_department_mapping_data(
     db, records: Sequence[Mapping[str, Any]], provider_id: str = PROVIDER_ID,
+    source_departments: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Resolve each live HRM record using employee override, then global mapping."""
     context = load_sync_context(db, provider_id)
@@ -374,7 +384,9 @@ def employee_department_mapping_data(
             "override_updated_at": override.get("updated_at") if override else None,
             "override_actor_id": int(override["approved_by"]) if override else None,
         })
-    return {"employees": employees, "ims_departments": department_mapping_data(db, records, provider_id)["ims_departments"]}
+    return {"employees": employees, "ims_departments": department_mapping_data(
+        db, records, provider_id, source_departments,
+    )["ims_departments"]}
 
 
 def invalidate_pending_previews(db, provider_id: str) -> None:

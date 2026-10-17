@@ -166,12 +166,14 @@ class US37SandboxManagementApiTests(unittest.TestCase):
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Content-Security-Policy", page.headers)
-        self.assertIn("b\u1ed9 nh\u1edb tab n\u00e0y", page.text)
-        self.assertIn("t\u1ef1 k\u1ebft n\u1ed1i l\u1ea1i khi t\u1ea3i trang", page.text)
+        self.assertIn("b\u1ed9 nh\u1edb tab hi\u1ec7n t\u1ea1i", page.text)
+        self.assertIn("\u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng k\u1ebft n\u1ed1i", page.text)
         self.assertIn("textContent", page.text)
         self.assertNotIn("innerHTML", page.text)
         self.assertNotIn("localStorage.setItem('hrmSandboxApiKey'", page.text)
-        self.assertNotIn("sessionStorage.setItem('hrmSandboxApiKey'", page.text)
+        self.assertIn("sessionStorage.getItem(API_KEY_SESSION_STORAGE)", page.text)
+        self.assertIn("sessionStorage.setItem(API_KEY_SESSION_STORAGE, apiKey)", page.text)
+        self.assertNotIn("localStorage.setItem(API_KEY_SESSION_STORAGE", page.text)
         self.assertNotIn("JSON.stringify({before:", page.text)
 
     def test_hostile_audit_note_is_returned_as_text_for_safe_dom_rendering(self):
@@ -187,7 +189,7 @@ class US37SandboxManagementApiTests(unittest.TestCase):
         detail = self.client.get(f"/api/v1/changes/{event['id']}", headers=self.headers).json()
         self.assertEqual(detail["reason"], hostile_note)
         page = self.client.get("/").text
-        self.assertIn("el.textContent=text", page)
+        self.assertIn("el.textContent = text", page)
         self.assertNotIn("innerHTML", page)
 
     def test_audit_reason_masks_contact_info_and_secret_material(self):

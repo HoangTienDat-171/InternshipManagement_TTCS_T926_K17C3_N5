@@ -238,9 +238,11 @@ async def get_department_mappings(request: Request, db=Depends(get_db)):
     provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
+        fetch_departments = getattr(provider, "fetch_departments", None)
+        source_departments = await fetch_departments() if fetch_departments else []
     except HRMProviderError as exc:
         raise _safe_failure(exc)
-    return department_mapping_data(db, records, provider.provider_id)
+    return department_mapping_data(db, records, provider.provider_id, source_departments)
 
 
 @router.put("/department-mappings")
@@ -254,9 +256,13 @@ async def save_department_mapping(
     provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
+        fetch_departments = getattr(provider, "fetch_departments", None)
+        source_departments = await fetch_departments() if fetch_departments else []
     except HRMProviderError as exc:
         raise _safe_failure(exc)
-    known_codes = {str(row.get("department_code") or "").strip().upper() for row in records}
+    known_codes = {str(row.get("department_code") or "").strip().upper() for row in source_departments}
+    if not known_codes:
+        known_codes = {str(row.get("department_code") or "").strip().upper() for row in records}
     if payload.department_code not in known_codes:
         raise HTTPException(status_code=422, detail="Mã phòng ban không có trong danh mục HRM Sandbox hiện tại.")
     try:
@@ -297,9 +303,11 @@ async def get_employee_department_mappings(request: Request, db=Depends(get_db))
     provider = _provider_or_error(db)
     try:
         records = await provider.fetch_employees()
+        fetch_departments = getattr(provider, "fetch_departments", None)
+        source_departments = await fetch_departments() if fetch_departments else []
     except HRMProviderError as exc:
         raise _safe_failure(exc)
-    return employee_department_mapping_data(db, records, provider.provider_id)
+    return employee_department_mapping_data(db, records, provider.provider_id, source_departments)
 
 
 @router.put("/employee-department-mappings")
