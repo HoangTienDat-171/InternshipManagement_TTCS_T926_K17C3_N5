@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { UserPlus, Mail, Phone, RefreshCw, Users, Pencil, X, UserRoundPlus, Trash2, ShieldCheck } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
-import CustomSelect from '../components/CustomSelect';
+import MasterDataSelect from '../components/MasterDataSelect';
 import FloatingTableScrollbar from '../components/FloatingTableScrollbar';
 import DashboardMetrics from '../components/DashboardMetrics';
 import TablePagination from '../components/TablePagination';
@@ -10,7 +10,7 @@ import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
-export default function MentorManagementView({ departments, onShowToast, currentUser }) {
+export default function MentorManagementView({ departments, onCreateDepartment, onShowToast, currentUser }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingMentor, setEditingMentor] = useState(null);
   const [assignmentMentor, setAssignmentMentor] = useState(null);
@@ -21,7 +21,7 @@ export default function MentorManagementView({ departments, onShowToast, current
   const [selectedInternIds, setSelectedInternIds] = useState([]);
   const [removingProfileId, setRemovingProfileId] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
-  const [profileForm, setProfileForm] = useState({ chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: '3' });
+  const [profileForm, setProfileForm] = useState({ chuyen_mon: '', kinh_nghiem: '' });
 
   const [mentors, setMentors] = useState([]);
   const [page, setPage] = useState(1);
@@ -38,8 +38,7 @@ export default function MentorManagementView({ departments, onShowToast, current
     so_dien_thoai: '',
     ma_phong_ban: '',
     chuyen_mon: '',
-    kinh_nghiem: '',
-    so_tts_toi_da: 3
+    kinh_nghiem: ''
   });
 
   const requestMentors = useCallback(async (requestedPage, requestedPageSize, signal) => {
@@ -113,13 +112,12 @@ export default function MentorManagementView({ departments, onShowToast, current
           ...form,
           ma_phong_ban: form.ma_phong_ban ? Number(form.ma_phong_ban) : null,
           kinh_nghiem: form.kinh_nghiem === '' ? null : Number(form.kinh_nghiem),
-          so_tts_toi_da: Number(form.so_tts_toi_da),
         }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể thêm Mentor.');
       onShowToast(data.message);
-      setForm({ ho_ten: '', email: '', so_dien_thoai: '', ma_phong_ban: '', chuyen_mon: '', kinh_nghiem: '', so_tts_toi_da: 3 });
+      setForm({ ho_ten: '', email: '', so_dien_thoai: '', ma_phong_ban: '', chuyen_mon: '', kinh_nghiem: '' });
       setShowAddForm(false);
       setPage(1);
       setLoading(true);
@@ -133,17 +131,12 @@ export default function MentorManagementView({ departments, onShowToast, current
     setProfileForm({
       chuyen_mon: mentor.chuyen_mon || '',
       kinh_nghiem: mentor.kinh_nghiem ?? '',
-      so_tts_toi_da: mentor.so_tts_toi_da ?? 3,
     });
     setEditingMentor(mentor);
   };
 
   const saveProfile = async (e) => {
     e.preventDefault();
-    if (profileForm.so_tts_toi_da === '' || Number(profileForm.so_tts_toi_da) < 0) {
-      onShowToast('Sức chứa TTS phải là số từ 0 trở lên.', 'error');
-      return;
-    }
     setModalLoading(true);
     try {
       const response = await apiFetch(`/api/mentors/${editingMentor.ma_nguoi_dung}/profile`, {
@@ -151,7 +144,6 @@ export default function MentorManagementView({ departments, onShowToast, current
         body: JSON.stringify({
           chuyen_mon: profileForm.chuyen_mon.trim() || null,
           kinh_nghiem: profileForm.kinh_nghiem === '' ? null : Number(profileForm.kinh_nghiem),
-          so_tts_toi_da: Number(profileForm.so_tts_toi_da),
         }),
       });
       const data = await response.json();
@@ -174,7 +166,14 @@ export default function MentorManagementView({ departments, onShowToast, current
       const response = await apiFetch('/api/mentors/unassigned-interns');
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách thực tập sinh.');
-      setUnassignedInterns(data);
+      const uniqueCandidates = new Map();
+      data.forEach((intern) => {
+        const existing = uniqueCandidates.get(intern.ma_nguoi_dung);
+        if (!existing || (existing.timeline_status !== 'CURRENT' && intern.timeline_status === 'CURRENT')) {
+          uniqueCandidates.set(intern.ma_nguoi_dung, intern);
+        }
+      });
+      setUnassignedInterns([...uniqueCandidates.values()]);
     } catch (error) {
       onShowToast(error.message, 'error');
       setAssignmentMentor(null);
@@ -247,14 +246,17 @@ export default function MentorManagementView({ departments, onShowToast, current
     }
   };
 
-  const currentAssignedInterns = assignedInterns.filter((intern) => intern.timeline_status === 'CURRENT');
+  const currentAssignedInterns = [...new Map(
+    assignedInterns.filter((intern) => intern.timeline_status === 'CURRENT')
+      .map((intern) => [intern.ma_nguoi_dung, intern]),
+  ).values()];
 
   return (
     <div className="mentor-management-page">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div className="mentor-page-header">
         <div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-main)' }}>Quản lý Mentor</h2>
-          <p style={{ fontSize: '13px', color: '#64748b' }}>
+          <h2>Quản lý Mentor</h2>
+          <p>
             Danh sách và quản lý thông tin người hướng dẫn thực tập sinh
           </p>
         </div>
@@ -310,25 +312,21 @@ export default function MentorManagementView({ departments, onShowToast, current
                 />
               </div>
 
-              <p className="form-hint">Hệ thống sẽ gửi email đăng nhập kèm mật khẩu tạm và yêu cầu đổi mật khẩu lần đầu.</p>
-
               <PhoneField value={form.so_dien_thoai} onChange={(value) => setForm((prev) => ({ ...prev, so_dien_thoai: value }))} placeholder="0905555666" />
 
               <div className="form-group">
                 <label className="form-label">Phòng ban</label>
-                <CustomSelect
+                <MasterDataSelect
+                  id="mentor-department"
                   name="ma_phong_ban"
-                  className="form-select"
                   value={form.ma_phong_ban}
+                  items={departments}
+                  idKey="ma_phong_ban"
+                  labelKey="ten_phong_ban"
+                  placeholder="Tìm hoặc chọn phòng ban"
+                  onCreateNew={onCreateDepartment}
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((d) => (
-                    <option key={d.ma_phong_ban} value={d.ma_phong_ban}>
-                      {d.ten_phong_ban}
-                    </option>
-                  ))}
-                </CustomSelect>
+                />
               </div>
 
               <div className="form-group">
@@ -357,10 +355,10 @@ export default function MentorManagementView({ departments, onShowToast, current
               </div>
 
               <div className="form-full" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAddForm(false)}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
                   Hủy
                 </button>
-                <button type="submit" className="btn btn-primary btn-sm">
+                <button type="submit" className="btn btn-primary">
                   <UserPlus size={15} />
                   <span>Xác nhận thêm</span>
                 </button>
@@ -389,18 +387,18 @@ export default function MentorManagementView({ departments, onShowToast, current
               <col className="mentor-col-department" />
               <col className="mentor-col-expertise" />
               <col className="mentor-col-experience" />
-              <col className="mentor-col-capacity" />
+              <col className="mentor-col-capacity mentor-col-count" />
               <col className="mentor-col-actions" />
             </colgroup>
             <thead>
               <tr>
-                <th>Họ và tên</th>
-                <th>Thông tin liên hệ</th>
-                <th>Phòng ban</th>
-                <th>Chuyên môn</th>
-                <th>Kinh nghiệm</th>
-                <th>TTS đang quản lý / sức chứa</th>
-                <th>Thao tác</th>
+                <th className="mentor-th-name">Họ và tên</th>
+                <th className="mentor-th-contact">Thông tin liên hệ</th>
+                <th className="mentor-th-department">Phòng ban</th>
+                <th className="mentor-th-expertise">Chuyên môn</th>
+                <th className="mentor-th-experience">Kinh nghiệm</th>
+                <th className="mentor-th-capacity">TTS đang hướng dẫn</th>
+                <th className="mentor-th-actions">Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -412,7 +410,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                 <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px' }}>Chưa có tài khoản Mentor.</td></tr>
               ) : mentors.map((m) => (
                 <tr key={m.ma_nguoi_dung}>
-                  <td>
+                  <td className="mentor-td-name">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <div className="user-avatar" style={{ width: '32px', height: '32px', fontSize: '12px' }}>
                         {m.ho_ten.charAt(0)}
@@ -422,7 +420,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                       </div>
                     </div>
                   </td>
-                  <td>
+                  <td className="mentor-td-contact">
                     <div style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Mail size={12} color="var(--text-subtle)" />
                       <span>{m.email}</span>
@@ -434,34 +432,34 @@ export default function MentorManagementView({ departments, onShowToast, current
                       </div>
                     )}
                   </td>
-                  <td>
+                  <td className="mentor-td-department">
                     <div style={{ fontSize: '13px' }}>{m.phong_ban || 'Chưa phân phòng'}</div>
                   </td>
-                  <td>
+                  <td className="mentor-td-expertise">
                     <span className="badge badge-info" style={{ fontSize: '12px' }}>
                       {m.chuyen_mon || 'Chưa cập nhật'}
                     </span>
                   </td>
-                  <td style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  <td className="mentor-td-experience" style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                     {(m.kinh_nghiem ?? m.years_of_experience ?? m.experience) == null
                       ? 'Chưa cập nhật'
                       : `${m.kinh_nghiem ?? m.years_of_experience ?? m.experience} năm`}
                   </td>
-                  <td>
+                  <td className="mentor-td-capacity">
                     <button type="button" className="mentor-assigned-count" onClick={() => openAssignedInterns(m)} title="Xem danh sách TTS được phân công">
-                      <Users size={14} /> {m.so_tts_dang_huong_dan || 0} / {m.so_tts_toi_da ?? 3}
+                      <Users size={14} /> <span>{m.so_tts_dang_huong_dan || 0} TTS</span>
                     </button>
                   </td>
-                  <td>
+                  <td className="mentor-td-actions">
                     <div className="mentor-action-buttons">
                       <button type="button" className="btn btn-secondary btn-sm" onClick={() => openAssignedInterns(m)} title="Xem TTS đang quản lý">
                         <Users size={14} /><span>Danh sách</span>
                       </button>
-                      {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-primary btn-sm" onClick={() => openAssignmentPicker(m)} disabled={(m.so_tts_dang_huong_dan || 0) >= (m.so_tts_toi_da ?? 3)} title="Phân công TTS">
+                      {['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-primary btn-sm" onClick={() => openAssignmentPicker(m)} title="Phân công TTS">
                         <UserRoundPlus size={14} /><span>Phân công</span>
                       </button>}
                       {currentUser?.vai_tro === 'Admin' && <>
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(m)} title="Cập nhật kinh nghiệm và sức chứa">
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(m)} title="Cập nhật chuyên môn và kinh nghiệm">
                           <Pencil size={14} /><span>Sửa</span>
                         </button>
                       </>}
@@ -497,7 +495,6 @@ export default function MentorManagementView({ departments, onShowToast, current
             <div className="modal-body mentor-modal-fields">
               <div className="form-group"><label className="form-label">Chuyên môn</label><input className="form-control" value={profileForm.chuyen_mon} onChange={(e) => setProfileForm((prev) => ({ ...prev, chuyen_mon: e.target.value }))} /></div>
               <div className="form-group"><label className="form-label">Số năm kinh nghiệm</label><input type="number" min="0" className="form-control" value={profileForm.kinh_nghiem} onChange={(e) => setProfileForm((prev) => ({ ...prev, kinh_nghiem: e.target.value }))} /></div>
-              <div className="form-group"><label className="form-label">Sức chứa TTS tối đa</label><input type="number" min="0" required className="form-control" value={profileForm.so_tts_toi_da} onChange={(e) => setProfileForm((prev) => ({ ...prev, so_tts_toi_da: e.target.value }))} /></div>
             </div>
             <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => setEditingMentor(null)}>Hủy</button><button className="btn btn-primary" disabled={modalLoading}>Lưu thay đổi</button></div>
           </form>
@@ -509,18 +506,10 @@ export default function MentorManagementView({ departments, onShowToast, current
           <div className="modal-header"><div><h3>Phân công thực tập sinh</h3><p>{assignmentMentor.ho_ten} · {assignmentMentor.phong_ban || 'Chưa phân phòng'}</p></div><button className="modal-close-btn" type="button" onClick={() => setAssignmentMentor(null)}><X size={18} /></button></div>
           <form noValidate onSubmit={assignIntern}>
             <div className="modal-body mentor-assignment-body">
-                {(() => {
-                  const capacity = assignmentMentor.so_tts_toi_da ?? 3;
-                  const assigned = assignmentMentor.so_tts_dang_huong_dan || 0;
-                  const availableSlots = Math.max(0, capacity - assigned);
-                  const percent = capacity ? Math.min(100, Math.round((assigned / capacity) * 100)) : 100;
-                return <div className="assignment-capacity-card">
-                  <div><strong>Sức chứa hiện tại</strong><span>{assigned} / {capacity} TTS</span></div>
-                  <div className="assignment-progress-track"><span className={percent >= 100 ? 'is-full' : ''} style={{ width: `${percent}%` }} /></div>
-                  <small>{availableSlots} chỗ có thể phân công</small>
-                  <small className="assignment-selection-count">Đang chọn {selectedInternIds.length}/{availableSlots}</small>
-                </div>;
-              })()}
+                <div className="assignment-selection-summary">
+                  <span>TTS đang hướng dẫn: <strong>{assignmentMentor.so_tts_dang_huong_dan || 0} TTS</strong></span>
+                  <span>Đang chọn: <strong>{selectedInternIds.length} TTS</strong></span>
+                </div>
               {modalLoading ? <p className="workspace-empty">Đang tải danh sách thực tập sinh…</p> : <div className="assignment-transfer-grid">
                 <section className="assignment-transfer-column">
                   <header><div><strong>TTS chưa phân công</strong><small>{unassignedInterns.length} hồ sơ đủ điều kiện</small></div></header>
@@ -528,7 +517,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                     {unassignedInterns.length === 0 ? <p className="workspace-empty">Hiện không có hồ sơ đủ điều kiện.</p> : unassignedInterns.map((intern) => {
                       const selected = selectedInternIds.includes(intern.ma_ho_so);
                       return <button type="button" key={intern.ma_ho_so} className={`assignment-candidate${selected ? ' selected' : ''}`}
-                        onClick={() => setSelectedInternIds((items) => selected ? items.filter((id) => id !== intern.ma_ho_so) : (items.length < Math.max(0, (assignmentMentor.so_tts_toi_da ?? 3) - (assignmentMentor.so_tts_dang_huong_dan || 0)) ? [...items, intern.ma_ho_so] : items))}>
+                        onClick={() => setSelectedInternIds((items) => selected ? items.filter((id) => id !== intern.ma_ho_so) : [...items, intern.ma_ho_so])}>
                         <span className="assignment-check-mark">{selected ? '✓' : '+'}</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small>{intern.ten_ct && <small style={{ color: 'var(--brand-primary, #0284c7)', display: 'block', fontWeight: 600 }}>Chương trình: {intern.ten_ct}</small>}</span>
                       </button>;
                     })}
@@ -556,7 +545,7 @@ export default function MentorManagementView({ departments, onShowToast, current
         <div className="modal-container" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h3>TTS do {assignedMentor.ho_ten} hướng dẫn</h3><button className="modal-close-btn" type="button" onClick={() => setAssignedMentor(null)}><X size={18} /></button></div>
           <div className="modal-body">
-            <p className="mentor-capacity-summary">Sức chứa: {currentAssignedInterns.length}/{assignedMentor.so_tts_toi_da ?? 3} TTS</p>
+            <p className="mentor-capacity-summary">TTS đang hướng dẫn: {currentAssignedInterns.length} TTS</p>
             {modalLoading ? <p>Đang tải danh sách...</p> : currentAssignedInterns.length === 0 ? <p>Mentor chưa có thực tập sinh đang tham gia chương trình hiện tại.</p> : <div className="mentor-intern-list">
               {currentAssignedInterns.map((intern) => <div className="mentor-intern-item" key={`${intern.ma_ho_so}-${intern.ma_chuong_trinh ?? 'legacy'}`}>
                 <div>

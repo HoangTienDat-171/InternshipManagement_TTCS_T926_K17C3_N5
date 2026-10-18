@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UserRound, KeyRound, Save, ShieldCheck, Mail, Building2 } from 'lucide-react';
+import { UserRound, KeyRound, Save, ShieldCheck, Mail, Building2, Eye, EyeOff } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
@@ -9,6 +9,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
   const [profile, setProfile] = useState({ ho_ten: currentUser.ho_ten || '', so_dien_thoai: currentUser.so_dien_thoai || '' });
   const [saving, setSaving] = useState(false);
   const [password, setPassword] = useState({ mat_khau_hien_tai: '', mat_khau_moi: '', xac_nhan: '' });
+  const [showPassword, setShowPassword] = useState({ current: false, next: false, confirm: false });
   const allSections = [
     { id: 'profile', label: 'Tài khoản', icon: <UserRound size={17} /> },
     { id: 'password', label: 'Cập nhật mật khẩu', icon: <KeyRound size={17} /> }
@@ -65,6 +66,7 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
         </aside>
         <section className="account-content-card">
           <header className="account-content-header"><div><h3>{sections.find((item) => item.id === section)?.label}</h3><p>{section === 'profile' ? 'Thông tin được dùng trong hồ sơ của bạn.' : 'Đặt mật khẩu mới để bảo vệ tài khoản.'}</p></div></header>
+          {forcePasswordChange && <div className="password-reset-notice"><KeyRound size={17} /><span>Hãy đặt mật khẩu mới trước khi tiếp tục. Nếu bạn đang dùng mật khẩu tạm do Admin cấp, mật khẩu này chỉ đăng nhập được một lần và hết hạn sau 30 phút; hãy liên hệ Admin nếu mật khẩu đã hết hạn.</span></div>}
           {!forcePasswordChange && section === 'profile' && <form className="account-profile-form" noValidate onSubmit={saveProfile}>
             <div className="account-avatar-large">{currentUser.ho_ten?.charAt(0)?.toUpperCase() || 'U'}</div>
             <div className="account-profile-grid">
@@ -78,9 +80,27 @@ export default function AccountProfileView({ currentUser, initialSection = 'prof
             <footer className="account-form-footer"><button className="btn btn-primary" disabled={saving}><Save size={16} />{saving ? 'Đang lưu...' : 'Lưu thay đổi'}</button></footer>
           </form>}
           {section === 'password' && <form className="password-form" noValidate onSubmit={changePassword}>
-            <label className="form-group"><span className="form-label">Mật khẩu hiện tại <span className="required">*</span></span><input className="form-control" type="password" autoComplete="current-password" required value={password.mat_khau_hien_tai} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_hien_tai: event.target.value }))} /></label>
-            <label className="form-group"><span className="form-label">Mật khẩu mới <span className="required">*</span></span><input className="form-control" type="password" autoComplete="new-password" minLength={6} required value={password.mat_khau_moi} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_moi: event.target.value }))} /></label>
-            <label className="form-group"><span className="form-label">Xác nhận mật khẩu mới <span className="required">*</span></span><input className="form-control" type="password" autoComplete="new-password" minLength={6} required value={password.xac_nhan} onChange={(event) => setPassword((old) => ({ ...old, xac_nhan: event.target.value }))} /></label>
+            <div className="form-group">
+              <label className="form-label" htmlFor="current-password">Mật khẩu hiện tại <span className="required">*</span></label>
+              <div className="password-input-control">
+                <input id="current-password" className="form-control" type={showPassword.current ? 'text' : 'password'} autoComplete="current-password" required value={password.mat_khau_hien_tai} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_hien_tai: event.target.value }))} />
+                <button type="button" className="password-visibility-toggle" aria-label={showPassword.current ? 'Ẩn mật khẩu hiện tại' : 'Hiện mật khẩu hiện tại'} aria-pressed={showPassword.current} onClick={() => setShowPassword((old) => ({ ...old, current: !old.current }))}>{showPassword.current ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="new-password">Mật khẩu mới <span className="required">*</span></label>
+              <div className="password-input-control">
+                <input id="new-password" className="form-control" type={showPassword.next ? 'text' : 'password'} autoComplete="new-password" minLength={6} required value={password.mat_khau_moi} onChange={(event) => setPassword((old) => ({ ...old, mat_khau_moi: event.target.value }))} />
+                <button type="button" className="password-visibility-toggle" aria-label={showPassword.next ? 'Ẩn mật khẩu mới' : 'Hiện mật khẩu mới'} aria-pressed={showPassword.next} onClick={() => setShowPassword((old) => ({ ...old, next: !old.next }))}>{showPassword.next ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="confirm-password">Xác nhận mật khẩu mới <span className="required">*</span></label>
+              <div className="password-input-control">
+                <input id="confirm-password" className="form-control" type={showPassword.confirm ? 'text' : 'password'} autoComplete="new-password" minLength={6} required value={password.xac_nhan} onChange={(event) => setPassword((old) => ({ ...old, xac_nhan: event.target.value }))} />
+                <button type="button" className="password-visibility-toggle" aria-label={showPassword.confirm ? 'Ẩn xác nhận mật khẩu' : 'Hiện xác nhận mật khẩu'} aria-pressed={showPassword.confirm} onClick={() => setShowPassword((old) => ({ ...old, confirm: !old.confirm }))}>{showPassword.confirm ? <EyeOff size={17} /> : <Eye size={17} />}</button>
+              </div>
+            </div>
             <footer className="account-form-footer"><button className="btn btn-primary" disabled={saving}><KeyRound size={16} />{saving ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}</button></footer>
           </form>}
         </section>

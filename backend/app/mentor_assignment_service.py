@@ -186,6 +186,7 @@ def get_intern_active_assignment(
         LIMIT 1
     """, (profile_id,)).fetchone()
     if legacy:
+        legacy = dict(legacy)
         t_status = get_timeline_status(
             legacy["ngay_bat_dau"], legacy["ngay_ket_thuc"], legacy["trang_thai_ct"], as_of
         ) if legacy["ma_chuong_trinh"] else "CURRENT"
@@ -217,7 +218,7 @@ def count_mentor_active_interns(
     """
     ref_date = as_of or date.today()
     rows = db.execute("""
-        SELECT p.ma_ho_so, p.ma_chuong_trinh,
+        SELECT h.ma_nguoi_dung, p.ma_ho_so, p.ma_chuong_trinh,
                c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
                h.trang_thai_thuc_tap
         FROM PHAN_CONG_MENTOR_TTS p
@@ -228,9 +229,9 @@ def count_mentor_active_interns(
     """, (mentor_id,)).fetchall()
 
     active_count = 0
-    counted_interns = set()
+    counted_users = set()
     for r in rows:
-        if r["ma_ho_so"] in counted_interns:
+        if r["ma_nguoi_dung"] in counted_users:
             continue
         if r["ma_chuong_trinh"]:
             t_status = get_timeline_status(
@@ -238,12 +239,12 @@ def count_mentor_active_interns(
             )
             if t_status == "CURRENT":
                 active_count += 1
-                counted_interns.add(r["ma_ho_so"])
+                counted_users.add(r["ma_nguoi_dung"])
         else:
             # Legacy assignment
             if r["trang_thai_thuc_tap"] == "DangThucTap":
                 active_count += 1
-                counted_interns.add(r["ma_ho_so"])
+                counted_users.add(r["ma_nguoi_dung"])
 
     return active_count
 
@@ -268,14 +269,12 @@ def assign_mentor_canonical(
        Program B -> Mentor Y -> CURRENT
        Program C -> Mentor Z -> UPCOMING
     4. Không dùng UNIQUE(ma_ho_so) để giới hạn Mentor toàn đời.
-    5. Kiểm tra sức chứa (capacity) của Mentor cho các đợt thực tập ACTIVE.
+    5. Không giới hạn số TTS gán cho một Mentor; bộ đếm chỉ tính người đang thực tập hiện tại.
     """
     # 1. Kiểm tra Mentor hợp lệ và hoạt động
     mentor = db.execute("""
-        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.trang_thai,
-               COALESCE(mp.so_tts_toi_da, 3) AS so_tts_toi_da
+        SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.trang_thai
         FROM NGUOI_DUNG u
-        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = u.ma_nguoi_dung
         WHERE u.ma_nguoi_dung = ? AND u.vai_tro = 'Mentor'
     """, (mentor_id,)).fetchone()
     if not mentor:
@@ -365,21 +364,7 @@ def assign_mentor_canonical(
         timeline_status = "CURRENT"
         prog_title = ""
 
-    # 4. Kiểm tra sức chứa Mentor nếu chương trình là CURRENT (ACTIVE)
-    if timeline_status == "CURRENT":
-        active_load = count_mentor_active_interns(db, mentor_id)
-        # Nếu chính TTS này đã được phân công cho mentor này ở chương trình này thì không tăng load
-        existing_for_same = db.execute("""
-            SELECT 1 FROM PHAN_CONG_MENTOR_TTS
-            WHERE ma_nguoi_dung_mentor = ? AND ma_ho_so = ? AND ma_chuong_trinh = ?
-        """, (mentor_id, profile_id, target_program_id)).fetchone()
-        if not existing_for_same and active_load >= mentor["so_tts_toi_da"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Mentor đã đạt sức chứa tối đa ({mentor['so_tts_toi_da']} TTS đang thực tập).",
-            )
-
-    # 5. Lưu phân công (Idempotent / Upsert cho cùng program context)
+    # 4. Lưu phân công (Idempotent / Upsert cho cùng program context)
     existing_assignment = db.execute("""
         SELECT ma_phan_cong, ma_nguoi_dung_mentor
         FROM PHAN_CONG_MENTOR_TTS
@@ -400,6 +385,7 @@ def assign_mentor_canonical(
             }
         else:
             # Cập nhật đổi sang Mentor mới
+            archive_mentor_assignment(db, existing_assignment["ma_phan_cong"], "REASSIGNED", assigned_by)
             db.execute("""
                 UPDATE PHAN_CONG_MENTOR_TTS
                 SET ma_nguoi_dung_mentor = ?, ma_ung_tuyen = ?, ma_nguoi_phan_cong = ?, ngay_phan_cong = CURRENT_TIMESTAMP
@@ -430,6 +416,7 @@ def unassign_mentor_canonical(
     mentor_id: int,
     profile_id: int,
     program_id: Optional[int] = None,
+    unassigned_by: Optional[int] = None,
 ) -> dict:
     """
     CANONICAL GỠ PHÂN CÔNG cho US12 và US30.
@@ -470,9 +457,23 @@ def unassign_mentor_canonical(
             detail="Chỉ có thể gỡ phân công trong chương trình hiện tại.",
         )
 
+    archive_mentor_assignment(db, assignment["ma_phan_cong"], "UNASSIGNED", unassigned_by)
     db.execute("DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?", (assignment["ma_phan_cong"],))
 
     return {
         "message": "Đã gỡ phân công thực tập sinh.",
         "intern_user_id": assignment["ma_nguoi_dung"],
     }
+
+
+def archive_mentor_assignment(db, assignment_id: int, event_type: str, actor_id: Optional[int] = None) -> None:
+    """Keep an immutable snapshot before a current assignment is replaced or removed."""
+    db.execute("""
+        INSERT INTO PHAN_CONG_MENTOR_TTS_LICH_SU (
+            ma_phan_cong_goc, ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh,
+            ma_ung_tuyen, ma_nguoi_phan_cong, ngay_phan_cong, su_kien, nguoi_thuc_hien
+        )
+        SELECT ma_phan_cong, ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh,
+               ma_ung_tuyen, ma_nguoi_phan_cong, ngay_phan_cong, ?, ?
+        FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?
+    """, (event_type, actor_id, assignment_id))

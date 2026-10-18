@@ -1,6 +1,7 @@
 """Focused Sprint 1 API regressions using a disposable SQLite database."""
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 import json
 import os
 import socket
@@ -251,6 +252,185 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual((response["totalItems"], response["totalPages"], response["page"], response["items"]), (0, 0, 1, []))
 
+    def test_intern_list_counts_profiles_once_with_program_assignments_and_evaluations(self):
+        admin_token, _ = self.login("admin@internship.vn")
+        tag = str(time.time_ns())
+        profile_ids = []
+        program_ids = []
+        mentor_ids = []
+
+        with sqlite3.connect(self.db_path) as db:
+            db.row_factory = sqlite3.Row
+            department_id = db.execute(
+                "SELECT ma_phong_ban FROM PHONG_BAN ORDER BY ma_phong_ban LIMIT 1"
+            ).fetchone()["ma_phong_ban"]
+
+            for suffix in ("a", "b"):
+                cursor = db.execute("""
+                    INSERT INTO NGUOI_DUNG
+                        (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                    VALUES (?, ?, ?, 'unused-test-hash', 'Mentor', 'HoatDong')
+                """, (department_id, f"Duplicate Mentor {suffix}", f"duplicate.mentor.{suffix}.{tag}@test.invalid"))
+                mentor_id = cursor.lastrowid
+                mentor_ids.append(mentor_id)
+                db.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung) VALUES (?)", (mentor_id,))
+
+            for suffix in ("a", "b"):
+                cursor = db.execute("""
+                    INSERT INTO NGUOI_DUNG
+                        (ma_phong_ban, ho_ten, email, mat_khau, vai_tro, trang_thai)
+                    VALUES (?, 'Duplicate Profile Regression', ?, 'unused-test-hash', 'ThucTapSinh', 'HoatDong')
+                """, (department_id, f"duplicate.profile.{suffix}.{tag}@test.invalid"))
+                profile = db.execute("""
+                    INSERT INTO HO_SO_THUC_TAP
+                        (ma_nguoi_dung, ma_truong, chuyen_nganh, trang_thai_xet_duyet, trang_thai_thuc_tap)
+                    VALUES (?, 1, 'Regression QA', 'DaDuyet', 'DangThucTap')
+                """, (cursor.lastrowid,))
+                profile_ids.append(profile.lastrowid)
+
+            today = date.today()
+            program_specs = (
+                ("HISTORY", "2020-01-01", "2020-02-01", "DaDong"),
+                ("CURRENT", (today - timedelta(days=1)).isoformat(), (today + timedelta(days=7)).isoformat(), "DangMo"),
+            )
+            application_ids = []
+            for label, start, end, program_status in program_specs:
+                cursor = db.execute("""
+                    INSERT INTO CHUONG_TRINH_THUC_TAP
+                        (ma_ct, ten_ct, ma_phong_ban, ngay_bat_dau, ngay_ket_thuc, chi_tieu, trang_thai)
+                    VALUES (?, ?, ?, ?, ?, 10, ?)
+                """, (f"DUP-{label}-{tag}", f"Duplicate test {label}", department_id, start, end, program_status))
+                program_id = cursor.lastrowid
+                program_ids.append(program_id)
+                application = db.execute("""
+                    INSERT INTO UNG_TUYEN_CHUONG_TRINH (ma_chuong_trinh, ma_ho_so, trang_thai)
+                    VALUES (?, ?, 'DaDuyet')
+                """, (program_id, profile_ids[0]))
+                application_ids.append(application.lastrowid)
+
+            for index, program_id in enumerate(program_ids):
+                db.execute("""
+                    INSERT INTO PHAN_CONG_MENTOR_TTS
+                        (ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh, ma_ung_tuyen)
+                    VALUES (?, ?, ?, ?)
+                """, (mentor_ids[index], profile_ids[0], program_id, application_ids[index]))
+                db.execute("""
+                    INSERT INTO DANH_GIA_THUC_TAP (
+                        ma_ho_so, ma_chuong_trinh, ma_nguoi_dung_mentor, ky_danh_gia,
+                        professional_skill_score, work_quality_score, initiative_score,
+                        communication_teamwork_score, attitude_discipline_score, overall_comment
+                    ) VALUES (?, ?, ?, ?, 4, 4, 4, 4, 4, 'Duplicate-list regression')
+                """, (profile_ids[0], program_id, mentor_ids[index], "MIDTERM" if index == 0 else "FINAL"))
+            db.commit()
+
+        try:
+            base_query = (
+                "search=Duplicate%20Profile%20Regression&trang_thai_xet_duyet=DaDuyet"
+                f"&ma_phong_ban={department_id}&ma_truong=1&pageSize=1"
+            )
+            status_code, page_one, _ = self.json_request(f"/api/interns?{base_query}&page=1", token=admin_token)
+            self.assertEqual(status_code, 200, page_one)
+            self.assertEqual((page_one["totalItems"], page_one["totalPages"], len(page_one["items"])), (2, 2, 1))
+
+            status_code, page_two, _ = self.json_request(f"/api/interns?{base_query}&page=2", token=admin_token)
+            self.assertEqual(status_code, 200, page_two)
+            self.assertEqual((page_two["totalItems"], page_two["totalPages"], len(page_two["items"])), (2, 2, 1))
+            returned_profiles = [page_one["items"][0]["ma_ho_so"], page_two["items"][0]["ma_ho_so"]]
+            self.assertEqual(set(returned_profiles), set(profile_ids))
+            self.assertEqual(len(set(returned_profiles)), 2)
+
+            status_code, detail, _ = self.json_request(f"/api/interns/{profile_ids[0]}", token=admin_token)
+            self.assertEqual(status_code, 200, detail)
+            programs = detail["chuong_trinh_tham_gia"]
+            self.assertEqual({program["ma_chuong_trinh"] for program in programs}, set(program_ids))
+            self.assertEqual(len(programs), 2)
+            by_id = {program["ma_chuong_trinh"]: program for program in programs}
+            self.assertEqual(by_id[program_ids[0]]["timeline_status"], "HISTORICAL")
+            self.assertEqual(by_id[program_ids[0]]["mentor_ma_nguoi_dung"], mentor_ids[0])
+            self.assertEqual(by_id[program_ids[1]]["timeline_status"], "CURRENT")
+            self.assertEqual(by_id[program_ids[1]]["mentor_ma_nguoi_dung"], mentor_ids[1])
+            self.assertEqual(detail["mentor_ma_nguoi_dung"], mentor_ids[1])
+        finally:
+            with sqlite3.connect(self.db_path) as db:
+                db.execute("DELETE FROM DANH_GIA_THUC_TAP WHERE ma_ho_so IN (?, ?)", profile_ids)
+                db.execute("DELETE FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so IN (?, ?)", profile_ids)
+                db.execute("DELETE FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ho_so IN (?, ?)", profile_ids)
+                db.execute("DELETE FROM HO_SO_THUC_TAP WHERE ma_ho_so IN (?, ?)", profile_ids)
+                db.execute("DELETE FROM MENTOR_PROFILE WHERE ma_nguoi_dung IN (?, ?)", mentor_ids)
+                db.execute("DELETE FROM NGUOI_DUNG WHERE ma_nguoi_dung IN (?, ?)", mentor_ids)
+                db.execute("DELETE FROM NGUOI_DUNG WHERE email LIKE ?", (f"duplicate.profile.%.{tag}@test.invalid",))
+                db.execute("DELETE FROM CHUONG_TRINH_THUC_TAP WHERE ma_chuong_trinh IN (?, ?)", program_ids)
+    def test_department_creation_normalizes_names_checks_permissions_and_serializes_duplicates(self):
+        hr_token, _ = self.login("hr@internship.vn")
+        intern_token, _ = self.login("tuan.lm@internship.vn")
+        name = f"Department QA {time.time_ns()}"
+        normalized_name = f"{name} Operations"
+
+        status_code, unauthenticated, _ = self.json_request(
+            "/api/master/departments", "POST", data={"ten_phong_ban": normalized_name},
+        )
+        self.assertEqual(status_code, 401, unauthenticated)
+
+        status_code, denied, _ = self.json_request(
+            "/api/master/departments", "POST", intern_token,
+            {"ten_phong_ban": normalized_name},
+        )
+        self.assertEqual(status_code, 403, denied)
+
+        status_code, created, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": f"  {name}   Operations  "},
+        )
+        self.assertEqual(status_code, 201, created)
+        self.assertEqual(created["ten_phong_ban"], normalized_name)
+
+        status_code, departments, _ = self.json_request("/api/master/departments", token=hr_token)
+        self.assertEqual(status_code, 200)
+        self.assertIn(created, departments)
+
+        status_code, duplicate, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": normalized_name.swapcase()},
+        )
+        self.assertEqual(status_code, 409, duplicate)
+
+        status_code, blank, _ = self.json_request(
+            "/api/master/departments", "POST", hr_token,
+            {"ten_phong_ban": "   \t  "},
+        )
+        self.assertEqual(status_code, 422, blank)
+
+        admin_token, _ = self.login("admin@internship.vn")
+        status_code, admin_created, _ = self.json_request(
+            "/api/master/departments", "POST", admin_token,
+            {"ten_phong_ban": f"Admin Department QA {time.time_ns()}"},
+        )
+        self.assertEqual(status_code, 201, admin_created)
+
+        concurrent_name = f"Concurrent Department QA {time.time_ns()}"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(
+                lambda _: self.json_request(
+                    "/api/master/departments", "POST", hr_token,
+                    {"ten_phong_ban": concurrent_name},
+                )[0],
+                range(4),
+            ))
+        self.assertEqual(results.count(201), 1, results)
+        self.assertEqual(results.count(409), 3, results)
+
+        with sqlite3.connect(self.db_path) as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM PHONG_BAN WHERE LOWER(ten_phong_ban) = LOWER(?)",
+                (concurrent_name,),
+            ).fetchone()[0]
+            assignments = db.execute(
+                "SELECT COUNT(*) FROM NGUOI_DUNG WHERE ma_phong_ban = ?",
+                (created["ma_phong_ban"],),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+        self.assertEqual(assignments, 0)
+
     def test_registration_duplicate_phone_returns_conflict_instead_of_server_error(self):
         with sqlite3.connect(self.db_path) as db:
             db.execute("""
@@ -414,7 +594,8 @@ class Sprint1RuntimeTests(unittest.TestCase):
         status_code, mentor_rows, _ = self.json_request("/api/mentors", token=token)
         self.assertEqual(status_code, 200)
         saved_mentor = next(row for row in mentor_rows if row["ma_nguoi_dung"] == mentor_id)
-        self.assertEqual((saved_mentor["chuyen_mon"], saved_mentor["kinh_nghiem"], saved_mentor["so_tts_toi_da"]), ("Python, FastAPI", 5, 3))
+        self.assertEqual((saved_mentor["chuyen_mon"], saved_mentor["kinh_nghiem"]), ("Python, FastAPI", 5))
+        self.assertNotIn("so_tts_toi_da", saved_mentor)
 
         code = f"S1-{suffix[-10:]}"
         program = {
@@ -984,6 +1165,10 @@ class Sprint1RuntimeTests(unittest.TestCase):
         self.assertEqual(len(own_notifications), 1)
         self.assertNotIn("email_status", own_notifications[0])
         self.assertEqual(own_notifications[0]["reference_type"], "intern_profile")
+        status_code, unread_count, _ = self.json_request("/api/notifications/unread-count", token=approved_token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(unread_count["unread_count"], 1)
+        self.assertEqual(self.json_request("/api/notifications/unread-count")[0], 401)
         status_code, _, _ = self.json_request("/api/notifications/email-outbox", token=approved_token)
         self.assertEqual(status_code, 403)
         status_code, _, _ = self.json_request(
@@ -991,6 +1176,10 @@ class Sprint1RuntimeTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 200)
         self.assertIsNotNone(self.json_request("/api/notifications", token=approved_token)[1][0]["thoi_gian_doc"])
+        self.assertEqual(
+            self.json_request("/api/notifications/unread-count", token=approved_token)[1]["unread_count"],
+            0,
+        )
 
         self.assertNotIn(rejected_notification, {item["ma_thong_bao"] for item in own_notifications})
         status_code, _, _ = self.json_request(

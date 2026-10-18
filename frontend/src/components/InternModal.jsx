@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle } from 'lucide-react';
 import PhoneField from './PhoneField';
 import CustomSelect from './CustomSelect';
+import MasterDataSelect from './MasterDataSelect';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
@@ -11,12 +12,12 @@ const REVIEW_STATUS_LABELS = {
   TuChoi: 'Từ chối'
 };
 
-const createEmptyForm = (departments, universities) => ({
+const createEmptyForm = () => ({
   ho_ten: '',
   email: '',
   so_dien_thoai: '',
-  ma_phong_ban: departments[0] ? String(departments[0].ma_phong_ban) : '',
-  ma_truong: universities[0] ? String(universities[0].ma_truong) : '',
+  ma_phong_ban: '',
+  ma_truong: '',
   chuyen_nganh: '',
   trang_thai_thuc_tap: 'DangThucTap'
 });
@@ -25,13 +26,17 @@ export default function InternModal({
   isOpen, 
   onClose, 
   internId,
-  departments, 
+  departments = [],
   universities, 
+  isAdmin = false,
+  onNavigateMasterData,
   onSuccess 
 }) {
   const isEdit = Boolean(internId);
 
-  const [formData, setFormData] = useState(() => createEmptyForm(departments, universities));
+  const [formData, setFormData] = useState(() => createEmptyForm());
+  const [legacyDepartment, setLegacyDepartment] = useState(null);
+  const [legacyUniversity, setLegacyUniversity] = useState(null);
 
   const [loading, setLoading] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(isEdit);
@@ -58,6 +63,12 @@ export default function InternModal({
             chuyen_nganh: data.chuyen_nganh || '',
             trang_thai_thuc_tap: data.trang_thai_thuc_tap || 'DangThucTap'
           });
+          setLegacyDepartment(data.ma_phong_ban && !departments.some((item) => String(item.ma_phong_ban) === String(data.ma_phong_ban))
+            ? { ma_phong_ban: String(data.ma_phong_ban), ten_phong_ban: data.ten_phong_ban || `Phòng ban #${data.ma_phong_ban}`, is_active: false }
+            : null);
+          setLegacyUniversity(data.ma_truong && !universities.some((item) => String(item.ma_truong) === String(data.ma_truong))
+            ? { ma_truong: String(data.ma_truong), ten_truong: data.ten_truong || `Trường #${data.ma_truong}`, is_active: false }
+            : null);
           setApprovalStatus(data.trang_thai_xet_duyet || 'ChoDuyet');
         })
         .catch((err) => {
@@ -67,7 +78,7 @@ export default function InternModal({
           if (!controller.signal.aborted) setLoadingInitial(false);
         });
     return () => controller.abort();
-  }, [isOpen, internId, isEdit]);
+  }, [isOpen, internId, isEdit, departments, universities]);
 
   if (!isOpen) return null;
 
@@ -88,9 +99,9 @@ export default function InternModal({
         ho_ten: formData.ho_ten.trim(),
         email: formData.email.trim(),
         so_dien_thoai: formData.so_dien_thoai.trim(),
-        ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null,
         ma_truong: formData.ma_truong ? parseInt(formData.ma_truong, 10) : null,
         chuyen_nganh: formData.chuyen_nganh.trim(),
+        ...(isEdit ? { ma_phong_ban: formData.ma_phong_ban ? parseInt(formData.ma_phong_ban, 10) : null } : {}),
         ...(isEdit && approvalStatus === 'DaDuyet' ? { trang_thai_thuc_tap: formData.trang_thai_thuc_tap } : {})
       };
 
@@ -186,19 +197,23 @@ export default function InternModal({
 
               <div className="form-group">
                 <label className="form-label">Trường Đại học</label>
-                <CustomSelect
+                <MasterDataSelect
+                  id="intern-university"
                   name="ma_truong"
-                  className="form-select"
                   value={formData.ma_truong}
+                  items={[...universities, ...(legacyUniversity ? [legacyUniversity] : [])]}
+                  idKey="ma_truong"
+                  labelKey="ten_truong"
+                  placeholder="Tìm hoặc chọn trường đại học"
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn trường đại học --</option>
-                  {universities.map((u) => (
-                    <option key={u.ma_truong} value={u.ma_truong}>
-                      {u.ten_truong}
-                    </option>
-                  ))}
-                </CustomSelect>
+                />
+                {!universities.some((item) => item.is_active !== false && item.is_active !== 0) && (
+                  <small className="form-hint">
+                    Chưa có trường đại học đang hoạt động. Vui lòng liên hệ Admin để bổ sung trong Quản lý danh mục.
+                    {isAdmin && <button type="button" className="form-inline-link" onClick={onNavigateMasterData}>Mở Quản lý danh mục</button>}
+                  </small>
+                )}
+                {legacyUniversity && <small className="form-hint">Trường đang lưu trong hồ sơ đã ngừng sử dụng; giá trị cũ được giữ nguyên nếu bạn không đổi lựa chọn.</small>}
               </div>
 
               <div className="form-group">
@@ -214,20 +229,26 @@ export default function InternModal({
               </div>
 
               <div className="form-group">
-                <label className="form-label">Phòng ban</label>
-                <CustomSelect
+                <label className="form-label" htmlFor="intern-department">Phòng ban (Tùy chọn)</label>
+                <MasterDataSelect
+                  id="intern-department"
                   name="ma_phong_ban"
-                  className="form-select"
                   value={formData.ma_phong_ban}
+                  items={[{ ma_phong_ban: '', ten_phong_ban: 'Chưa phân công', is_active: true }, ...departments, ...(legacyDepartment ? [legacyDepartment] : [])]}
+                  idKey="ma_phong_ban"
+                  labelKey="ten_phong_ban"
+                  placeholder="Tìm hoặc chọn phòng ban"
+                  itemName="phòng ban"
                   onChange={handleChange}
-                >
-                  <option value="">-- Chọn phòng ban --</option>
-                  {departments.map((d) => (
-                    <option key={d.ma_phong_ban} value={d.ma_phong_ban}>
-                      {d.ten_phong_ban}
-                    </option>
-                  ))}
-                </CustomSelect>
+                />
+                <small className="form-hint">Có thể để trống nếu chưa phân công. Thêm phòng ban vào danh mục không tự gán phòng ban cho thực tập sinh.</small>
+                {!departments.some((item) => item.is_active !== false && item.is_active !== 0) && (
+                  <small className="form-hint">
+                    Chưa có phòng ban đang hoạt động. Vui lòng liên hệ Admin để bổ sung trong Quản lý danh mục.
+                    {isAdmin && <button type="button" className="form-inline-link" onClick={onNavigateMasterData}>Mở Quản lý danh mục</button>}
+                  </small>
+                )}
+                {legacyDepartment && <small className="form-hint">Phòng ban đang lưu trong hồ sơ đã ngừng sử dụng; giá trị cũ được giữ nguyên nếu bạn không đổi lựa chọn.</small>}
               </div>
 
               {isEdit && <div className="form-group">

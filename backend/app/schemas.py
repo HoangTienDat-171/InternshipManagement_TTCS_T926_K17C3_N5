@@ -1,7 +1,8 @@
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from typing import Optional, List, Literal
+from urllib.parse import urlsplit
 
 
 class AllowanceUpdate(BaseModel):
@@ -117,6 +118,36 @@ class InternUpdate(BaseModel):
     chuyen_nganh: Optional[str] = None
     trang_thai_thuc_tap: Optional[Literal["DangThucTap", "HoanThanh", "ThoiHoc"]] = None
 
+class InternMentorSummary(BaseModel):
+    mentor_ma_nguoi_dung: Optional[int] = None
+    mentor_ho_ten: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_so_dien_thoai: Optional[str] = None
+    mentor_phong_ban: Optional[str] = None
+    mentor_chuyen_mon: Optional[str] = None
+    mentor_kinh_nghiem: Optional[int] = None
+    ngay_phan_cong: Optional[str] = None
+
+
+class InternProgramDetail(BaseModel):
+    ma_ung_tuyen: int
+    ma_chuong_trinh: int
+    ma_ct: Optional[str] = None
+    ten_ct: str
+    ngay_bat_dau: Optional[str] = None
+    ngay_ket_thuc: Optional[str] = None
+    trang_thai_chuong_trinh: Optional[str] = None
+    timeline_status: str
+    mentor_ma_nguoi_dung: Optional[int] = None
+    mentor_ho_ten: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_so_dien_thoai: Optional[str] = None
+    mentor_phong_ban: Optional[str] = None
+    mentor_chuyen_mon: Optional[str] = None
+    mentor_kinh_nghiem: Optional[int] = None
+    ngay_phan_cong: Optional[str] = None
+
+
 class InternDetail(BaseModel):
     ma_ho_so: int
     ma_nguoi_dung: int
@@ -139,11 +170,64 @@ class InternDetail(BaseModel):
     mentor_phong_ban: Optional[str] = None
     mentor_chuyen_mon: Optional[str] = None
     mentor_kinh_nghiem: Optional[int] = None
+    chuong_trinh_tham_gia: List[InternProgramDetail] = Field(default_factory=list)
+    mentor_chua_gan_chuong_trinh: List[InternMentorSummary] = Field(default_factory=list)
 
 class Department(BaseModel):
     ma_phong_ban: int
     ten_phong_ban: str
     mo_ta: Optional[str] = None
+    ma_dinh_danh: Optional[str] = None
+    is_active: bool = True
+    updated_at: Optional[str] = None
+    mentor_count: int = 0
+    intern_count: int = 0
+
+class DepartmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ten_phong_ban: str = Field(min_length=1, max_length=100)
+    ma_dinh_danh: Optional[str] = Field(default=None, min_length=2, max_length=32)
+    mo_ta: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("ten_phong_ban", mode="before")
+    @classmethod
+    def normalize_department_name(cls, value):
+        if not isinstance(value, str):
+            return value
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        if len(normalized) > 100:
+            raise ValueError("Tên phòng ban không được vượt quá 100 ký tự.")
+        return normalized
+
+    @field_validator("ma_dinh_danh", mode="before")
+    @classmethod
+    def normalize_department_code(cls, value):
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        if normalized and not normalized.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("Mã phòng ban chỉ được gồm chữ, số, dấu gạch ngang hoặc gạch dưới.")
+        return normalized or None
+
+
+class DepartmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_phong_ban: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    mo_ta: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+    @field_validator("ten_phong_ban", mode="before")
+    @classmethod
+    def normalize_optional_department_name(cls, value):
+        if value is None:
+            return None
+        normalized = " ".join(str(value).split())
+        if not normalized:
+            raise ValueError("Tên phòng ban không được để trống.")
+        return normalized
 
 class University(BaseModel):
     ma_truong: int
@@ -151,6 +235,44 @@ class University(BaseModel):
     dia_chi: Optional[str] = None
     nguoi_lien_he: Optional[str] = None
     email_lien_he: Optional[str] = None
+    ma_dinh_danh: Optional[str] = None
+    ten_viet_tat: Optional[str] = None
+    is_active: bool = True
+    updated_at: Optional[str] = None
+    intern_count: int = 0
+
+
+class UniversityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_truong: str = Field(min_length=1, max_length=255)
+    ma_dinh_danh: Optional[str] = Field(default=None, max_length=32)
+    ten_viet_tat: Optional[str] = Field(default=None, max_length=50)
+
+    @field_validator("ten_truong")
+    @classmethod
+    def normalize_university_name(cls, value):
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Tên trường đại học không được để trống.")
+        return normalized
+
+
+class UniversityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ten_truong: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    ma_dinh_danh: Optional[str] = Field(default=None, max_length=32)
+    ten_viet_tat: Optional[str] = Field(default=None, max_length=50)
+    is_active: Optional[bool] = None
+
+    @field_validator("ten_truong", mode="before")
+    @classmethod
+    def normalize_optional_university_name(cls, value):
+        if value is None:
+            return None
+        normalized = " ".join(str(value).split())
+        if not normalized:
+            raise ValueError("Tên trường đại học không được để trống.")
+        return normalized
 
 class MentorCreate(BaseModel):
     ho_ten: str = Field(min_length=1, max_length=120)
@@ -159,7 +281,6 @@ class MentorCreate(BaseModel):
     ma_phong_ban: Optional[int] = None
     chuyen_mon: Optional[str] = None
     kinh_nghiem: Optional[int] = Field(default=None, ge=0)
-    so_tts_toi_da: int = Field(default=3, ge=0)
 
 class MentorDetail(BaseModel):
     ma_nguoi_dung: int
@@ -170,13 +291,11 @@ class MentorDetail(BaseModel):
     phong_ban: Optional[str] = None
     chuyen_mon: Optional[str] = None
     kinh_nghiem: Optional[int] = None
-    so_tts_toi_da: Optional[int] = None
     so_tts_dang_huong_dan: int = 0
 
 class MentorProfileUpdate(BaseModel):
     chuyen_mon: Optional[str] = Field(default=None, max_length=255)
     kinh_nghiem: Optional[int] = Field(default=None, ge=0)
-    so_tts_toi_da: Optional[int] = Field(default=None, ge=0)
 
 class InternAssignmentCandidate(BaseModel):
     ma_ho_so: int
@@ -661,3 +780,160 @@ class SupportRequestReject(BaseModel):
             raise ValueError("Vui lòng nhập lý do từ chối yêu cầu.")
         self.ly_do_tu_choi = reason
         return self
+
+
+# ==============================================================================
+# US20 — HR TỔNG HỢP ĐÁNH GIÁ THÀNH BÁO CÁO CUỐI KỲ
+# ==============================================================================
+
+
+class FinalReportEvaluationSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    evaluation_period: Literal["MIDTERM", "FINAL"]
+    professional_skill_score: int = Field(ge=1, le=5)
+    work_quality_score: int = Field(ge=1, le=5)
+    initiative_score: int = Field(ge=1, le=5)
+    communication_teamwork_score: int = Field(ge=1, le=5)
+    attitude_discipline_score: int = Field(ge=1, le=5)
+    average_score: float
+    overall_comment: str
+    evaluated_at: str
+    evaluator_id: int
+    evaluator_name: str
+    evaluator_email: Optional[str] = None
+
+
+class FinalReportSummaryMetrics(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    total_reports: int = 0
+    complete_count: int = 0
+    incomplete_count: int = 0
+
+
+class FinalReportItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    internship_profile_id: int
+    intern_user_id: int
+    intern_name: str
+    intern_email: str
+    intern_phone: Optional[str] = None
+    university_name: Optional[str] = None
+    major: Optional[str] = None
+    department_name: Optional[str] = None
+    internship_status: Optional[str] = None
+    program_id: int
+    program_name: str
+    program_start_date: Optional[str] = None
+    program_end_date: Optional[str] = None
+    program_status: Optional[str] = None
+    mentor_id: Optional[int] = None
+    mentor_name: Optional[str] = None
+    mentor_email: Optional[str] = None
+    mentor_phone: Optional[str] = None
+    has_mentor: bool
+    has_final_evaluation: bool
+    has_midterm_evaluation: bool
+    final_average_score: Optional[float] = None
+    midterm_average_score: Optional[float] = None
+    final_evaluated_at: Optional[str] = None
+    data_status: Literal["DU_DU_LIEU", "CHUA_DU_LIEU"]
+    missing_requirements: list[str] = Field(default_factory=list)
+    status_message: str
+
+
+class FinalReportDetail(FinalReportItem):
+    final_evaluation: Optional[FinalReportEvaluationSummary] = None
+    midterm_evaluation: Optional[FinalReportEvaluationSummary] = None
+
+
+class FinalReportListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[FinalReportItem]
+    total_items: int
+    page: int
+    page_size: int
+    total_pages: int
+    summary: FinalReportSummaryMetrics
+
+
+class MeetingFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(default="", max_length=10000)
+    start_at: datetime
+    end_at: datetime
+    location: Optional[str] = Field(default=None, max_length=500)
+    meeting_url: Optional[str] = Field(default=None, max_length=2000)
+    attendee_ids: list[StrictInt] = Field(min_length=1, max_length=100)
+
+    @field_validator("title")
+    @classmethod
+    def trim_title(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Vui lòng nhập tiêu đề cuộc họp.")
+        return value
+
+    @field_validator("content")
+    @classmethod
+    def trim_content(cls, value):
+        return value.strip()
+
+    @field_validator("location")
+    @classmethod
+    def normalize_location(cls, value):
+        value = (value or "").strip()
+        return value or None
+
+    @field_validator("meeting_url")
+    @classmethod
+    def validate_meeting_url(cls, value):
+        value = (value or "").strip()
+        if not value:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+            raise ValueError("Link họp phải là URL HTTP hoặc HTTPS hợp lệ.")
+        return value
+
+    @field_validator("start_at", "end_at")
+    @classmethod
+    def require_timezone(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Thời gian phải có múi giờ rõ ràng.")
+        return value
+
+    @field_validator("attendee_ids")
+    @classmethod
+    def require_unique_attendees(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("Danh sách người tham gia không được trùng lặp.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_meeting_window_and_location(self):
+        if self.end_at <= self.start_at:
+            raise ValueError("Thời gian kết thúc phải sau thời gian bắt đầu.")
+        if not self.location and not self.meeting_url:
+            raise ValueError("Vui lòng nhập địa điểm hoặc link họp online.")
+        return self
+
+
+class MeetingCreate(MeetingFields):
+    pass
+
+
+class MeetingUpdate(MeetingFields):
+    expected_version: StrictInt = Field(gt=0)
+
+
+class MeetingCancel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: StrictInt = Field(gt=0)

@@ -30,9 +30,9 @@ Chạy frontend trong terminal khác:
     cd frontend
     npm run dev -- --host 127.0.0.1 --port 3000
 
-Mở http://127.0.0.1:3000; API docs local ở http://127.0.0.1:8000/docs. Vite chuyển tiếp /api tới backend cục bộ. run_servers.bat là launcher Windows và phụ thuộc backend/.venv.
+Mở http://127.0.0.1:3000; API docs local ở http://127.0.0.1:8000/docs. Vite chuyển tiếp /api tới backend cục bộ. run_server.bat là launcher Windows và phụ thuộc backend/.venv.
 
-Có thể chạy `run_servers.bat` ở thư mục gốc để khởi động cả hai cổng. Launcher kiểm tra Node/npm, virtualenv, cấu hình MySQL và cổng 3000/8000; nếu thiếu thư viện Frontend/Backend thì cài theo manifest trước khi chạy. Backend gọi `init_db()` khi khởi động để đảm bảo schema/dữ liệu danh mục mặc định trong database đã cấu hình.
+Chạy `run_server.bat` ở thư mục gốc để khởi động MySQL, Backend, Frontend tại cổng 3000 và kiểm tra SMTP/Email Worker. Frontend dùng Vite dev server nên mã giao diện trong workspace hiện tại được cập nhật ngay khi lưu file. Launcher kiểm tra Node/npm, virtualenv, cấu hình MySQL và cổng 3000/8000; nếu thiếu gói frontend, launcher tự cài từ manifest rồi chạy. Backend gọi `init_db()` khi khởi động để đảm bảo schema/dữ liệu danh mục mặc định trong database đã cấu hình. Dùng `stop_server.bat` để dừng các dịch vụ do launcher quản lý.
 
 Tài khoản demo hiện dùng mật khẩu chung 123456; chỉ dùng với dữ liệu demo local. `database.init_db()` tạo các bảng/module còn thiếu và đảm bảo hồ sơ Mentor/TTS. Sao lưu MySQL trước khi chạy migration trên dữ liệu quan trọng.
 
@@ -99,12 +99,19 @@ Các unit test `tests/test_us08_email_outbox.py` giả lập SMTP thành công, 
 ### Sprint 3 — US25/US26 phụ cấp
 
 - Màn hình `/allowances`: HR/Admin thêm, sửa, tìm kiếm và phân trang; TTS chỉ xem lịch sử của mình. Mentor không có quyền truy cập.
-- Một nguồn dữ liệu `PHU_CAP_THUC_TAP`, UNIQUE `(ma_ho_so, ky)` với kỳ `YYYY-MM`. Liên kết `ma_ung_tuyen` xác định đúng chương trình đã được duyệt, kể cả chương trình lịch sử. Sửa phụ cấp giữ nguyên hồ sơ/đơn tham gia; có thể sửa kỳ nếu không trùng.
-- Schema hiện có một hồ sơ/TTS và nhiều đơn tham gia chương trình. Không tạo thêm loại hồ sơ hoặc thay đổi quy tắc này. Hai chương trình của cùng hồ sơ trong cùng tháng vẫn dùng chung business key bắt buộc.
+- Một nguồn dữ liệu `PHU_CAP_THUC_TAP` với kỳ `YYYY-MM`; một hồ sơ có thể nhận nhiều khoản phụ cấp trong cùng kỳ, mỗi khoản có ID và lịch sử riêng. Liên kết `ma_ung_tuyen` xác định đúng chương trình đã được duyệt. Sửa phụ cấp giữ nguyên hồ sơ/đơn tham gia; có thể sửa kỳ của khoản chưa được TTS xác nhận nhận.
+- Schema hiện có một hồ sơ/TTS và nhiều đơn tham gia chương trình. Chỉ tạo khoản mới cho hồ sơ và đơn tham gia đã được duyệt, trong chương trình đang mở và đang diễn ra. Khoản lịch sử vẫn được lưu khi chương trình đã đóng.
 - `so_tien_minor` lưu số nguyên VNĐ × 100; API nhận/trả `so_tien` dạng chuỗi thập phân, từ `0` đến `9999999999999.99`. Không tính theo ngày công hoặc đánh dấu đã thanh toán.
 - API quản lý `/api/allowances`, danh sách hồ sơ `/api/allowances/profiles`; self-service `/api/interns/me/allowances`. Danh sách dùng `page`, `page_size`, `program_id`, `ky`, `year`; HR có thêm `search`. Người tạo/cập nhật và timestamps UTC được server ghi, không nhận từ client.
 - Migration `migrations/20261008_us25_us26_allowances.sql` và `init_db()` cùng tạo bảng an toàn khi chạy lại. Sao lưu trước khi áp dụng trên MySQL hiện có. FK RESTRICT giữ lịch sử phụ cấp khi có yêu cầu xóa hồ sơ, đơn tham gia hoặc actor đã được ledger tham chiếu.
 - Test cô lập: từ `backend/`, chạy `.venv/Scripts/python -m unittest discover -s tests -p test_us25_us26_allowances.py -v`; không chạy suite vào DB nghiệp vụ.
+
+### Sprint 4 — US37 HRM Sandbox
+
+- Admin → **Tích hợp HRM** kiểm tra kết nối, ánh xạ mã phòng ban, xem trước (`NEW`/`UPDATE`/`UNCHANGED`/`CONFLICT`/`INVALID`), xác nhận đồng bộ và xem lịch sử.
+- Sandbox là dịch vụ demo loopback `127.0.0.1:8100`, dữ liệu HRM lưu trong SQLite riêng. Bản ghi đồng bộ đi vào danh bạ HRM riêng của IMS, không tạo tài khoản hoặc thay đổi vai trò, phân công Mentor hay lịch sử thực tập.
+- Dùng `scripts/run_us37_uat.ps1` để chạy frontend `localhost:3000`, backend `127.0.0.1:8000` và Sandbox với hai SQLite UAT tách biệt; dùng `scripts/stop_us37_uat.ps1` để dừng đúng các process UAT đã ghi nhận.
+- Cấu hình normal runtime, sinh API key thử nghiệm và migration chỉ dành cho database IMS thử nghiệm xem tại [docs/us37-hrm-integration.md](docs/us37-hrm-integration.md). HRM doanh nghiệp thật chưa được tích hợp.
 
 - Sửa lại lỗi đăng kí, Thêm quên mật khẩu, khi hồ sơ được duyệt thì sẽ có email gửi về gmail để xác nhận cho thực tập sinh đã đăng kì thành công và gửi cho mật khẩu để thực tập sinh đăng nhập và đổi mật khẩu mới
 - Thêm Chức năng cho gửi email (gửi ảnh, file tài liệu)

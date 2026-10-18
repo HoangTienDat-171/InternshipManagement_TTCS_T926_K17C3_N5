@@ -1,0 +1,497 @@
+/* ==========================================================================
+   US42: Activity Audit Log Management View Styles
+   ========================================================================== */
+
+.activity-audit-page {
+  display: grid;
+  gap: 20px;
+  width: 100%;
+}
+
+.activity-header {
+  margin-bottom: 0;
+}
+
+/* ==========================================================================
+   Filters Card & Form
+   ========================================================================== */
+.activity-filters-card {
+  box-shadow: var(--shadow-sm);
+  border-radius: 16px;
+}
+
+.activity-filter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.activity-filter-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.activity-filter-title svg {
+  color: var(--primary-500);
+}
+
+.activity-filters-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.activity-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.activity-filter-group .form-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0;
+}
+
+.activity-filter-group .form-control {
+  height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.activity-filter-group .custom-select-trigger {
+  min-height: 40px;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.activity-date-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.activity-date-input-wrap .custom-datepicker {
+  width: 100%;
+}
+
+.activity-filter-actions-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-color);
+  margin-top: 4px;
+}
+
+.activity-filter-actions-row .btn {
+  height: 38px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 6px;
+}
+
+/* ==========================================================================
+   Error Banner
+   ========================================================================== */
+.activity-audit-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--danger-border);
+  border-radius: 12px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 13px;
+}
+
+/* ==========================================================================
+   Table Card
+   ========================================================================== */
+.activity-table-card {
+  box-shadow: var(--shadow-sm);
+  border-radius: 16px;
+}
+
+.activity-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.activity-section-header h3 {
+  margin: 3px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.activity-section-icon {
+  color: var(--primary-500);
+}
+
+.activity-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.activity-data-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.activity-data-table th {
+  padding: 13px 16px;
+  background: var(--surface-card-hover);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.activity-data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+}
+
+/* Columns */
+.activity-col-time { width: 140px; }
+.activity-col-actor { width: 180px; }
+.activity-col-action { min-width: 220px; }
+.activity-col-resource { width: 180px; }
+.activity-col-outcome { width: 130px; text-align: center; }
+.activity-col-actions { width: 100px; text-align: center; }
+
+.activity-time-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-time-cell strong {
+  font-size: 13px;
+  color: var(--text-main);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.activity-time-cell small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.activity-actor-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-actor-cell strong {
+  font-size: 13.5px;
+  color: var(--text-main);
+}
+
+.activity-actor-cell small {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.activity-action-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.activity-action-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.activity-action-raw {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-card-hover);
+  border: 1px solid var(--border-color);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  max-width: fit-content;
+}
+
+.activity-resource-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.activity-resource-cell strong {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.activity-resource-id {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Outcome Badges */
+.activity-outcome-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.activity-outcome-badge.is-success {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.activity-outcome-badge.is-failure {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+.activity-detail-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  gap: 5px;
+}
+
+.activity-pagination-wrap {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  background: var(--surface-card);
+}
+
+/* Empty & Loading States */
+.activity-loading-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 50px 20px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+
+.activity-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 55px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.activity-empty-state strong {
+  font-size: 16px;
+  color: var(--text-main);
+}
+
+.activity-empty-state p {
+  font-size: 13px;
+  max-width: 400px;
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Detail Modal Dialog
+   ========================================================================== */
+.activity-detail-dialog {
+  width: min(100%, 640px);
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-detail-body {
+  display: grid;
+  gap: 20px;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.activity-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.activity-detail-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--surface-card-hover);
+  font-size: 13px;
+}
+
+.activity-detail-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+}
+
+.activity-detail-cell strong {
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.activity-detail-cell small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.activity-detail-metadata-box {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--surface-card);
+}
+
+.activity-metadata-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.activity-metadata-list {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-metadata-item {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) 2fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-card-hover);
+  font-size: 12.5px;
+}
+
+.activity-metadata-key {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.activity-metadata-val code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.activity-metadata-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-main);
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.activity-no-metadata {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--surface-card-hover);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/* ==========================================================================
+   Responsive Adaptations
+   ========================================================================== */
+@media (max-width: 960px) {
+  .activity-filters-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .activity-filters-form {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-filter-actions-row {
+    justify-content: stretch;
+  }
+
+  .activity-filter-actions-row .btn {
+    flex: 1;
+  }
+
+  .activity-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-metadata-item {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

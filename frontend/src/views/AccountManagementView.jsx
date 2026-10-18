@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, Mail, X } from 'lucide-react';
+import { UserPlus, RefreshCw, Shield, Briefcase, Users, GraduationCap, AlertCircle, Check, Trash2, Download, KeyRound, X } from 'lucide-react';
 import PhoneField from '../components/PhoneField';
 import CustomSelect from '../components/CustomSelect';
+import MasterDataSelect from '../components/MasterDataSelect';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DashboardMetrics from '../components/DashboardMetrics';
 import TablePagination from '../components/TablePagination';
@@ -9,7 +10,7 @@ import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch } from '../utils/api';
 
-export default function AccountManagementView({ departments, onShowToast, currentUser }) {
+export default function AccountManagementView({ departments, onCreateDepartment, onShowToast, currentUser }) {
   const [users, setUsers] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -33,7 +34,7 @@ export default function AccountManagementView({ departments, onShowToast, curren
   const [formError, setFormError] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
-  const [pendingCredentialResend, setPendingCredentialResend] = useState(null);
+  const [pendingPasswordReset, setPendingPasswordReset] = useState(null);
   const [resendingCredentialId, setResendingCredentialId] = useState(null);
 
   const requestUsers = useCallback(async (requestedPage, requestedPageSize, signal) => {
@@ -215,24 +216,23 @@ export default function AccountManagementView({ departments, onShowToast, curren
     }
   };
 
-  const handleResendTemporaryPassword = async () => {
-    const user = pendingCredentialResend;
-    if (!user) return;
-    setPendingCredentialResend(null);
+  const handleResetPassword = async () => {
+    const user = pendingPasswordReset;
+    if (!user || resendingCredentialId) return;
     setResendingCredentialId(user.id);
     try {
-      const res = await apiFetch(`/api/auth/users/${user.id}/resend-temporary-password`, { method: 'POST' });
+      const res = await apiFetch(`/api/auth/users/${user.id}/reset-password`, { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Không thể gửi lại mật khẩu tạm');
+      if (!res.ok) throw new Error(data.detail || 'Không thể đặt lại mật khẩu');
       onShowToast(data.message);
       await refreshUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
     } finally {
       setResendingCredentialId(null);
+      setPendingPasswordReset(null);
     }
   };
-
   const exportUsers = async () => {
     try {
       const allUsers = [];
@@ -440,20 +440,23 @@ export default function AccountManagementView({ departments, onShowToast, curren
 
                       <td style={{ textAlign: 'right' }}>
                         <div className="account-row-actions">
-                          {isAdmin && u.trang_thai === 'HoatDong' && Boolean(u.must_change_password) && (
+                          {isAdmin && u.trang_thai === 'HoatDong' && u.ma_nguoi_dung !== currentUser?.ma_nguoi_dung && (
                             <button
                               type="button"
                               className="btn btn-icon"
-                              aria-label={`Gửi lại mật khẩu tạm cho ${u.ho_ten}`}
-                              title="Gửi mật khẩu tạm mới"
+                              aria-label={`Đặt lại mật khẩu cho ${u.ho_ten}`}
+                              title="Đặt lại mật khẩu và gửi qua email"
                               disabled={resendingCredentialId === u.ma_nguoi_dung}
-                              onClick={() => setPendingCredentialResend({
+                              onClick={() => setPendingPasswordReset({
                                 id: u.ma_nguoi_dung,
                                 name: u.ho_ten,
                                 email: u.email,
+                                role: u.vai_tro === 'HR' ? 'Quản lý TTS' : u.vai_tro === 'ThucTapSinh' ? 'Thực tập sinh' : u.vai_tro,
                               })}
                             >
-                              <Mail size={14} />
+                              {resendingCredentialId === u.ma_nguoi_dung
+                                ? <span className="contract-spinner" aria-hidden="true" />
+                                : <KeyRound size={14} />}
                             </button>
                           )}
 
@@ -559,10 +562,17 @@ export default function AccountManagementView({ departments, onShowToast, curren
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-user-department">Phòng ban</label>
-                  <CustomSelect id="new-user-department" name="ma_phong_ban" className="form-select" value={formData.ma_phong_ban} onChange={handleChange}>
-                    <option value="">-- Không chỉ định --</option>
-                    {departments.map((d) => <option key={d.ma_phong_ban} value={d.ma_phong_ban}>{d.ten_phong_ban}</option>)}
-                  </CustomSelect>
+                  <MasterDataSelect
+                    id="new-user-department"
+                    name="ma_phong_ban"
+                    value={formData.ma_phong_ban}
+                    items={departments}
+                    idKey="ma_phong_ban"
+                    labelKey="ten_phong_ban"
+                    placeholder="Tìm hoặc chọn phòng ban"
+                    onCreateNew={onCreateDepartment}
+                    onChange={handleChange}
+                  />
                 </div>
               </form>
             </div>
@@ -585,14 +595,16 @@ export default function AccountManagementView({ departments, onShowToast, curren
         onConfirm={() => pendingDelete && handleDeleteUser(pendingDelete.id)}
       />
       <ConfirmDialog
-        open={Boolean(pendingCredentialResend)}
-        title="Gửi mật khẩu tạm mới?"
-        message={pendingCredentialResend
-          ? `Mật khẩu tạm hiện tại của ${pendingCredentialResend.name} sẽ bị thay thế. Hệ thống sẽ gửi mật khẩu mới tới ${pendingCredentialResend.email}; người dùng cần đổi mật khẩu sau khi đăng nhập.`
+        open={Boolean(pendingPasswordReset)}
+        title="Đặt lại mật khẩu tài khoản?"
+        className="admin-password-reset-confirm"
+        message={pendingPasswordReset
+          ? `Tạo mật khẩu tạm thời mới cho ${pendingPasswordReset.name} (${pendingPasswordReset.role}) và gửi tới ${pendingPasswordReset.email}. Mật khẩu hết hạn sau 30 phút; người dùng phải đổi mật khẩu ngay lần đăng nhập đầu tiên. Các phiên đăng nhập hiện tại sẽ bị thu hồi sau khi SMTP chấp nhận email.`
           : ''}
-        confirmLabel="Gửi mật khẩu"
-        onCancel={() => setPendingCredentialResend(null)}
-        onConfirm={handleResendTemporaryPassword}
+        confirmLabel="Tạo mật khẩu tạm thời và gửi email"
+        busy={Boolean(resendingCredentialId)}
+        onCancel={() => setPendingPasswordReset(null)}
+        onConfirm={handleResetPassword}
       />
     </div>
   );

@@ -612,7 +612,7 @@ def unassign_mentor_from_application(
     background_tasks: BackgroundTasks,
     db: sqlite3.Connection = Depends(get_db),
 ):
-    require_role(request, "Admin", "HR")
+    actor = require_role(request, "Admin", "HR")
     try:
         db.execute("BEGIN IMMEDIATE")
         app = db.execute("""
@@ -631,6 +631,7 @@ def unassign_mentor_from_application(
             mentor_id=mentor_id,
             profile_id=app["ma_ho_so"],
             program_id=program_id,
+            unassigned_by=actor["ma_nguoi_dung"],
         )
         db.commit()
     except HTTPException:

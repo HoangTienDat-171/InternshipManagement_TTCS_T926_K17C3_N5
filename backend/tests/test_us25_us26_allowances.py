@@ -45,8 +45,9 @@ class AllowanceTests(unittest.TestCase):
         cls.programs = []
         for i in range(3):
             cls.programs.append(conn.execute("""INSERT INTO CHUONG_TRINH_THUC_TAP
-                (ma_ct,ten_ct,chi_tieu,trang_thai) VALUES (?, ?, 10, 'DaDong')""",
-                (f"ALLOW-{i}", f"Historical program {i}")).lastrowid)
+                (ma_ct,ten_ct,chi_tieu,trang_thai,ngay_bat_dau,ngay_ket_thuc)
+                VALUES (?, ?, 10, 'DangMo', DATE('now','-30 days'), DATE('now','+30 days'))""",
+                (f"ALLOW-{i}", f"Current program {i}")).lastrowid)
         cls.applications = {}
         for name in ("alice", "bob"):
             for i, program in enumerate(cls.programs):
@@ -190,29 +191,35 @@ class AllowanceTests(unittest.TestCase):
         for query in ["page=0", "page_size=101", "year=999", "program_id=0", "search=" + "x"*101]:
             self.assertEqual(self.http("GET", "/api/allowances?" + query, "hr")[0], 422)
 
-    def test_duplicate_profile_month_across_programs_and_database_unique(self):
-        self.create()
-        with self.assertRaises(HTTPException) as ctx:
-            self.create(program=1)
-        self.assertEqual(ctx.exception.status_code, 409)
-        # Bypass API to independently verify the database business key.
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("""INSERT INTO PHU_CAP_THUC_TAP
-                (ma_ho_so,ma_ung_tuyen,ky,so_tien_minor,created_by,updated_by)
-                VALUES (?,?, '2026-10',100,?,?)""", (self.profiles["alice"],
-                self.applications["alice",1], self.users["hr"]["ma_nguoi_dung"], self.users["hr"]["ma_nguoi_dung"]))
-        self.db.rollback()
-        self.assertEqual(self.service.list_records()["total"], 1)
+    def test_multiple_payments_in_one_period_remain_separate_records(self):
+        first = self.create()
+        second = self.create(program=1)
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(first["ky"], second["ky"])
+        self.assertNotEqual(first["ma_ung_tuyen"], second["ma_ung_tuyen"])
+        # The accepted ledger supports multiple disbursements in the same month.
+        self.db.execute("""INSERT INTO PHU_CAP_THUC_TAP
+            (ma_ho_so,ma_ung_tuyen,ky,so_tien_minor,created_by,updated_by)
+            VALUES (?,?, '2026-10',100,?,?)""", (self.profiles["alice"],
+            self.applications["alice",1], self.users["hr"]["ma_nguoi_dung"], self.users["hr"]["ma_nguoi_dung"]))
+        self.db.commit()
+        rows = self.service.list_records()["items"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(len({row["id"] for row in rows}), 3)
 
-    def test_update_duplicate_preserves_previous_record(self):
+    def test_update_to_shared_period_preserves_other_record(self):
         first = self.create(ky="2026-09")
         second = self.create()
         status, _ = self.http("PUT", f"/api/allowances/{second['id']}", "hr",
-                              {"ky": first["ky"], "so_tien": "0", "ghi_chu": "Must not persist"})
-        self.assertEqual(status, 409)
-        self.assertEqual(self.service.detail(second["id"]), second)
+                              {"ky": first["ky"], "so_tien": "0", "ghi_chu": "Second payment corrected"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.service.detail(first["id"]), first)
+        updated = self.service.detail(second["id"])
+        self.assertEqual(updated["ky"], first["ky"])
+        self.assertEqual(Decimal(updated["so_tien"]), Decimal("0"))
+        self.assertEqual(updated["ghi_chu"], "Second payment corrected")
 
-    def test_concurrent_create_has_one_winner(self):
+    def test_concurrent_payments_in_same_period_both_persist(self):
         barrier = Barrier(2)
         data = AllowanceCreate(**self.payload()).model_dump()
 
@@ -228,8 +235,10 @@ class AllowanceTests(unittest.TestCase):
                 conn.close()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertEqual(sorted(pool.map(lambda _: submit(), range(2))), [201, 409])
-        self.assertEqual(self.service.list_records()["total"], 1)
+            self.assertEqual(sorted(pool.map(lambda _: submit(), range(2))), [201, 201])
+        records = self.service.list_records()
+        self.assertEqual(records["total"], 2)
+        self.assertEqual(len({row["id"] for row in records["items"]}), 2)
 
     def test_unauthenticated_all_endpoints(self):
         for path in ["/api/allowances", "/api/allowances/profiles", "/api/allowances/programs",
@@ -270,6 +279,24 @@ class AllowanceTests(unittest.TestCase):
         invalid["ma_ung_tuyen"] = 99999999
         self.assertEqual(self.http("POST", "/api/allowances", "hr", invalid)[0], 404)
         self.assertEqual(self.service.list_records()["total"], 0)
+
+    def test_closed_and_upcoming_programs_cannot_receive_new_allowances(self):
+        program_id = self.programs[0]
+        try:
+            for state, start_sql in (("DaDong", "DATE('now','-30 days')"),
+                                     ("DangMo", "DATE('now','+1 day')")):
+                with self.subTest(state=state, start=start_sql):
+                    self.db.execute(
+                        f"UPDATE CHUONG_TRINH_THUC_TAP SET trang_thai=?, ngay_bat_dau={start_sql} WHERE ma_chuong_trinh=?",
+                        (state, program_id),
+                    )
+                    self.db.commit()
+                    self.assertEqual(self.http("POST", "/api/allowances", "hr", self.payload())[0], 409)
+                    self.assertEqual(self.service.list_records()["total"], 0)
+        finally:
+            self.db.execute("""UPDATE CHUONG_TRINH_THUC_TAP SET trang_thai='DangMo',
+                ngay_bat_dau=DATE('now','-30 days') WHERE ma_chuong_trinh=?""", (program_id,))
+            self.db.commit()
 
     def test_linkage_and_audit_fields_cannot_be_spoofed(self):
         for key in ["created_by", "updated_by", "created_at", "updated_at", "ma_ho_so", "ma_chuong_trinh"]:
@@ -401,7 +428,7 @@ class AllowanceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(updated["trang_thai_hien_tai"], "DangXuLy")
         self.assertEqual(updated["reports"][0]["nguoi_xu_ly"], "admin")
-        self.assertEqual(updated["history"][0]["event_type"], "BatDauXuLy")
+        self.assertEqual(updated["history"][0]["event_type"], "CapNhatTienDoXuLy")
         status, resolved = self.http("PUT", f"/api/allowances/reports/{report_id}", "hr",
             {"trang_thai_xu_ly": "DaXuLy", "ghi_chu_xu_ly": "Đã đối soát với bộ phận tài chính."})
         self.assertEqual(status, 200)
@@ -423,7 +450,7 @@ class AllowanceTests(unittest.TestCase):
         report = self.http("POST", f"/api/interns/me/allowances/{row['id']}/reports", "alice",
                            {"noi_dung": "Chưa nhận."})[1]["reports"][0]
         self.assertEqual(self.http("PUT", f"/api/allowances/reports/{report['id']}", "alice",
-                                   {"trang_thai_xu_ly": "DaXuLy"})[0], 403)
+                                   {"trang_thai_xu_ly": "DaXuLy", "ghi_chu_xu_ly": "Unauthorized resolution"})[0], 403)
 
     def test_after_hr_resolution_a_new_unreceived_report_is_appended(self):
         row = self.create()

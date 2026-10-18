@@ -11,8 +11,8 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app import database
-from app.attendance_service import InternAttendanceService
+from app import audit_service, database
+from app.attendance_service import InternAttendanceService, _write_transaction
 from app.routes import attendance_routes
 from app.schemas import InternAttendanceCheckIn, InternAttendanceCheckOut
 
@@ -31,6 +31,11 @@ class InternAttendanceTests(unittest.TestCase):
         cls.backend_patch.start()
         cls.path_patch.start()
         database.init_db()
+
+        feature_db = database.get_db_connection()
+        audit_service.create_sqlite_schema(feature_db)
+        feature_db.commit()
+        feature_db.close()
 
         db = database.get_db_connection()
         admin = db.execute("SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro='Admin' ORDER BY ma_nguoi_dung LIMIT 1").fetchone()
@@ -72,8 +77,11 @@ class InternAttendanceTests(unittest.TestCase):
 
     def setUp(self):
         self.db = database.get_db_connection()
+        self.db.execute("DELETE FROM IMS_ATTENDANCE_QR_CREDENTIALS")
         self.db.execute("DELETE FROM CHAM_CONG")
         self.db.execute("DELETE FROM CA_LAM_VIEC")
+        self.db.execute("DELETE FROM IMS_AUDIT_LOG")
+        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_thuc_tap='DangThucTap' WHERE ma_ho_so=?", (self.profile_id,))
         self.db.commit()
         self.day = self.db.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
         self.day = str(self.day)[:10]
@@ -172,6 +180,28 @@ class InternAttendanceTests(unittest.TestCase):
             results = list(pool.map(lambda _index: attempt(), range(2)))
         self.assertEqual(results[0]["id"], results[1]["id"])
         self.assertEqual(self.db.execute("SELECT COUNT(*) AS total FROM CHAM_CONG").fetchone()["total"], 1)
+
+    def test_attendance_transaction_uses_mysql_syntax_for_mysql_backend(self):
+        class FakeConnection:
+            def __init__(self):
+                self.statements = []
+                self.commits = 0
+
+            def execute(self, statement):
+                self.statements.append(statement)
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                raise AssertionError("unexpected rollback")
+
+        fake = FakeConnection()
+        with patch.object(database, "DATABASE_BACKEND", "mysql"):
+            with _write_transaction(fake):
+                pass
+        self.assertEqual(fake.statements, ["START TRANSACTION"])
+        self.assertEqual(fake.commits, 1)
 
     def test_check_out_requires_check_in_and_preserves_first_checkout(self):
         self.add_shift()

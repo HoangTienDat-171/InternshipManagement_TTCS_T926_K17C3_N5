@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Request, Query, BackgroundTasks, File, Form, UploadFile
 import sqlite3
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
-from ..database import get_db, hash_password, verify_password, has_password_change_column
+from .. import audit_service, database as database_module
+from ..database import get_db, hash_password, verify_password, has_password_change_column, has_temporary_password_metadata
 from ..account_credentials import (
     create_temporary_password,
     queue_temporary_password_email,
@@ -14,6 +15,7 @@ from ..account_credentials import (
 )
 from ..schemas import UserLogin, UserRegister, UserResponse, RoleAssign, UserStatusUpdate, UserProfileUpdate, PasswordChange, ForgotPasswordRequest
 from ..security import new_session_token, token_digest, require_role, publish_force_logout, session_connections
+from ..email_service import send_email_direct
 from ..intern_workflow import sync_intern_approval
 from ..notifications import create_notification
 from .document_routes import ALLOWED_EXTENSIONS, MAX_FILE_SIZE, UPLOAD_ROOT, valid_file_content
@@ -29,6 +31,24 @@ DUMMY_BCRYPT_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/Lew.nOQ2/y4g7e1x
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 5
+ADMIN_PASSWORD_RESET_COOLDOWN = timedelta(minutes=5)
+ADMIN_TEMPORARY_PASSWORD_LIFETIME = timedelta(minutes=30)
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _record_admin_password_reset(db, actor_id: int, target_id: int, outcome: str, created_at: datetime):
+    db.execute(
+        """INSERT INTO ADMIN_PASSWORD_RESET_AUDIT
+           (actor_user_id, target_user_id, outcome, created_at) VALUES (?, ?, ?, ?)""",
+        (actor_id, target_id, outcome, created_at.isoformat(sep=" ", timespec="microseconds")),
+    )
+
+
+def _valid_account_email(value: str) -> bool:
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value or ""))
 
 
 def _raise_duplicate_registration(db: sqlite3.Connection, email: str, phone: Optional[str] = None):
@@ -74,7 +94,7 @@ def check_account_lockout(email: str, db: sqlite3.Connection):
             pass
     return row
 
-def record_login_attempt(email: str, success: bool, reason: str, ip: str, db: sqlite3.Connection):
+def record_login_attempt(email: str, success: bool, reason: str, ip: str, db: sqlite3.Connection, *, commit: bool = True):
     """Giai đoạn 3: Ghi vết nhật ký kiểm toán bảo mật và đếm số lần sai"""
     cursor = db.cursor()
     cursor.execute("""
@@ -107,7 +127,33 @@ def record_login_attempt(email: str, success: bool, reason: str, ip: str, db: sq
                 last_attempt = CURRENT_TIMESTAMP
         """, (email, new_count, locked_until_str, new_count, locked_until_str))
     
-    db.commit()
+    if commit:
+        db.commit()
+
+
+def _record_auth_audit(db, request: Request, *, outcome: str, reason: str, user=None, commit: bool = True):
+    """Write safe auth activity without putting submitted email/password in the event."""
+    if not audit_service.audit_schema_ready(db):
+        return
+    actor = None
+    if user is not None:
+        actor = {
+            "ma_nguoi_dung": user["ma_nguoi_dung"],
+            "ho_ten": user["ho_ten"],
+            "session_id": getattr(request.state, "audit_session_id", None),
+        }
+    audit_service.write_audit_event(
+        db,
+        actor=actor,
+        action="AUTH_LOGIN_SUCCESS" if outcome == "SUCCESS" else "AUTH_LOGIN_FAILURE",
+        resource="AUTHENTICATION",
+        outcome=outcome,
+        metadata={"reason": reason, "method": "password"},
+        ip_address=request.client.host if request.client else None,
+        request_id=request.headers.get("x-request-id"),
+    )
+    if commit:
+        db.commit()
 
 @router.post("/register", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
 def register_user(data: UserRegister, request: Request, db: sqlite3.Connection = Depends(get_db)):
@@ -322,23 +368,35 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     email_clean = data.email.strip().lower()
 
     # 1. Kiểm tra trạng thái khóa do Brute-force
-    check_account_lockout(email_clean, db)
+    try:
+        check_account_lockout(email_clean, db)
+    except HTTPException:
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_LOCKED")
+        raise
 
     cursor = db.cursor()
     password_flag = "u.must_change_password" if has_password_change_column(db) else "0 AS must_change_password"
+    temporary_metadata = has_temporary_password_metadata(db)
+    temporary_password_fields = (
+        "u.temporary_password_expires_at, u.temporary_password_consumed_at"
+        if temporary_metadata else
+        "NULL AS temporary_password_expires_at, NULL AS temporary_password_consumed_at"
+    )
     cursor.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.mat_khau, u.so_dien_thoai, 
-               u.vai_tro, u.trang_thai, u.ma_phong_ban, p.ten_phong_ban, {password_flag}
+               u.vai_tro, u.trang_thai, u.ma_phong_ban, p.ten_phong_ban, {password_flag},
+               {temporary_password_fields}
         FROM NGUOI_DUNG u
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         WHERE LOWER(u.email) = ?
-    """.format(password_flag=password_flag), (email_clean,))
+    """.format(password_flag=password_flag, temporary_password_fields=temporary_password_fields), (email_clean,))
     user = cursor.fetchone()
 
     # 2. Chống Timing Attack
     if not user:
         verify_password(data.mat_khau, DUMMY_BCRYPT_HASH)
         record_login_attempt(email_clean, False, "Tài khoản không tồn tại (Timing mitigation)", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="INVALID_CREDENTIALS")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email hoặc mật khẩu không chính xác!"
@@ -348,6 +406,7 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     is_valid = verify_password(data.mat_khau, user["mat_khau"])
     if not is_valid:
         record_login_attempt(email_clean, False, "Sai mật khẩu", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="INVALID_CREDENTIALS", user=user)
         cursor.execute("SELECT failed_count FROM FAILED_LOGIN_ATTEMPTS WHERE email = ?", (email_clean,))
         row = cursor.fetchone()
         current_fails = row["failed_count"] if row else 1
@@ -367,19 +426,39 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     # 4. Yêu cầu: Sau khi tạo tài khoản thì phải đợi Quản lý thực tập sinh xét duyệt
     if user["trang_thai"] == "ChoDuyet":
         record_login_attempt(email_clean, False, "Đăng nhập bị từ chối: Đang chờ xét duyệt", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_PENDING", user=user)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tài khoản của bạn đang chờ Quản lý thực tập sinh xét duyệt. Vui lòng quay lại sau khi được phê duyệt!"
         )
     elif user["trang_thai"] != "HoatDong":
         record_login_attempt(email_clean, False, "Tài khoản bị khóa", client_ip, db)
+        _record_auth_audit(db, request, outcome="FAILURE", reason="ACCOUNT_DISABLED", user=user)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tài khoản đã bị khóa hoặc vô hiệu hóa bởi Quản trị viên!"
         )
 
     # 5. Đăng nhập thành công -> Reset bộ đếm brute force và ghi log
-    record_login_attempt(email_clean, True, "Đăng nhập thành công", client_ip, db)
+    temporary_expiry = user["temporary_password_expires_at"]
+    temporary_consumed = user["temporary_password_consumed_at"]
+    if user["must_change_password"] and (temporary_consumed is not None or temporary_expiry is not None):
+        expired = False
+        if temporary_expiry is not None:
+            try:
+                expiry_value = temporary_expiry if isinstance(temporary_expiry, datetime) else datetime.fromisoformat(str(temporary_expiry))
+                expired = expiry_value.replace(tzinfo=None) <= _utc_now_naive()
+            except (TypeError, ValueError):
+                expired = True
+        if temporary_consumed is not None or expired:
+            record_login_attempt(email_clean, False, "Temporary password expired or already used", client_ip, db)
+            _record_auth_audit(db, request, outcome="FAILURE", reason="TEMPORARY_PASSWORD_EXPIRED", user=user)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Mật khẩu tạm thời đã hết hạn hoặc đã được sử dụng. Vui lòng liên hệ Admin để đặt lại mật khẩu.",
+            )
+
+    record_login_attempt(email_clean, True, "Đăng nhập thành công", client_ip, db, commit=False)
 
     user_dict = {
         "ma_nguoi_dung": user["ma_nguoi_dung"],
@@ -394,6 +473,22 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
     }
 
     session_token, session_id = new_session_token()
+    if user["must_change_password"] and temporary_expiry is not None:
+        consumed_at = _utc_now_naive().isoformat(sep=" ", timespec="microseconds")
+        updated = cursor.execute(
+            """UPDATE NGUOI_DUNG SET temporary_password_consumed_at = ?
+               WHERE ma_nguoi_dung = ? AND temporary_password_consumed_at IS NULL
+                 AND temporary_password_expires_at = ?""",
+            (consumed_at, user["ma_nguoi_dung"], temporary_expiry),
+        )
+        if updated.rowcount != 1:
+            db.rollback()
+            record_login_attempt(email_clean, False, "Temporary password already used", client_ip, db)
+            _record_auth_audit(db, request, outcome="FAILURE", reason="TEMPORARY_PASSWORD_ALREADY_USED", user=user)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Mật khẩu tạm thời đã hết hạn hoặc đã được sử dụng. Vui lòng liên hệ Admin để đặt lại mật khẩu.",
+            )
     cursor.execute("SELECT session_id FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (user["ma_nguoi_dung"],))
     previous_session = cursor.fetchone()
     cursor.execute("""
@@ -402,6 +497,8 @@ def login(data: UserLogin, request: Request, background_tasks: BackgroundTasks, 
         ON CONFLICT(ma_nguoi_dung) DO UPDATE SET
             token_hash = excluded.token_hash, session_id = excluded.session_id
     """, (user["ma_nguoi_dung"], token_digest(session_token), session_id))
+    request.state.audit_session_id = session_id
+    _record_auth_audit(db, request, outcome="SUCCESS", reason="AUTHENTICATED", user=user, commit=False)
     db.commit()
     if previous_session:
         background_tasks.add_task(publish_force_logout, user["ma_nguoi_dung"], previous_session["session_id"])
@@ -528,7 +625,7 @@ def admin_create_user(data: UserRegister, request: Request, db: sqlite3.Connecti
             VALUES (?, 'Chưa cập nhật', 'DaDuyet', 'DangThucTap')
         """, (new_user_id,))
     elif user_role == 'Mentor':
-        cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (new_user_id,))
+        cursor.execute("INSERT INTO MENTOR_PROFILE (ma_nguoi_dung) VALUES (?)", (new_user_id,))
 
     queue_temporary_password_email(db, new_user_id, data.ho_ten.strip(), email, temporary_password)
     client_ip = request.client.host if request.client else "127.0.0.1"
@@ -707,7 +804,7 @@ def assign_role(id: int, data: RoleAssign, request: Request, background_tasks: B
                 VALUES (?, 'Chưa cập nhật', ?, ?)
             """, (id, approval_status, "DangThucTap" if approval_status == "DaDuyet" else None))
     elif data.vai_tro == 'Mentor':
-        cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da) VALUES (?, 3)", (id,))
+        cursor.execute("INSERT OR IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung) VALUES (?)", (id,))
 
     db.commit()
     cursor.execute("""
@@ -869,8 +966,8 @@ def update_profile(user_id: int, data: UserProfileUpdate, request: Request, back
 
 @router.put("/users/{user_id}/password")
 def change_password(user_id: int, data: PasswordChange, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    user = require_role(request)
-    if user["ma_nguoi_dung"] != user_id:
+    session_user = require_role(request)
+    if session_user["ma_nguoi_dung"] != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bạn chỉ có thể đổi mật khẩu tài khoản của mình.")
     if len(data.mat_khau_moi) < 6:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu mới phải có tối thiểu 6 ký tự.")
@@ -881,8 +978,17 @@ def change_password(user_id: int, data: PasswordChange, request: Request, db: sq
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
     if not verify_password(data.mat_khau_hien_tai, user["mat_khau"]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không chính xác.")
+    if session_user.get("must_change_password") and verify_password(data.mat_khau_moi, user["mat_khau"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu mới phải khác mật khẩu tạm thời.")
     new_password_hash = hash_password(data.mat_khau_moi)
-    if has_password_change_column(db):
+    if has_temporary_password_metadata(db):
+        cursor.execute(
+            """UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 0,
+               temporary_password_expires_at = NULL, temporary_password_consumed_at = NULL
+               WHERE ma_nguoi_dung = ?""",
+            (new_password_hash, user_id),
+        )
+    elif has_password_change_column(db):
         cursor.execute(
             "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 0 WHERE ma_nguoi_dung = ?",
             (new_password_hash, user_id),
@@ -958,43 +1064,131 @@ def get_all_users(
     }
 
 
-@router.post("/users/{id}/resend-temporary-password")
-def resend_temporary_password(id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    admin = require_role(request)
+def _admin_reset_password_workflow(id: int, admin: dict, db, background_tasks: BackgroundTasks):
     if admin["vai_tro"] != "Admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chỉ Admin mới được gửi lại mật khẩu tạm.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Chỉ Admin mới được đặt lại mật khẩu.")
+    if not has_temporary_password_metadata(db):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Cần cập nhật schema để hỗ trợ mật khẩu tạm có thời hạn.")
 
-    require_password_change_schema(db)
+    is_mysql = database_module.DATABASE_BACKEND == "mysql"
+    db.execute("START TRANSACTION" if is_mysql else "BEGIN IMMEDIATE")
     cursor = db.cursor()
-    cursor.execute(
-        """SELECT ma_nguoi_dung, ho_ten, email, trang_thai, must_change_password
-           FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?""",
+    lock_clause = " FOR UPDATE" if is_mysql else ""
+    user = cursor.execute(
+        "SELECT ma_nguoi_dung, ho_ten, email, trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung = ?" + lock_clause,
         (id,),
-    )
-    user = cursor.fetchone()
+    ).fetchone()
     if not user:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản.")
+
+    now = _utc_now_naive()
+
+    def reject_request(detail: str, status_code: int = status.HTTP_409_CONFLICT):
+        _record_admin_password_reset(db, admin["ma_nguoi_dung"], id, "REJECTED", now)
+        db.commit()
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    if admin["ma_nguoi_dung"] == id:
+        reject_request("Không thể dùng luồng đặt lại mật khẩu Admin cho chính tài khoản đang đăng nhập.", status.HTTP_400_BAD_REQUEST)
     if user["trang_thai"] != "HoatDong":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Chỉ có thể gửi mật khẩu cho tài khoản đang hoạt động.")
-    if not user["must_change_password"]:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tài khoản đã đổi mật khẩu tạm thời.")
+        reject_request("Chỉ có thể đặt lại mật khẩu cho tài khoản đang hoạt động. Tài khoản không bị tự động kích hoạt.")
 
-    temporary_password = create_temporary_password()
+    email = (user["email"] or "").strip().lower()
+    if not _valid_account_email(email):
+        reject_request("Tài khoản đích chưa có địa chỉ email hợp lệ.")
+
+    cutoff = (now - ADMIN_PASSWORD_RESET_COOLDOWN).isoformat(sep=" ", timespec="microseconds")
+    latest_attempt = cursor.execute(
+        """SELECT created_at FROM ADMIN_PASSWORD_RESET_AUDIT
+           WHERE target_user_id = ? AND outcome IN ('SMTP_ACCEPTED', 'SMTP_FAILED')
+           ORDER BY id DESC LIMIT 1""",
+        (id,),
+    ).fetchone()
+    if latest_attempt and latest_attempt["created_at"]:
+        try:
+            latest_at = latest_attempt["created_at"]
+            latest_at = latest_at if isinstance(latest_at, datetime) else datetime.fromisoformat(str(latest_at))
+            if latest_at.replace(tzinfo=None).isoformat(sep=" ", timespec="microseconds") > cutoff:
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Vui lòng chờ 5 phút trước khi đặt lại mật khẩu cho tài khoản này lần nữa.",
+                )
+        except ValueError:
+            pass
+
+    temporary_password = create_temporary_password(16)
+    temporary_password_hash = hash_password(temporary_password)
+    email_body = (
+        f"Xin chào {user['ho_ten']},\n\n"
+        "Quản trị viên đã thực hiện đặt lại mật khẩu cho tài khoản IMS Portal của bạn.\n\n"
+        f"Tài khoản: {email}\n"
+        f"Mật khẩu tạm thời: {temporary_password}\n"
+        "Thời hạn sử dụng: 30 phút kể từ khi email được gửi.\n\n"
+        "Vui lòng đăng nhập và thay đổi mật khẩu ngay sau khi truy cập thành công.\n"
+        "Nếu bạn không yêu cầu hỗ trợ này, hãy liên hệ quản trị viên.\n\n"
+        "Trân trọng,\nIMS Portal"
+    )
+
+    try:
+        email_accepted = send_email_direct(
+            recipient=email,
+            subject="IMS Portal — Mật khẩu tạm thời cho tài khoản của bạn",
+            body_text=email_body,
+        )
+        if not email_accepted:
+            raise RuntimeError("SMTP did not accept the recipient")
+    except Exception:
+        # Persist only the result; the message body and temporary password stay in memory.
+        _record_admin_password_reset(db, admin["ma_nguoi_dung"], id, "SMTP_FAILED", now)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Không gửi được email đặt lại mật khẩu. Mật khẩu và phiên đăng nhập hiện tại vẫn được giữ nguyên.",
+        )
+
+    # Start the 30-minute window only after SMTP has accepted the email.
+    expires_at_db = (_utc_now_naive() + ADMIN_TEMPORARY_PASSWORD_LIFETIME).isoformat(
+        sep=" ", timespec="microseconds"
+    )
+    previous_session = cursor.execute(
+        "SELECT session_id FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,)
+    ).fetchone()
     cursor.execute(
-        "UPDATE NGUOI_DUNG SET mat_khau = ?, must_change_password = 1 WHERE ma_nguoi_dung = ?",
-        (hash_password(temporary_password), id),
+        """UPDATE NGUOI_DUNG
+           SET mat_khau = ?, must_change_password = 1,
+               temporary_password_expires_at = ?, temporary_password_consumed_at = NULL
+           WHERE ma_nguoi_dung = ? AND trang_thai = 'HoatDong'""",
+        (temporary_password_hash, expires_at_db, id),
     )
-    queue_temporary_password_email(
-        db,
-        id,
-        user["ho_ten"],
-        user["email"],
-        temporary_password,
-        email_deduplication_key=f"account:{id}:temporary-credentials:resend:{uuid4().hex}",
-    )
-    db.commit()
-    return {"message": f"Mật khẩu tạm mới đang được gửi tới {user['email']}."}
+    if cursor.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tài khoản đã thay đổi trạng thái. Hãy tải lại danh sách rồi thử lại.")
 
+    cursor.execute("DELETE FROM ACTIVE_SESSIONS WHERE ma_nguoi_dung = ?", (id,))
+    cursor.execute("DELETE FROM FAILED_LOGIN_ATTEMPTS WHERE email = ?", (email,))
+    _record_admin_password_reset(db, admin["ma_nguoi_dung"], id, "SMTP_ACCEPTED", now)
+    db.commit()
+    if previous_session:
+        background_tasks.add_task(publish_force_logout, id, previous_session["session_id"])
+
+    return {
+        "message": f"SMTP đã chấp nhận email gửi tới {email}. Việc email đến hộp thư còn phụ thuộc nhà cung cấp.",
+        "expires_in_minutes": int(ADMIN_TEMPORARY_PASSWORD_LIFETIME.total_seconds() // 60),
+    }
+
+
+@router.post("/users/{id}/resend-temporary-password", include_in_schema=False)
+@router.post("/users/{id}/reset-password")
+def reset_temporary_password(
+    id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    admin = require_role(request)
+    return _admin_reset_password_workflow(id, admin, db, background_tasks)
 @router.get("/security-audit-logs")
 def get_security_audit_logs(request: Request, db: sqlite3.Connection = Depends(get_db)):
     """Nhật ký bảo mật chỉ phục vụ Quản trị viên (Admin)"""

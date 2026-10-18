@@ -76,7 +76,7 @@ function getFileIcon(filename) {
   return File;
 }
 
-export default function SupportRequestView({ currentUser, onShowToast }) {
+export default function SupportRequestView({ currentUser, onShowToast, requestedRequestId, onRequestedRequestHandled }) {
   const userRole = currentUser?.vai_tro;
   const isIntern = userRole === 'ThucTapSinh';
   const isHR = ['Admin', 'HR'].includes(userRole);
@@ -179,6 +179,43 @@ export default function SupportRequestView({ currentUser, onShowToast }) {
     loadData();
     return () => { isMounted = false; };
   }, [isIntern, isHR, page, pageSize, filterStatus, filterType, searchQuery, onShowToast]);
+
+  useEffect(() => {
+    if (!requestedRequestId) return undefined;
+    let isMounted = true;
+
+    const loadRequestedRequest = async () => {
+      setSelectedRequest({ id: requestedRequestId });
+      setResponseText('');
+      setModalLoading(true);
+      const url = isIntern
+        ? `/api/support-requests/my/${requestedRequestId}`
+        : `/api/support-requests/${requestedRequestId}`;
+      try {
+        const response = await apiFetch(url);
+        const data = await readJsonResponse(response);
+        if (!isMounted) return;
+        if (response.ok) {
+          setSelectedRequest(data);
+        } else {
+          setSelectedRequest(null);
+          onShowToast?.(data.detail || 'Không thể tải chi tiết yêu cầu.', 'error');
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        setSelectedRequest(null);
+        onShowToast?.(`Lỗi tải chi tiết: ${error.message}`, 'error');
+      } finally {
+        if (isMounted) {
+          setModalLoading(false);
+          onRequestedRequestHandled?.();
+        }
+      }
+    };
+
+    loadRequestedRequest();
+    return () => { isMounted = false; };
+  }, [requestedRequestId, isIntern, onShowToast, onRequestedRequestHandled]);
 
   // Open Request Detail
   const handleOpenDetail = async (req) => {

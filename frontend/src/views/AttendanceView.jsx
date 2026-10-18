@@ -151,6 +151,7 @@ export default function AttendanceView({ onShowToast }) {
             <div><span>Check-in</span><strong>{timeLabel(attendance?.check_in_at)}</strong></div>
             <div><span>Check-out</span><strong>{timeLabel(attendance?.check_out_at)}</strong></div>
           </div>
+          {attendance && <div className="attendance-method-note">Nguồn ghi nhận: {attendance.source === 'QR' ? 'QR' : attendance.source === 'CARD' ? 'Thẻ' : 'Thủ công'}</div>}
           {today?.can_check_in && <label className="attendance-note-field">
             <span>Ghi chú check-in <small>(không bắt buộc)</small></span>
             <textarea value={note} maxLength={1000} rows={2} onChange={(event) => setNote(event.target.value)} placeholder="Thêm ghi chú nếu cần…" />
@@ -192,7 +193,7 @@ export default function AttendanceView({ onShowToast }) {
             <span role="cell" data-label="Ca làm"><strong>{item.shift.name}</strong><small>{timeLabel(item.shift.start_time)} – {timeLabel(item.shift.end_time)}</small></span>
             <span role="cell" data-label="Giờ vào">{timeLabel(item.check_in_at)}</span>
             <span role="cell" data-label="Giờ ra">{timeLabel(item.check_out_at)}</span>
-            <span role="cell" data-label="Trạng thái"><AttendanceStatus status={item.status} /></span>
+            <span role="cell" data-label="Trạng thái"><AttendanceStatus status={item.status} /><small className="attendance-history-source">{item.source === 'QR' ? 'QR' : item.source === 'CARD' ? 'Thẻ' : 'Thủ công'}</small></span>
           </div>)}
         </div>
         {history.total_pages > 1 && <div className="attendance-pagination">
@@ -202,5 +203,6 @@ export default function AttendanceView({ onShowToast }) {
         </div>}
       </>}
     </section>
+
   </div>;
 }

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -33,10 +34,11 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+CONFIG_ROOT_DIR = Path(os.environ.get("IMS_CONFIG_ROOT", str(ROOT_DIR))).expanduser().resolve()
 BACKEND_DIR = ROOT_DIR / "backend"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 LOGS_DIR = ROOT_DIR / "logs"
-ENV_FILE = BACKEND_DIR / ".env"
+ENV_FILE = CONFIG_ROOT_DIR / "backend" / ".env"
 ENV_EXAMPLE_FILE = BACKEND_DIR / ".env.example"
 VENV_PYTHON = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
 STATE_FILE = LOGS_DIR / "launcher_state.json"
@@ -54,8 +56,9 @@ def sanitize_text(text: str) -> str:
     """Mask sensitive fields like passwords, secrets, and auth tokens."""
     if not text:
         return ""
-    text = re.sub(r"(?i)(password|secret|token|mat_khau)\s*=\s*[^\s,;]+", r"\1=******", text)
-    text = re.sub(r"(?i)(['\"](?:password|secret|token)['\"]\s*:\s*['\"])[^'\"]+(['\"])", r"\1******\2", text)
+    sensitive_name = r"password|secret|token|api[_-]?key|credential|mat_khau"
+    text = re.sub(rf"(?i)({sensitive_name})\s*=\s*[^\s,;]+", r"\1=******", text)
+    text = re.sub(rf"(?i)(['\"](?:{sensitive_name})['\"]\s*:\s*['\"])[^'\"]+(['\"])", r"\1******\2", text)
     return text
 
 
@@ -240,6 +243,157 @@ def get_process_cmdline(pid: int) -> str:
     return ""
 
 
+def get_remote_process_details(pid: int) -> dict | None:
+    """Read a same-user Windows process' current directory and environment block."""
+    if platform.system() != "Windows" or pid <= 0:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessBasicInformation(ctypes.Structure):
+            _fields_ = [
+                ("reserved1", ctypes.c_void_p),
+                ("peb_address", ctypes.c_void_p),
+                ("reserved2", ctypes.c_void_p),
+                ("reserved3", ctypes.c_void_p),
+                ("process_id", ctypes.c_void_p),
+                ("parent_process_id", ctypes.c_void_p),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        open_process.restype = wintypes.HANDLE
+        read_process_memory = kernel32.ReadProcessMemory
+        read_process_memory.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        read_process_memory.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+        query_process = ntdll.NtQueryInformationProcess
+        query_process.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(ProcessBasicInformation),
+            wintypes.ULONG,
+            ctypes.POINTER(wintypes.ULONG),
+        ]
+        query_process.restype = ctypes.c_long
+
+        handle = open_process(0x0410, False, pid)  # QUERY_INFORMATION | VM_READ
+        if not handle:
+            return None
+
+        def read_memory(address: int, size: int) -> bytes | None:
+            buffer = ctypes.create_string_buffer(size)
+            bytes_read = ctypes.c_size_t()
+            ok = read_process_memory(
+                handle, ctypes.c_void_p(address), buffer, size, ctypes.byref(bytes_read)
+            )
+            if not ok or bytes_read.value <= 0:
+                return None
+            return buffer.raw[: bytes_read.value]
+
+        try:
+            info = ProcessBasicInformation()
+            returned = wintypes.ULONG()
+            status = query_process(
+                handle,
+                0,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+                ctypes.byref(returned),
+            )
+            if status != 0 or not info.peb_address:
+                return None
+
+            pointer_size = ctypes.sizeof(ctypes.c_void_p)
+            peb = read_memory(int(info.peb_address), 0x80)
+            if not peb:
+                return None
+            params_offset = 0x20 if pointer_size == 8 else 0x10
+            params_address = int.from_bytes(peb[params_offset : params_offset + pointer_size], "little")
+            params = read_memory(params_address, 0x200)
+            if not params:
+                return None
+
+            cwd_struct_offset = 0x38 if pointer_size == 8 else 0x24
+            cwd_length = int.from_bytes(params[cwd_struct_offset : cwd_struct_offset + 2], "little")
+            cwd_buffer_offset = cwd_struct_offset + (8 if pointer_size == 8 else 4)
+            cwd_address = int.from_bytes(
+                params[cwd_buffer_offset : cwd_buffer_offset + pointer_size], "little"
+            )
+            cwd_bytes = read_memory(cwd_address, cwd_length) if cwd_address and cwd_length else b""
+            cwd = cwd_bytes.decode("utf-16-le", errors="replace") if cwd_bytes else ""
+
+            environment_offset = 0x80 if pointer_size == 8 else 0x48
+            environment_address = int.from_bytes(
+                params[environment_offset : environment_offset + pointer_size], "little"
+            )
+            environment_bytes = read_memory(environment_address, 0x20000) if environment_address else None
+            if not environment_bytes:
+                return None
+            environment_text = environment_bytes.decode("utf-16-le", errors="replace")
+            environment = {}
+            for entry in environment_text.split("\x00"):
+                key, separator, value = entry.partition("=")
+                if separator and key and not key.startswith("="):
+                    environment[key] = value
+            return {"cwd": cwd, "environment": environment}
+        finally:
+            close_handle(handle)
+    except Exception:
+        return None
+
+
+def _project_root_from_cwd(cwd: str) -> Path | None:
+    if not cwd:
+        return None
+    path = Path(cwd)
+    for candidate in (path, *path.parents):
+        if (candidate / "backend" / "app" / "main.py").is_file() and (candidate / "frontend" / "package.json").is_file():
+            return candidate.resolve()
+    return None
+
+
+def _source_manifest(root: Path, service_type: str) -> dict[str, str]:
+    """Fingerprint tracked runtime source while excluding local config and dependencies."""
+    if service_type == "frontend":
+        base = root / "frontend"
+        paths = list((base / "src").rglob("*"))
+        paths.extend(path for path in base.glob("*") if path.is_file())
+        paths = [path for path in paths if path.is_file() and path.name not in {".env", ".env.local"}]
+    elif service_type == "sandbox":
+        relative_paths = (
+            "backend/app/hrm_sandbox.py",
+            "backend/app/hrm_storage.py",
+            "backend/app/database.py",
+            "backend/app/hrm_sandbox_console.html",
+        )
+        paths = [root / name for name in relative_paths]
+    else:
+        base = root / "backend" / "app"
+        paths = list(base.rglob("*.py")) + list(base.rglob("*.html"))
+        paths.append(root / "backend" / "requirements.txt")
+
+    manifest = {}
+    for path in paths:
+        try:
+            relative = path.relative_to(root).as_posix()
+            manifest[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (OSError, ValueError):
+            continue
+    return manifest
+
+
 def get_process_name(pid: int) -> str:
     try:
         out = subprocess.check_output(
@@ -255,7 +409,7 @@ def get_process_name(pid: int) -> str:
     return ""
 
 
-OWNERSHIP_VERSION = 2
+OWNERSHIP_VERSION = 3
 
 
 def _root_fingerprint() -> str:
@@ -312,23 +466,47 @@ def verify_process_ownership(pid: int, expected_type: str, saved_proc_info: dict
         return False, f"Không đọc đủ process identity cho PID {pid}"
     token_marker = f"ims_launcher_owner={saved_proc_info['owner_token']}"
     root_marker = f"ims_launcher_root={_root_fingerprint()}"
-    if token_marker not in cmdline or root_marker not in cmdline:
-        return False, f"PID {pid} không mang identity token do launcher này tạo"
+    if expected_type == "frontend":
+        details = get_remote_process_details(pid)
+        environment = details.get("environment", {}) if details else {}
+        identity_matches = (
+            hmac.compare_digest(environment.get("IMS_LAUNCHER_OWNER", ""), saved_proc_info["owner_token"])
+            and hmac.compare_digest(environment.get("IMS_LAUNCHER_ROOT", ""), _root_fingerprint())
+        )
+    else:
+        identity_matches = token_marker in cmdline and root_marker in cmdline
+    if not identity_matches:
+        return False, "Process does not carry this launcher's ownership identity"
 
     if expected_type == "backend":
         is_python = Path(proc_name).name in ("python.exe", "pythonw.exe")
-        if is_python and "uvicorn.run" in cmdline and "backend.app.main:app" in cmdline:
+        if is_python and "uvicorn.run" in cmdline and ("app.main:app" in cmdline or "backend.app.main:app" in cmdline):
             return True, "Xác minh thành công backend của dự án"
         return False, f"Tiến trình PID {pid} không thuộc backend của dự án này"
 
     elif expected_type == "frontend":
         is_node = Path(proc_name).name == "node.exe"
-        if is_node and "createserver" in cmdline and "import('vite')" in cmdline and "strictport" in cmdline:
+        if is_node and "vite" in cmdline and "strictport" in cmdline:
             return True, "Xác minh thành công frontend của dự án"
         return False, f"Tiến trình PID {pid} không thuộc frontend của dự án này"
 
+    elif expected_type == "sandbox":
+        is_python = Path(proc_name).name in ("python.exe", "pythonw.exe")
+        if is_python and "app.hrm_sandbox" in cmdline:
+            return True, "Xác minh thành công HRM Sandbox của dự án"
+        return False, f"Tiến trình PID {pid} không thuộc HRM Sandbox của dự án này"
+
     return False, f"Loại tiến trình không xác định: {expected_type}"
 
+
+
+def _launcher_owner_token_from_process(pid: int) -> str | None:
+    """Return a valid owner token embedded in a process created by this source tree."""
+    cmdline = get_process_cmdline(pid).lower()
+    if f"ims_launcher_root={_root_fingerprint()}" not in cmdline:
+        return None
+    match = re.search(r"ims_launcher_owner=([0-9a-f]{32})", cmdline)
+    return match.group(1) if match else None
 
 def _terminate_exact_windows_process(pid: int, expected_creation_time: int) -> tuple[bool, str]:
     """Terminate one verified process using a stable Windows handle, never its PID tree."""
@@ -552,7 +730,105 @@ class Launcher:
         self.state = load_state()
         self.env = parse_env_file(ENV_FILE)
         self.python_exe = VENV_PYTHON if VENV_PYTHON.is_file() else Path(sys.executable)
+        self.vite_bin = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+        if not self.vite_bin.is_file():
+            self.vite_bin = CONFIG_ROOT_DIR / "frontend" / "node_modules" / "vite" / "bin" / "vite.js"
         self.managed_processes: dict[str, dict] = {}
+
+    @staticmethod
+    def _base_child_environment() -> dict[str, str]:
+        windows_runtime_keys = {
+            "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE",
+            "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH", "PATHEXT",
+            "COMSPEC", "PROGRAMDATA", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+        }
+        return {key: value for key, value in os.environ.items() if key.upper() in windows_runtime_keys}
+
+    def _backend_environment(self) -> dict[str, str]:
+        environment = self._base_child_environment()
+        environment.update(self.env)
+        environment["IMS_SKIP_STARTUP_DB_INIT"] = "1"
+        environment["PYTHONPATH"] = str(BACKEND_DIR)
+        return environment
+
+    def _sandbox_environment(self) -> dict[str, str]:
+        environment = self._base_child_environment()
+        for key in (
+            "HRM_SANDBOX_API_KEY", "HRM_SANDBOX_ADMIN_API_KEY", "HRM_SANDBOX_DATABASE_PATH",
+            "HRM_SANDBOX_DATABASE_BACKEND", "HRM_SANDBOX_MYSQL_HOST", "HRM_SANDBOX_MYSQL_PORT",
+            "HRM_SANDBOX_MYSQL_USER", "HRM_SANDBOX_MYSQL_PASSWORD", "HRM_SANDBOX_MYSQL_DATABASE",
+            "HRM_SANDBOX_PORT",
+        ):
+            if key in self.env:
+                environment[key] = self.env[key]
+        environment["HRM_SANDBOX_SKIP_STARTUP_DB_INIT"] = "1"
+        environment["PYTHONPATH"] = str(BACKEND_DIR)
+        return environment
+
+    def _frontend_environment(self, owner_token: str) -> dict[str, str]:
+        environment = self._base_child_environment()
+        environment["VITE_API_PROXY_TARGET"] = self.env.get(
+            "VITE_API_PROXY_TARGET", "http://127.0.0.1:8000"
+        )
+        environment["IMS_LAUNCHER_OWNER"] = owner_token
+        environment["IMS_LAUNCHER_ROOT"] = _root_fingerprint()
+        return environment
+
+    def _process_matches_service(self, pid: int, service_type: str) -> bool:
+        details = get_remote_process_details(pid)
+        if not details:
+            return False
+        process_root = _project_root_from_cwd(details.get("cwd", ""))
+        if not process_root:
+            return False
+        if _source_manifest(process_root, service_type) != _source_manifest(ROOT_DIR, service_type):
+            return False
+
+        command = get_process_cmdline(pid).casefold()
+        process_name = Path(get_process_name(pid)).name.casefold()
+        environment = details.get("environment", {})
+        if service_type == "frontend":
+            if process_name != "node.exe" or not ("vite" in command or "createserver" in command):
+                return False
+            actual_target = environment.get("VITE_API_PROXY_TARGET", "http://127.0.0.1:8000")
+            expected_target = self.env.get("VITE_API_PROXY_TARGET", "http://127.0.0.1:8000")
+            return actual_target.rstrip("/") == expected_target.rstrip("/")
+
+        if process_name not in ("python.exe", "pythonw.exe"):
+            return False
+        if service_type == "sandbox":
+            if "app.hrm_sandbox" not in command:
+                return False
+            comparisons = (
+                ("HRM_SANDBOX_DATABASE_BACKEND", "mysql"),
+                ("HRM_SANDBOX_MYSQL_HOST", self.env.get("HRM_SANDBOX_MYSQL_HOST", "127.0.0.1")),
+                ("HRM_SANDBOX_MYSQL_PORT", self.env.get("HRM_SANDBOX_MYSQL_PORT", "3306")),
+                ("HRM_SANDBOX_MYSQL_DATABASE", self.env.get("HRM_SANDBOX_MYSQL_DATABASE", "")),
+                ("HRM_SANDBOX_API_KEY", self.env.get("HRM_SANDBOX_API_KEY", "")),
+                ("HRM_SANDBOX_ADMIN_API_KEY", self.env.get("HRM_SANDBOX_ADMIN_API_KEY", "")),
+            )
+        else:
+            if "uvicorn" not in command or not ("app.main:app" in command or "backend.app.main:app" in command):
+                return False
+            comparisons = (
+                ("IMS_DATABASE_BACKEND", self.env.get("IMS_DATABASE_BACKEND", "mysql")),
+                ("MYSQL_HOST", self.env.get("MYSQL_HOST", "127.0.0.1")),
+                ("MYSQL_PORT", self.env.get("MYSQL_PORT", "3306")),
+                ("MYSQL_DATABASE", self.env.get("MYSQL_DATABASE", "")),
+                ("HRM_SANDBOX_BASE_URL", self.env.get("HRM_SANDBOX_BASE_URL", "")),
+                ("HRM_SANDBOX_API_KEY", self.env.get("HRM_SANDBOX_API_KEY", "")),
+                ("SMTP_HOST", self.env.get("SMTP_HOST", "")),
+                ("SMTP_USERNAME", self.env.get("SMTP_USERNAME", "")),
+                ("SMTP_PASSWORD", self.env.get("SMTP_PASSWORD", "")),
+                ("EMAIL_WORKER_INTERVAL_SECONDS", self.env.get("EMAIL_WORKER_INTERVAL_SECONDS", "5")),
+            )
+            if environment.get("IMS_DISABLE_EMAIL_WORKER", "0") == "1":
+                return False
+
+        return all(
+            hmac.compare_digest(environment.get(key, ""), expected)
+            for key, expected in comparisons
+        )
 
     def _make_process_state(self, pid: int, process_type: str, owner_token: str, port: int, url: str) -> dict | None:
         creation_time = get_process_creation_time(pid)
@@ -604,12 +880,55 @@ class Launcher:
                 if response.status != 200:
                     return False
                 payload = json.loads(response.read().decode("utf-8"))
-                return (
+                if not (
                     payload.get("system") == "Hệ thống Quản lý Thực tập sinh"
                     and payload.get("status") == "Online"
-                )
+                ):
+                    return False
+            with urllib.request.urlopen(url.rstrip("/") + "/openapi.json", timeout=3) as response:
+                if response.status != 200:
+                    return False
+                paths = json.loads(response.read().decode("utf-8")).get("paths", {})
+            path_names = tuple(paths)
+            required_markers = (
+                ("/api/meetings",),
+                ("/api/integrations/hrm",),
+                ("/api/admin/backups",),
+                ("/api/audit-logs",),
+                ("attendance",),
+            )
+            return all(any(any(marker in path for marker in markers) for path in path_names) for markers in required_markers)
         except Exception:
             return False
+
+    @staticmethod
+    def _sandbox_health(url: str, api_key: str) -> dict | None:
+        try:
+            request = urllib.request.Request(
+                url.rstrip("/") + "/api/v1/health",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            with urllib.request.urlopen(request, timeout=3) as response:
+                if response.status != 200:
+                    return None
+                return json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return None
+
+    def _sandbox_is_healthy(self, url: str) -> bool:
+        service_key = self.env.get("HRM_SANDBOX_API_KEY", "")
+        admin_key = self.env.get("HRM_SANDBOX_ADMIN_API_KEY", "")
+        expected_database = self.env.get("HRM_SANDBOX_MYSQL_DATABASE", "")
+        if not service_key or not admin_key or hmac.compare_digest(service_key, admin_key):
+            return False
+        payload = self._sandbox_health(url, service_key)
+        if not payload:
+            return False
+        if payload.get("status") != "ok" or payload.get("database_backend") != "mysql":
+            return False
+        if payload.get("database_name") != expected_database or not isinstance(payload.get("employee_count"), int):
+            return False
+        return self._sandbox_health(url, admin_key) is not None
 
     @staticmethod
     def _is_spawned_backend_process(pid: int, owner_token: str) -> bool:
@@ -681,14 +1000,18 @@ class Launcher:
                 )
 
         # 5. Frontend dependencies check
-        vite_bin = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
-        if not vite_bin.is_file():
+        if not self.vite_bin.is_file():
+            allow_install = "--install" in sys.argv or "--setup" in sys.argv
+            if allow_install:
+                self.vite_bin = FRONTEND_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+        if not self.vite_bin.is_file():
             allow_install = "--install" in sys.argv or "--setup" in sys.argv
             if allow_install:
                 print("  -> Đang cài đặt gói thư viện Frontend ban đầu (npm install)...")
                 res = subprocess.run(
                     ["npm.cmd", "install", "--no-audit", "--no-fund"],
-                    cwd=str(FRONTEND_DIR), capture_output=True, text=True
+                    cwd=str(FRONTEND_DIR), capture_output=True, text=True,
+                    env=self._frontend_environment(""),
                 )
                 if res.returncode != 0:
                     return False, f"Cài đặt thư viện frontend thất bại: {res.stderr.strip() or res.stdout.strip()}"
@@ -698,6 +1021,26 @@ class Launcher:
                     "  Vui lòng chạy: cd frontend && npm install\n"
                     "  Hoặc chạy launcher với cờ '--install' để tự động cài đặt."
                 )
+
+        if self.env.get("IMS_DATABASE_BACKEND", "mysql").strip().lower() != "mysql":
+            return False, "IMS_DATABASE_BACKEND phải là mysql. Launcher không chuyển môi trường sang SQLite."
+        if self.env.get("HRM_SANDBOX_DATABASE_BACKEND", "").strip().lower() != "mysql":
+            return False, "HRM_SANDBOX_DATABASE_BACKEND phải là mysql. Launcher không chuyển Sandbox sang SQLite."
+        service_key = self.env.get("HRM_SANDBOX_API_KEY", "")
+        admin_key = self.env.get("HRM_SANDBOX_ADMIN_API_KEY", "")
+        if len(service_key) < 32 or len(admin_key) < 32 or hmac.compare_digest(service_key, admin_key):
+            return False, "Cấu hình HRM Sandbox cần service key và admin key riêng, hợp lệ trong backend\\.env."
+        if self.env.get("IMS_DISABLE_EMAIL_WORKER", "0").strip() == "1":
+            return False, "IMS_DISABLE_EMAIL_WORKER=1; bật worker bằng cấu hình local trước khi khởi động."
+        if self.env.get("VITE_API_PROXY_TARGET", "http://127.0.0.1:8000").rstrip("/") != "http://127.0.0.1:8000":
+            return False, "VITE_API_PROXY_TARGET phải trỏ tới backend local http://127.0.0.1:8000."
+        required_mysql_values = (
+            "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE", "HRM_SANDBOX_MYSQL_USER",
+            "HRM_SANDBOX_MYSQL_PASSWORD", "HRM_SANDBOX_MYSQL_DATABASE",
+        )
+        missing_mysql = [key for key in required_mysql_values if not self.env.get(key, "").strip()]
+        if missing_mysql:
+            return False, "Thiếu cấu hình MySQL local: " + ", ".join(missing_mysql)
 
         # Port ownership/health is checked immediately before each service starts.
         # External healthy services may be reused but are never added to shutdown state.
@@ -801,7 +1144,6 @@ class Launcher:
                 cur.execute("SELECT 1")
             conn.close()
             log_startup("MYSQL_CONNECTED", f"Connected to MySQL database '{database}' on {host}:{port}")
-            return True, "CONNECTED", f"MySQL on {host}:{port}"
         except Exception as exc:
             code = getattr(exc, "args", [None])[0] if hasattr(exc, "args") else None
             msg = str(exc)
@@ -813,6 +1155,117 @@ class Launcher:
                 detail = f"Lỗi kết nối cơ sở dữ liệu MySQL: {msg}"
             log_startup("MYSQL_CONNECT_ERROR", detail, level="ERROR")
             return False, "FAILED", detail
+
+        sandbox_host = self.env.get("HRM_SANDBOX_MYSQL_HOST", "127.0.0.1").strip()
+        sandbox_port = int(self.env.get("HRM_SANDBOX_MYSQL_PORT", "3306").strip() or 3306)
+        sandbox_user = self.env.get("HRM_SANDBOX_MYSQL_USER", "").strip()
+        sandbox_password = self.env.get("HRM_SANDBOX_MYSQL_PASSWORD", "")
+        sandbox_database = self.env.get("HRM_SANDBOX_MYSQL_DATABASE", "").strip()
+        try:
+            import pymysql
+            connection = pymysql.connect(
+                host=sandbox_host,
+                port=sandbox_port,
+                user=sandbox_user,
+                password=sandbox_password,
+                database=sandbox_database,
+                charset="utf8mb4",
+                connect_timeout=5,
+                autocommit=False,
+            )
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            connection.close()
+            log_startup("HRM_MYSQL_CONNECTED", f"Connected to HRM Sandbox MySQL database '{sandbox_database}'")
+            return True, "CONNECTED", f"IMS MySQL {database}; HRM Sandbox MySQL {sandbox_database}"
+        except Exception as exc:
+            code = getattr(exc, "args", [None])[0] if hasattr(exc, "args") else None
+            if code == 1049:
+                detail = f"HRM Sandbox database '{sandbox_database}' không tồn tại. Launcher không tự tạo schema."
+            elif code in (1045, 1698):
+                detail = "Xác thực MySQL HRM Sandbox thất bại; kiểm tra HRM_SANDBOX_MYSQL_USER/PASSWORD trong backend\\.env."
+            else:
+                detail = f"Không thể kết nối HRM Sandbox MySQL '{sandbox_database}': {type(exc).__name__}."
+            log_startup("HRM_MYSQL_CONNECT_ERROR", detail, level="ERROR")
+            return False, "FAILED", detail
+
+    def start_sandbox(self) -> tuple[bool, str, int, str]:
+        port = int(self.env.get("HRM_SANDBOX_PORT", "8100").strip() or 8100)
+        sandbox_url = self.env.get("HRM_SANDBOX_BASE_URL", f"http://127.0.0.1:{port}").rstrip("/")
+        if port != 8100 or sandbox_url != f"http://127.0.0.1:{port}":
+            return False, "FAILED", 0, "HRM Sandbox phải dùng endpoint loopback và cổng 8100 đã cấu hình."
+
+        p_pid = get_port_listener_pid(port)
+        if p_pid:
+            saved = self.state.get("sandbox", {})
+            is_ours, _ = verify_process_ownership(p_pid, "sandbox", saved)
+            if is_ours:
+                if self._sandbox_is_healthy(sandbox_url) and self._process_matches_service(p_pid, "sandbox"):
+                    self.managed_processes["sandbox"] = saved
+                    log_startup("SANDBOX_REUSED", f"Managed HRM Sandbox already running on PID {p_pid}")
+                    return True, "RUNNING (Existing)", p_pid, sandbox_url
+                return False, "FAILED", 0, f"HRM Sandbox launcher-owned PID {p_pid} không khớp source/config hiện tại hoặc health check thất bại."
+            if self._sandbox_is_healthy(sandbox_url) and self._process_matches_service(p_pid, "sandbox"):
+                owner_token = _launcher_owner_token_from_process(p_pid)
+                process_state = self._make_process_state(p_pid, "sandbox", owner_token, port, sandbox_url) if owner_token else None
+                if process_state:
+                    self.managed_processes["sandbox"] = process_state
+                    log_startup("SANDBOX_ADOPTED", f"Adopted verified launcher-owned Sandbox PID {p_pid}")
+                    return True, "RUNNING (Managed Existing)", p_pid, sandbox_url
+                log_startup("SANDBOX_EXTERNAL", f"Verified HRM Sandbox on port {port}; it will not be managed or stopped")
+                return True, "RUNNING (Verified External)", 0, sandbox_url
+            proc_name = get_process_name(p_pid) or "Unknown"
+            return False, "FAILED", 0, f"Cổng HRM Sandbox {port} đang do PID {p_pid} ({proc_name}) chiếm; source/database/key chưa xác minh khớp, giữ nguyên process."
+
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        owner_token = uuid.uuid4().hex
+        identity = f"IMS_LAUNCHER_OWNER={owner_token};IMS_LAUNCHER_ROOT={_root_fingerprint()}"
+        launch_code = (
+            f"__ims_identity__={identity!r}; import runpy; "
+            "runpy.run_module('app.hrm_sandbox', run_name='__main__')"
+        )
+        cmd = [str(self.python_exe), "-c", launch_code]
+        with open(BACKEND_LOG, "a", encoding="utf-8") as log_f:
+            log_f.write(f"\n--- HRM Sandbox Session Started at {get_current_timestamp()} ---\n")
+            log_f.flush()
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(BACKEND_DIR),
+                env=self._sandbox_environment(),
+                stdout=log_f,
+                stderr=log_f,
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            )
+        pid = proc.pid
+        process_state = self._make_process_state(pid, "sandbox", owner_token, port, sandbox_url)
+        if process_state is None:
+            self._stop_spawned_child(proc)
+            return False, "FAILED", 0, f"Không đọc được creation time của HRM Sandbox PID {pid}; process mới tạo đã được dừng an toàn."
+
+        for _ in range(30):
+            time.sleep(1)
+            if proc.poll() is not None:
+                break
+            listener_pid = get_port_listener_pid(port)
+            if (
+                listener_pid == pid
+                and self._sandbox_is_healthy(sandbox_url)
+                and self._process_matches_service(listener_pid, "sandbox")
+            ):
+                self.managed_processes["sandbox"] = process_state
+                log_startup("SANDBOX_HEALTHY", f"HRM Sandbox healthcheck passed at {sandbox_url}")
+                return True, "RUNNING", pid, sandbox_url
+
+        tail_lines = ""
+        try:
+            lines = BACKEND_LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+            tail_lines = "\n    ".join(lines[-10:]) if lines else "Không có chi tiết lỗi trong log."
+        except Exception:
+            pass
+        tail_lines = sanitize_text(tail_lines)
+        log_startup("SANDBOX_FAILED", f"HRM Sandbox failed to become healthy. Log snippet:\n{tail_lines}", level="ERROR")
+        self._stop_spawned_child(proc)
+        return False, "FAILED", 0, f"HRM Sandbox không sẵn sàng sau 30s.\n  Chi tiết:\n    {tail_lines}"
 
     def start_backend(self) -> tuple[bool, str, int, str]:
         port = 8000
@@ -830,41 +1283,45 @@ class Launcher:
                 and verify_process_ownership(saved_parent_pid, "backend", saved_be)[0]
             )
             is_our_backend_child = (
-                parent_is_ours
+                not is_our_backend
+                and parent_is_ours
                 and self._is_spawned_backend_process(p_pid, saved_be.get("owner_token", ""))
             )
             if is_our_backend or is_our_backend_child:
-                if self._backend_is_healthy(health_url):
+                if self._backend_is_healthy(health_url) and self._process_matches_service(p_pid, "backend"):
                     self.managed_processes["backend"] = saved_be
                     log_startup("BACKEND_REUSED", f"Managed backend already running on PID {p_pid}")
                     return True, "RUNNING (Existing)", p_pid, health_url
-                return False, "FAILED", 0, f"Backend launcher-owned PID {p_pid} chiếm cổng nhưng health check không đạt."
-            if self._backend_is_healthy(health_url):
-                log_startup("BACKEND_EXTERNAL", f"Healthy external backend on port {port}; it will not be managed or stopped")
-                return True, "RUNNING (External)", 0, health_url
+                return False, "FAILED", 0, f"Backend launcher-owned PID {p_pid} không khớp source/database/SMTP hiện tại hoặc health check thất bại."
+            if self._backend_is_healthy(health_url) and self._process_matches_service(p_pid, "backend"):
+                owner_token = _launcher_owner_token_from_process(p_pid)
+                process_state = self._make_process_state(p_pid, "backend", owner_token, port, health_url) if owner_token else None
+                if process_state:
+                    self.managed_processes["backend"] = process_state
+                    log_startup("BACKEND_ADOPTED", f"Adopted verified launcher-owned backend PID {p_pid}")
+                    return True, "RUNNING (Managed Existing)", p_pid, health_url
+                log_startup("BACKEND_EXTERNAL", f"Verified external backend on port {port}; it will not be managed or stopped")
+                return True, "RUNNING (Verified External)", 0, health_url
             proc_name = get_process_name(p_pid) or "Unknown"
-            return False, "FAILED", 0, f"Cổng 8000 đang bị chiếm bởi process không xác minh được (PID {p_pid}, {proc_name}); giữ nguyên process."
+            return False, "FAILED", 0, f"Cổng 8000 đang bị PID {p_pid} ({proc_name}) chiếm; source/database/SMTP chưa xác minh khớp, giữ nguyên process."
 
         # Spawn backend
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         owner_token = uuid.uuid4().hex
         identity = f"IMS_LAUNCHER_OWNER={owner_token};IMS_LAUNCHER_ROOT={_root_fingerprint()}"
         launch_code = (
-            f"__ims_identity__={identity!r}; "
-            "import uvicorn; "
-            "uvicorn.run('backend.app.main:app', host='127.0.0.1', port=8000)"
+            f"__ims_identity__={identity!r}; import uvicorn; "
+            "uvicorn.run('app.main:app', host='127.0.0.1', port=8000, log_level='warning')"
         )
-        cmd = [
-            str(self.python_exe),
-            "-c", launch_code,
-        ]
+        cmd = [str(self.python_exe), "-c", launch_code]
 
         with open(BACKEND_LOG, "a", encoding="utf-8") as log_f:
             log_f.write(f"\n--- Backend Session Started at {get_current_timestamp()} ---\n")
             log_f.flush()
             proc = subprocess.Popen(
                 cmd,
-                cwd=str(ROOT_DIR),
+                cwd=str(BACKEND_DIR),
+                env=self._backend_environment(),
                 stdout=log_f,
                 stderr=log_f,
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
@@ -887,7 +1344,7 @@ class Launcher:
                 listener_pid == pid
                 or self._is_spawned_backend_process(listener_pid or 0, owner_token)
             )
-            if owns_listener and self._backend_is_healthy(health_url):
+            if owns_listener and self._backend_is_healthy(health_url) and self._process_matches_service(listener_pid or pid, "backend"):
                 healthy = True
                 break
 
@@ -902,6 +1359,7 @@ class Launcher:
             tail_lines = "\n    ".join(lines[-8:]) if lines else "Không có chi tiết lỗi trong log."
         except Exception:
             pass
+        tail_lines = sanitize_text(tail_lines)
 
         log_startup("BACKEND_FAILED", f"Backend failed to become healthy. Log snippet:\n{tail_lines}", level="ERROR")
         self._stop_spawned_child(proc)
@@ -918,14 +1376,15 @@ class Launcher:
         timeout = max(1.0, float(self.env.get("SMTP_TIMEOUT_SECONDS", "10").strip() or 10))
 
         if not host or not sender:
-            log_startup("SMTP_CHECK", "SMTP is not configured. Email worker running in idle mode.")
-            return True, "NOT CONFIGURED", "RUNNING (Idle - In-Process)"
+            log_startup("SMTP_CHECK", "SMTP is not configured; email worker cannot deliver queued mail.", level="ERROR")
+            return False, "ERROR (NOT CONFIGURED)", "NOT READY"
 
         if not is_tcp_open(host, port, timeout=min(timeout, 4.0)):
             log_startup("SMTP_UNREACHABLE", f"Cannot connect to SMTP server {host}:{port}", level="WARNING")
-            return True, f"CONFIGURED / UNREACHABLE (Port {port})", "RUNNING (In-Process)"
+            return False, f"ERROR (UNREACHABLE, port {port})", "NOT READY"
 
-        smtp_status = "CONFIGURED / CONNECTIVITY OK"
+        smtp_status = "CONNECTED"
+        server = None
         try:
             if use_ssl:
                 server = smtplib.SMTP_SSL(host, port, timeout=timeout)
@@ -935,19 +1394,22 @@ class Launcher:
                     server.starttls(context=ssl.create_default_context())
 
             if user and password:
-                try:
-                    server.login(user, password)
-                    smtp_status = "CONFIGURED / AUTHENTICATED"
-                except smtplib.SMTPAuthenticationError:
-                    smtp_status = "CONFIGURED / AUTH FAILED"
-                except Exception:
-                    smtp_status = "CONFIGURED / CONNECTIVITY OK"
+                server.login(user, password)
+                smtp_status = "CONNECTED / AUTHENTICATED"
+            elif user or password:
+                raise ValueError("SMTP username/password must both be configured")
             server.quit()
         except Exception as exc:
-            smtp_status = f"CONFIGURED / CONNECTIVITY OK (Handshake notice: {type(exc).__name__})"
+            try:
+                server.close()
+            except Exception:
+                pass
+            smtp_status = f"ERROR ({type(exc).__name__})"
+            log_startup("SMTP_AUTH_FAILED", f"SMTP check failed ({type(exc).__name__})", level="ERROR")
+            return False, smtp_status, "NOT READY"
 
         log_startup("SMTP_STATUS", f"SMTP Status: {smtp_status}")
-        return True, smtp_status, "RUNNING (In-Process)"
+        return True, smtp_status, "RUNNING (In-Process; no test email sent)"
 
     def start_frontend(self) -> tuple[bool, str, int, str]:
         port = 3000
@@ -958,29 +1420,26 @@ class Launcher:
             saved_fe = self.state.get("frontend", {})
             is_our_frontend, _ = verify_process_ownership(p_pid, "frontend", saved_fe)
             if is_our_frontend:
-                if self._frontend_is_healthy(f"http://127.0.0.1:{port}"):
+                if self._frontend_is_healthy(f"http://127.0.0.1:{port}") and self._process_matches_service(p_pid, "frontend"):
                     self.managed_processes["frontend"] = saved_fe
                     log_startup("FRONTEND_REUSED", f"Managed frontend already running on PID {p_pid}")
                     return True, "RUNNING (Existing)", p_pid, frontend_url
-                return False, "FAILED", 0, f"Frontend launcher-owned PID {p_pid} chiếm cổng nhưng health check không đạt."
-            if self._frontend_is_healthy(f"http://127.0.0.1:{port}"):
-                log_startup("FRONTEND_EXTERNAL", f"Healthy external frontend on port {port}; it will not be managed or stopped")
-                return True, "RUNNING (External)", 0, frontend_url
+                return False, "FAILED", 0, f"Frontend launcher-owned PID {p_pid} không khớp source/API URL hiện tại hoặc health check thất bại."
+            if self._frontend_is_healthy(f"http://127.0.0.1:{port}") and self._process_matches_service(p_pid, "frontend"):
+                log_startup("FRONTEND_EXTERNAL", f"Verified external frontend on port {port}; it will not be managed or stopped")
+                return True, "RUNNING (Verified External)", 0, frontend_url
             proc_name = get_process_name(p_pid) or "Unknown"
-            return False, "FAILED", 0, f"Cổng 3000 đang bị chiếm bởi process không xác minh được (PID {p_pid}, {proc_name}); giữ nguyên process."
+            return False, "FAILED", 0, f"Cổng 3000 đang bị PID {p_pid} ({proc_name}) chiếm; source/API URL chưa xác minh khớp, giữ nguyên process."
 
         # Spawn frontend
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         node_bin = shutil.which("node") or "node"
         owner_token = uuid.uuid4().hex
-        identity = f"IMS_LAUNCHER_OWNER={owner_token};IMS_LAUNCHER_ROOT={_root_fingerprint()}"
-        launch_code = (
-            f"const __ims_identity__={json.dumps(identity)}; "
-            "import('vite').then(({createServer})=>createServer({server:{host:'127.0.0.1',port:3000,strictPort:true}}).then(server=>server.listen()))"
-        )
         cmd = [
             node_bin,
-            "-e", launch_code,
+            str(self.vite_bin),
+            "--config", str(FRONTEND_DIR / "vite.config.js"),
+            "--host", "127.0.0.1", "--port", str(port), "--strictPort",
         ]
 
         with open(FRONTEND_LOG, "a", encoding="utf-8") as log_f:
@@ -989,6 +1448,7 @@ class Launcher:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(FRONTEND_DIR),
+                env=self._frontend_environment(owner_token),
                 stdout=log_f,
                 stderr=log_f,
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
@@ -1006,7 +1466,11 @@ class Launcher:
             time.sleep(1)
             if proc.poll() is not None:
                 break
-            if get_port_listener_pid(port) == pid and self._frontend_is_healthy(f"http://127.0.0.1:{port}"):
+            if (
+                get_port_listener_pid(port) == pid
+                and self._frontend_is_healthy(f"http://127.0.0.1:{port}")
+                and self._process_matches_service(pid, "frontend")
+            ):
                 healthy = True
                 break
 
@@ -1021,6 +1485,7 @@ class Launcher:
             tail_lines = "\n    ".join(lines[-8:]) if lines else "Không có chi tiết lỗi trong log."
         except Exception:
             pass
+        tail_lines = sanitize_text(tail_lines)
 
         log_startup("FRONTEND_FAILED", f"Frontend failed to become healthy. Log snippet:\n{tail_lines}", level="ERROR")
         self._stop_spawned_child(proc)
@@ -1052,7 +1517,7 @@ class Launcher:
         self.print_banner()
 
         # Step 1: Check environment (.env precheck & dependencies)
-        sys.stdout.write("[1/5] Checking environment...     ")
+        sys.stdout.write("[1/6] Checking environment...     ")
         sys.stdout.flush()
         env_ok, env_msg = self.check_environment()
         if not env_ok:
@@ -1066,8 +1531,8 @@ class Launcher:
             return 1
         print("OK")
 
-        # Step 2: Check / Start MySQL
-        sys.stdout.write("[2/5] Starting MySQL...           ")
+        # Step 2: Verify both MySQL schemas using SELECT only.
+        sys.stdout.write("[2/6] Checking MySQL...            ")
         sys.stdout.flush()
         mysql_ok, mysql_status_badge, mysql_detail = self.check_and_start_mysql()
         if not mysql_ok:
@@ -1082,8 +1547,41 @@ class Launcher:
         print("OK")
         self.state["mysql"] = {"status": mysql_status_badge}
 
-        # Step 3: Start Backend
-        sys.stdout.write("[3/5] Starting Backend...         ")
+        # Step 3: Authenticate with the configured SMTP relay without sending a message.
+        sys.stdout.write("[3/6] Checking SMTP...             ")
+        sys.stdout.flush()
+        smtp_ok, smtp_badge, worker_badge = self.check_smtp_and_worker()
+        if not smtp_ok:
+            print("FAILED")
+            print("=========================================")
+            print(" ERROR: SMTP CHECK FAILED")
+            print("=========================================")
+            print(smtp_badge)
+            print(f"Log: {STARTUP_LOG}")
+            print("=========================================")
+            return 1
+        print("OK")
+        self.state["smtp"] = {"status": smtp_badge}
+
+        # Step 4: Verify or start Sandbox on the configured local MySQL schema.
+        sys.stdout.write("[4/6] Starting HRM Sandbox...     ")
+        sys.stdout.flush()
+        sandbox_ok, sandbox_badge, sandbox_pid, sandbox_url = self.start_sandbox()
+        if not sandbox_ok:
+            print("FAILED")
+            print("=========================================")
+            print(" ERROR: HRM SANDBOX STARTUP FAILED")
+            print("=========================================")
+            print(sandbox_url)
+            print(f"Log: {BACKEND_LOG}")
+            print("=========================================")
+            return 1
+        print("OK")
+        self.state["sandbox"] = {"status": sandbox_badge, "url": sandbox_url}
+        self._persist_managed_processes()
+
+        # Step 5: Start backend only after both MySQL and Sandbox are verified.
+        sys.stdout.write("[5/6] Starting Backend...         ")
         sys.stdout.flush()
         be_ok, be_badge, be_pid, be_info = self.start_backend()
         if not be_ok:
@@ -1096,18 +1594,11 @@ class Launcher:
             print("=========================================")
             return 1
         print("OK")
+        self.state["worker"] = {"status": worker_badge}
         self._persist_managed_processes()
 
-        # Step 4: Check SMTP & Worker
-        sys.stdout.write("[4/5] Checking SMTP/Worker...     ")
-        sys.stdout.flush()
-        _, smtp_badge, worker_badge = self.check_smtp_and_worker()
-        print("OK")
-        self.state["smtp"] = {"status": smtp_badge}
-        self.state["worker"] = {"status": worker_badge}
-
-        # Step 5: Start Frontend
-        sys.stdout.write("[5/5] Starting Frontend...        ")
+        # Step 6: Start Frontend last so all proxied API endpoints are already ready.
+        sys.stdout.write("[6/6] Starting Frontend...        ")
         sys.stdout.flush()
         fe_ok, fe_badge, fe_pid, fe_info = self.start_frontend()
         if not fe_ok:
@@ -1130,6 +1621,7 @@ class Launcher:
             "mysql": {"status": mysql_status_badge},
             "smtp": {"status": smtp_badge},
             "worker": {"status": worker_badge},
+            "sandbox": {"status": sandbox_badge, "url": sandbox_url},
             "browser_opened": True,
         }
         new_state.update(self.managed_processes)
@@ -1141,6 +1633,8 @@ class Launcher:
         print(" SYSTEM STATUS")
         print("=========================================")
         print(f"MySQL:        {mysql_status_badge}")
+        print(f"HRM Sandbox:  {sandbox_badge} ({sandbox_url})")
+        print("IMS ↔ Sandbox: CONNECTED (service/admin credentials verified)")
         print(f"Backend:      {be_badge}")
         print(f"Frontend:     {fe_badge}")
         print(f"SMTP:         {smtp_badge}")
@@ -1188,6 +1682,7 @@ class Launcher:
         state = load_state()
         fe_info = state.get("frontend")
         be_info = state.get("backend")
+        sandbox_info = state.get("sandbox")
         pending_stop = False
 
         # 1. Stop Frontend
@@ -1224,7 +1719,24 @@ class Launcher:
         else:
             print("NOT RUNNING (Không có tiến trình trong launcher state)")
 
-        # 3. MySQL state preserved
+        # 3. Stop HRM Sandbox only when this launcher's ownership record matches.
+        sys.stdout.write("Stopping HRM Sandbox...          ")
+        sys.stdout.flush()
+        if isinstance(sandbox_info, dict) and isinstance(sandbox_info.get("pid"), int) and not isinstance(sandbox_info.get("pid"), bool) and sandbox_info["pid"] > 0:
+            sandbox_pid = sandbox_info["pid"]
+            if is_pid_alive(sandbox_pid):
+                ok, reason = terminate_owned_process(sandbox_pid, "sandbox", sandbox_info)
+                if ok:
+                    print(f"STOPPED (PID {sandbox_pid})")
+                else:
+                    print(f"SKIPPED ({reason})")
+                    pending_stop = True
+            else:
+                print("NOT RUNNING")
+        else:
+            print("PRESERVED (Sandbox không do launcher này quản lý)")
+
+        # 4. MySQL state preserved
         print("MySQL:                            PRESERVED (Dịch vụ MySQL dùng chung không bị tắt)")
 
         if pending_stop:

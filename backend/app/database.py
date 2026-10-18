@@ -207,6 +207,20 @@ def has_password_change_column(db) -> bool:
     return any(row["name"] == "must_change_password" for row in db.execute("PRAGMA table_info(NGUOI_DUNG)").fetchall())
 
 
+def has_temporary_password_metadata(db) -> bool:
+    """Return whether the configured schema supports expiring, one-use passwords."""
+    required_columns = {"temporary_password_expires_at", "temporary_password_consumed_at"}
+    if DATABASE_BACKEND == "mysql":
+        rows = db.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'NGUOI_DUNG'
+              AND COLUMN_NAME IN ('temporary_password_expires_at', 'temporary_password_consumed_at')
+        """).fetchall()
+        return required_columns.issubset({row["COLUMN_NAME"] for row in rows})
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(NGUOI_DUNG)").fetchall()}
+    return required_columns.issubset(columns)
+
+
 def init_mysql_db():
     conn = get_db_connection()
     try:
@@ -225,6 +239,14 @@ def init_mysql_db():
                 id INT AUTO_INCREMENT PRIMARY KEY, email VARCHAR(254) NOT NULL,
                 ip_address VARCHAR(64), thanh_cong TINYINT NOT NULL,
                 thong_tin TEXT, thoi_gian DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS ADMIN_PASSWORD_RESET_AUDIT (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                actor_user_id INT NOT NULL,
+                target_user_id INT NOT NULL,
+                outcome VARCHAR(24) NOT NULL,
+                created_at DATETIME(6) NOT NULL,
+                KEY idx_admin_password_reset_target_created (target_user_id, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS MENTOR_PROFILE (
                 ma_nguoi_dung INT PRIMARY KEY, chuyen_mon VARCHAR(255),
@@ -245,6 +267,21 @@ def init_mysql_db():
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE SET NULL,
                 FOREIGN KEY (ma_ung_tuyen) REFERENCES UNG_TUYEN_CHUONG_TRINH(ma_ung_tuyen) ON DELETE SET NULL,
                 FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS_LICH_SU (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ma_phan_cong_goc BIGINT NOT NULL,
+                ma_nguoi_dung_mentor INT NULL,
+                ma_ho_so INT NULL,
+                ma_chuong_trinh INT NULL,
+                ma_ung_tuyen INT NULL,
+                ma_nguoi_phan_cong INT NULL,
+                ngay_phan_cong DATETIME NOT NULL,
+                su_kien VARCHAR(20) NOT NULL,
+                nguoi_thuc_hien INT NULL,
+                archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_mentor_assignment_history_profile (ma_ho_so, ma_chuong_trinh, archived_at),
+                KEY idx_mentor_assignment_history_mentor (ma_nguoi_dung_mentor, archived_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS NHIEM_VU_THUC_TAP (
                 ma_nhiem_vu BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -338,11 +375,15 @@ def init_mysql_db():
                 ma_ung_tuyen INT AUTO_INCREMENT PRIMARY KEY, ma_chuong_trinh INT NOT NULL,
                 ma_ho_so INT NOT NULL, trang_thai ENUM('ChoDuyet','DaDuyet','TuChoi') NOT NULL DEFAULT 'ChoDuyet',
                 ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ngay_xet_duyet DATETIME NULL,
-                nguoi_xet_duyet INT NULL, UNIQUE KEY uq_ung_tuyen_chuong_trinh (ma_chuong_trinh, ma_ho_so),
+                nguoi_xet_duyet INT NULL,
+                completion_status ENUM('ChuaHoanThanh','HoanThanh') NOT NULL DEFAULT 'ChuaHoanThanh',
+                completion_updated_by INT NULL, completion_updated_at DATETIME NULL,
+                UNIQUE KEY uq_ung_tuyen_chuong_trinh (ma_chuong_trinh, ma_ho_so),
                 KEY idx_ung_tuyen_chuong_trinh_trang_thai (ma_chuong_trinh, trang_thai),
                 FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
                 FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-                FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+                FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+                FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """CREATE TABLE IF NOT EXISTS BAO_CAO_TUAN (
                 ma_bao_cao BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -592,8 +633,77 @@ def init_mysql_db():
             CONSTRAINT fk_support_request_file FOREIGN KEY (support_request_id)
                 REFERENCES YEU_CAU_HO_TRO(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        statements.append("""CREATE TABLE IF NOT EXISTS LICH_HOP (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(200) NOT NULL,
+            content TEXT NOT NULL,
+            start_at DATETIME NOT NULL,
+            end_at DATETIME NOT NULL,
+            location VARCHAR(500) NULL,
+            meeting_url VARCHAR(2000) NULL,
+            organizer_id INT NOT NULL,
+            status ENUM('SCHEDULED','CANCELLED') NOT NULL DEFAULT 'SCHEDULED',
+            version INT UNSIGNED NOT NULL DEFAULT 1,
+            idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+            request_hash CHAR(64) NOT NULL,
+            cancelled_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT chk_meeting_time CHECK (end_at > start_at),
+            KEY idx_meeting_schedule (status, start_at, id),
+            KEY idx_meeting_organizer (organizer_id, created_at),
+            CONSTRAINT fk_meeting_organizer FOREIGN KEY (organizer_id)
+                REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+        statements.append("""CREATE TABLE IF NOT EXISTS LICH_HOP_NGUOI_THAM_GIA (
+            meeting_id BIGINT NOT NULL,
+            user_id INT NOT NULL,
+            status ENUM('INVITED','REMOVED') NOT NULL DEFAULT 'INVITED',
+            invited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            removed_at DATETIME NULL,
+            PRIMARY KEY (meeting_id, user_id),
+            KEY idx_meeting_attendee (user_id, status, meeting_id),
+            CONSTRAINT fk_meeting_attendee_meeting FOREIGN KEY (meeting_id)
+                REFERENCES LICH_HOP(id) ON DELETE CASCADE,
+            CONSTRAINT fk_meeting_attendee_user FOREIGN KEY (user_id)
+                REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
+
+        application_columns = conn.execute("""
+            SELECT COLUMN_NAME FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'UNG_TUYEN_CHUONG_TRINH'
+        """).fetchall()
+        application_column_names = {row["COLUMN_NAME"] for row in application_columns}
+        if "completion_status" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_status ENUM('ChuaHoanThanh','HoanThanh')
+                NOT NULL DEFAULT 'ChuaHoanThanh' AFTER nguoi_xet_duyet
+            """)
+        if "completion_updated_by" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_updated_by INT NULL AFTER completion_status
+            """)
+        if "completion_updated_at" not in application_column_names:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD COLUMN completion_updated_at DATETIME NULL AFTER completion_updated_by
+            """)
+        completion_actor_fk = conn.execute("""
+            SELECT 1 FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'UNG_TUYEN_CHUONG_TRINH'
+              AND COLUMN_NAME = 'completion_updated_by' AND REFERENCED_TABLE_NAME = 'NGUOI_DUNG'
+            LIMIT 1
+        """).fetchone()
+        if not completion_actor_fk:
+            conn.execute("""
+                ALTER TABLE UNG_TUYEN_CHUONG_TRINH
+                ADD CONSTRAINT fk_application_completion_actor
+                FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+            """)
 
         allowance_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -747,6 +857,9 @@ def init_mysql_db():
         user_column_names = {row["COLUMN_NAME"] for row in user_columns}
         if "must_change_password" not in user_column_names:
             conn.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0 AFTER mat_khau")
+        for name in ("temporary_password_expires_at", "temporary_password_consumed_at"):
+            if name not in user_column_names:
+                conn.execute(f"ALTER TABLE NGUOI_DUNG ADD COLUMN {name} DATETIME NULL")
 
         outbox_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -810,9 +923,22 @@ def init_mysql_db():
         """).fetchone()["total"]
         if not university_unique_key:
             conn.execute("ALTER TABLE TRUONG_DAI_HOC ADD UNIQUE KEY uq_truong_dai_hoc_ten (ten_truong)")
+        department_unique_key = conn.execute("""
+            SELECT COUNT(*) AS total FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'PHONG_BAN'
+              AND INDEX_NAME = 'uq_phong_ban_ten'
+        """).fetchone()["total"]
+        department_duplicates = conn.execute("""
+            SELECT COUNT(*) AS total FROM (
+                SELECT LOWER(TRIM(ten_phong_ban)) AS normalized_name
+                FROM PHONG_BAN GROUP BY LOWER(TRIM(ten_phong_ban)) HAVING COUNT(*) > 1
+            ) duplicates
+        """).fetchone()["total"]
+        if not department_unique_key and not department_duplicates:
+            conn.execute("ALTER TABLE PHONG_BAN ADD UNIQUE KEY uq_phong_ban_ten (ten_phong_ban)")
         conn.execute("""
-            INSERT IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung, so_tts_toi_da)
-            SELECT ma_nguoi_dung, 3 FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'
+            INSERT IGNORE INTO MENTOR_PROFILE (ma_nguoi_dung)
+            SELECT ma_nguoi_dung FROM NGUOI_DUNG WHERE vai_tro = 'Mentor'
         """)
         conn.execute("""
             INSERT IGNORE INTO HO_SO_THUC_TAP
@@ -854,6 +980,19 @@ def init_db():
         email_lien_he TEXT
     );
     """)
+    for table_name, column_name, index_name in (
+        ("TRUONG_DAI_HOC", "ten_truong", "uq_truong_dai_hoc_ten"),
+        ("PHONG_BAN", "ten_phong_ban", "uq_phong_ban_ten"),
+    ):
+        duplicate_names = cursor.execute(
+            f"SELECT COUNT(*) FROM (SELECT LOWER(TRIM({column_name})) FROM {table_name} "
+            f"GROUP BY LOWER(TRIM({column_name})) HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        if not duplicate_names:
+            cursor.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} "
+                f"ON {table_name}(LOWER(TRIM({column_name})))"
+            )
 
     # 3. Bảng Người Dùng (Tài khoản & Phân quyền)
     cursor.execute("""
@@ -864,6 +1003,8 @@ def init_db():
         email TEXT UNIQUE NOT NULL,
         mat_khau TEXT NOT NULL,
         must_change_password INTEGER NOT NULL DEFAULT 0,
+        temporary_password_expires_at DATETIME NULL,
+        temporary_password_consumed_at DATETIME NULL,
         so_dien_thoai TEXT,
         vai_tro TEXT NOT NULL CHECK(vai_tro IN ('Admin', 'HR', 'Mentor', 'ThucTapSinh')),
         trang_thai TEXT DEFAULT 'ChoDuyet' CHECK(trang_thai IN ('HoatDong', 'Khoa', 'ChoDuyet')),
@@ -875,6 +1016,9 @@ def init_db():
     user_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(NGUOI_DUNG)")}
     if "must_change_password" not in user_columns:
         cursor.execute("ALTER TABLE NGUOI_DUNG ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    for name in ("temporary_password_expires_at", "temporary_password_consumed_at"):
+        if name not in user_columns:
+            cursor.execute(f"ALTER TABLE NGUOI_DUNG ADD COLUMN {name} DATETIME NULL")
 
     # One active opaque session per account. Tokens themselves are never stored.
     cursor.execute("""
@@ -960,6 +1104,23 @@ def init_db():
         FOREIGN KEY (ma_nguoi_phan_cong) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS PHAN_CONG_MENTOR_TTS_LICH_SU (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ma_phan_cong_goc INTEGER NOT NULL,
+        ma_nguoi_dung_mentor INTEGER,
+        ma_ho_so INTEGER,
+        ma_chuong_trinh INTEGER,
+        ma_ung_tuyen INTEGER,
+        ma_nguoi_phan_cong INTEGER,
+        ngay_phan_cong DATETIME NOT NULL,
+        su_kien TEXT NOT NULL CHECK(su_kien IN ('REASSIGNED', 'UNASSIGNED')),
+        nguoi_thuc_hien INTEGER,
+        archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentor_assignment_history_profile ON PHAN_CONG_MENTOR_TTS_LICH_SU(ma_ho_so, ma_chuong_trinh, archived_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentor_assignment_history_mentor ON PHAN_CONG_MENTOR_TTS_LICH_SU(ma_nguoi_dung_mentor, archived_at)")
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_phan_cong_mentor
         ON PHAN_CONG_MENTOR_TTS(ma_nguoi_dung_mentor)
@@ -1144,12 +1305,30 @@ def init_db():
         ngay_ung_tuyen DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         ngay_xet_duyet DATETIME,
         nguoi_xet_duyet INTEGER,
+        completion_status TEXT NOT NULL DEFAULT 'ChuaHoanThanh'
+            CHECK(completion_status IN ('ChuaHoanThanh', 'HoanThanh')),
+        completion_updated_by INTEGER,
+        completion_updated_at DATETIME,
         UNIQUE(ma_chuong_trinh, ma_ho_so),
         FOREIGN KEY (ma_chuong_trinh) REFERENCES CHUONG_TRINH_THUC_TAP(ma_chuong_trinh) ON DELETE CASCADE,
         FOREIGN KEY (ma_ho_so) REFERENCES HO_SO_THUC_TAP(ma_ho_so) ON DELETE CASCADE,
-        FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        FOREIGN KEY (nguoi_xet_duyet) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL,
+        FOREIGN KEY (completion_updated_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
     )
     """)
+    application_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(UNG_TUYEN_CHUONG_TRINH)")}
+    if "completion_status" not in application_columns:
+        cursor.execute("""
+            ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_status TEXT NOT NULL
+            DEFAULT 'ChuaHoanThanh' CHECK(completion_status IN ('ChuaHoanThanh', 'HoanThanh'))
+        """)
+    if "completion_updated_by" not in application_columns:
+        cursor.execute("""
+            ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_updated_by INTEGER
+            REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE SET NULL
+        """)
+    if "completion_updated_at" not in application_columns:
+        cursor.execute("ALTER TABLE UNG_TUYEN_CHUONG_TRINH ADD COLUMN completion_updated_at DATETIME")
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ung_tuyen_chuong_trinh_trang_thai
         ON UNG_TUYEN_CHUONG_TRINH(ma_chuong_trinh, trang_thai)
@@ -1473,6 +1652,42 @@ def init_db():
     )
     """)
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_HOP (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200),
+        content TEXT NOT NULL DEFAULT '',
+        start_at DATETIME NOT NULL,
+        end_at DATETIME NOT NULL,
+        location TEXT,
+        meeting_url TEXT,
+        organizer_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'SCHEDULED' CHECK(status IN ('SCHEDULED', 'CANCELLED')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        request_hash TEXT NOT NULL CHECK(length(request_hash) = 64),
+        cancelled_at DATETIME,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(end_at > start_at),
+        FOREIGN KEY (organizer_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_schedule ON LICH_HOP(status, start_at, id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_organizer ON LICH_HOP(organizer_id, created_at)")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS LICH_HOP_NGUOI_THAM_GIA (
+        meeting_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'INVITED' CHECK(status IN ('INVITED', 'REMOVED')),
+        invited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        removed_at DATETIME,
+        PRIMARY KEY (meeting_id, user_id),
+        FOREIGN KEY (meeting_id) REFERENCES LICH_HOP(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_meeting_attendee ON LICH_HOP_NGUOI_THAM_GIA(user_id, status, meeting_id)")
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_email_outbox_due
         ON EMAIL_OUTBOX(status, next_retry_at, created_at)
     """)
@@ -1542,6 +1757,20 @@ def init_db():
     );
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ADMIN_PASSWORD_RESET_AUDIT (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_user_id INTEGER NOT NULL,
+        target_user_id INTEGER NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('SMTP_ACCEPTED', 'SMTP_FAILED', 'REJECTED')),
+        created_at DATETIME NOT NULL
+    );
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_admin_password_reset_target_created
+        ON ADMIN_PASSWORD_RESET_AUDIT(target_user_id, created_at)
+    """)
+
     # Seed master data if empty
     cursor.execute("SELECT COUNT(*) FROM PHONG_BAN")
     if cursor.fetchone()[0] == 0:
@@ -1564,6 +1793,47 @@ def init_db():
             ("Học viện Công nghệ Bưu chính Viễn thông (PTIT)", "Km10 Đường Nguyễn Trãi, Hà Đông, Hà Nội", "ThS. Lê Hoàng C", "contact@ptit.edu.vn"),
             ("Đại học FPT", "Khu CNC Hòa Lạc, Thạch Thất, Hà Nội", "ThS. Phạm Tuấn D", "contact@fpt.edu.vn")
         ])
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_DEPARTMENT_CATALOG_META (
+            ma_phong_ban INTEGER PRIMARY KEY,
+            ma_dinh_danh TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ma_phong_ban) REFERENCES PHONG_BAN(ma_phong_ban) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_UNIVERSITY_CATALOG_META (
+            ma_truong INTEGER PRIMARY KEY,
+            ma_dinh_danh TEXT UNIQUE,
+            ten_viet_tat TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ma_truong) REFERENCES TRUONG_DAI_HOC(ma_truong) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS IMS_MASTER_DATA_AUDIT (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            before_json TEXT,
+            after_json TEXT NOT NULL,
+            actor_user_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (actor_user_id) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO IMS_DEPARTMENT_CATALOG_META (ma_phong_ban, ma_dinh_danh)
+        SELECT ma_phong_ban, 'PB-' || printf('%04d', ma_phong_ban) FROM PHONG_BAN
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO IMS_UNIVERSITY_CATALOG_META (ma_truong)
+        SELECT ma_truong FROM TRUONG_DAI_HOC
+    """)
 
     # Seed users with Bcrypt hashes
     cursor.execute("SELECT COUNT(*) FROM NGUOI_DUNG")

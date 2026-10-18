@@ -2,6 +2,8 @@
 chcp 65001 >nul
 setlocal
 set "IMS_ROOT=%~dp0"
+if defined IMS_ACTIVE_SOURCE if exist "%IMS_ACTIVE_SOURCE%\scripts\launcher.py" set "IMS_ROOT=%IMS_ACTIVE_SOURCE%\"
+if not defined IMS_CONFIG_ROOT set "IMS_CONFIG_ROOT=%~dp0"
 cd /d "%IMS_ROOT%"
 
 set "IMS_PYTHON=%IMS_ROOT%backend\.venv\Scripts\python.exe"

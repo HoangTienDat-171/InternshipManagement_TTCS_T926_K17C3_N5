@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect, useRef } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import LoginView from './views/LoginView';
@@ -14,6 +14,7 @@ import PersonalScheduleView from './views/PersonalScheduleView';
 import InternshipTasksView from './views/InternshipTasksView';
 import WeeklyReportsView from './views/WeeklyReportsView';
 import MentorWeeklyReportsView from './views/MentorWeeklyReportsView';
+import MeetingsView from './views/MeetingsView';
 import Toast from './components/Toast';
 import { apiFetch } from './utils/api';
 
@@ -21,9 +22,15 @@ const MentorEvaluationsView = lazy(() => import('./views/MentorEvaluationsView')
 const InternEvaluationsView = lazy(() => import('./views/InternEvaluationsView'));
 const WorkShiftManagementView = lazy(() => import('./views/WorkShiftManagementView'));
 const AttendanceView = lazy(() => import('./views/AttendanceView'));
+const BackupManagementView = lazy(() => import('./views/BackupManagementView'));
+const ActivityAuditView = lazy(() => import('./views/ActivityAuditView'));
 const LeaveManagementView = lazy(() => import('./views/LeaveManagementView'));
 const AllowanceManagementView = lazy(() => import('./views/AllowanceManagementView'));
 const SupportRequestView = lazy(() => import('./views/SupportRequestView'));
+const FinalReportManagementView = lazy(() => import('./views/FinalReportManagementView'));
+const StatisticsManagementView = lazy(() => import('./views/StatisticsManagementView'));
+const HrmIntegrationView = lazy(() => import('./views/HrmIntegrationView'));
+const MasterDataManagementView = lazy(() => import('./views/MasterDataManagementView'));
 
 function clearSavedSession() {
   try {
@@ -37,20 +44,29 @@ function clearSavedSession() {
 function tabForPath(path) {
   if (/^\/contracts\/\d+$/.test(path)) return 'contract-link';
   if (path === '/schedule') return 'intern-schedule';
+  if (/^\/meetings(?:\/\d+)?$/.test(path)) return 'meetings';
   if (path === '/attendance') return 'intern-attendance';
+  if (path === '/attendance/qr') return 'intern-attendance';
   if (path === '/leave-requests') return 'leave-requests';
-  if (path === '/support-requests') return 'support-requests';
+  if (/^\/support-requests(?:\/\d+)?$/.test(path)) return 'support-requests';
   if (/^\/allowances(?:\/\d+)?$/.test(path)) return 'allowances';
   if (/^\/tasks(?:\/\d+)?$/.test(path)) return 'tasks';
   if (/^\/weekly-reports(?:\/\d+)?$/.test(path)) return 'weekly-reports';
   if (path === '/evaluations') return 'evaluations';
   if (path === '/my-evaluations') return 'my-evaluations';
   if (path === '/work-shifts') return 'work-shifts';
+  if (path === '/final-reports' || path === '/reports') return 'final-reports';
+  if (path === '/statistics') return 'statistics';
+  if (path === '/integrations/hrm') return 'hrm-integration';
+  if (path === '/master-data') return 'master-data';
+  if (path === '/admin/backups') return 'backup-management';
+  if (path === '/admin/activity-log') return 'activity-log';
   return 'interns';
 }
 
 function pathForTab(tab) {
   if (tab === 'intern-schedule') return '/schedule';
+  if (tab === 'meetings') return '/meetings';
   if (tab === 'intern-attendance') return '/attendance';
   if (tab === 'leave-requests') return '/leave-requests';
   if (tab === 'support-requests') return '/support-requests';
@@ -60,6 +76,12 @@ function pathForTab(tab) {
   if (tab === 'evaluations') return '/evaluations';
   if (tab === 'my-evaluations') return '/my-evaluations';
   if (tab === 'work-shifts') return '/work-shifts';
+  if (tab === 'final-reports') return '/final-reports';
+  if (tab === 'statistics') return '/statistics';
+  if (tab === 'hrm-integration') return '/integrations/hrm';
+  if (tab === 'master-data') return '/master-data';
+  if (tab === 'backup-management') return '/admin/backups';
+  if (tab === 'activity-log') return '/admin/activity-log';
   return '/';
 }
 
@@ -72,6 +94,8 @@ export default function App() {
   const [requestedTaskId, setRequestedTaskId] = useState(() => window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
   const [requestedWeeklyReportId, setRequestedWeeklyReportId] = useState(() => window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
   const [requestedAllowanceId, setRequestedAllowanceId] = useState(() => window.location.pathname.match(/^\/allowances\/(\d+)$/)?.[1] || null);
+  const [requestedSupportRequestId, setRequestedSupportRequestId] = useState(() => window.location.pathname.match(/^\/support-requests\/(\d+)$/)?.[1] || null);
+  const [requestedMeetingId, setRequestedMeetingId] = useState(() => window.location.pathname.match(/^\/meetings\/(\d+)$/)?.[1] || null);
 
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -97,10 +121,11 @@ export default function App() {
     : currentUser && activeTab === 'contract-link'
       ? (currentUser.vai_tro === 'ThucTapSinh' ? 'intern-dashboard' : personalWorkspace)
       : currentUser && (
-        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts'].includes(activeTab))
+        (!canManageRecords && ['interns', 'mentors', 'documents', 'accounts', 'work-shifts', 'final-reports', 'statistics', 'hrm-integration', 'master-data'].includes(activeTab))
         || (activeTab === 'programs' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'leave-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'support-requests' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
+        || (activeTab === 'meetings' && !['Admin', 'HR', 'Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'allowances' && !['Admin', 'HR', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'tasks' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
         || (activeTab === 'weekly-reports' && !['Mentor', 'ThucTapSinh'].includes(currentUser.vai_tro))
@@ -111,6 +136,10 @@ export default function App() {
         || (activeTab === 'intern-dashboard' && currentUser.vai_tro !== 'ThucTapSinh')
         || (activeTab === 'mentor-workspace' && currentUser.vai_tro !== 'Mentor')
         || (activeTab === 'accounts' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'master-data' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'backup-management' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'activity-log' && currentUser.vai_tro !== 'Admin')
+        || (activeTab === 'hrm-integration' && !['Admin', 'HR'].includes(currentUser.vai_tro))
       )
         ? personalWorkspace
         : activeTab;
@@ -134,7 +163,7 @@ export default function App() {
   const [accountSection, setAccountSection] = useState('profile');
   const [sessionNotice, setSessionNotice] = useState('');
 
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     let text = message;
     let toastType = type;
     if (message && typeof message === 'object') {
@@ -146,7 +175,7 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => {
       setToast(null);
     }, 3500);
-  };
+  }, []);
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
@@ -354,6 +383,8 @@ export default function App() {
     setRequestedTaskId(null);
     setRequestedWeeklyReportId(null);
     setRequestedAllowanceId(null);
+    setRequestedSupportRequestId(null);
+    setRequestedMeetingId(null);
     setActiveTab(tab);
   };
 
@@ -374,8 +405,32 @@ export default function App() {
       window.history.pushState(null, '', `/allowances/${allowanceId}`);
       setRequestedAllowanceId(allowanceId);
       setActiveTab('allowances');
+    } else if (notification.reference_type === 'support_request' && /^\d+$/.test(String(notification.reference_id))) {
+      const requestId = String(notification.reference_id);
+      window.history.pushState(null, '', `/support-requests/${requestId}`);
+      setRequestedSupportRequestId(requestId);
+      setActiveTab('support-requests');
+    } else if (notification.reference_type === 'meeting' && /^\d+$/.test(String(notification.reference_id))) {
+      const meetingId = String(notification.reference_id);
+      window.history.pushState(null, '', `/meetings/${meetingId}`);
+      setRequestedMeetingId(meetingId);
+      setActiveTab('meetings');
     }
   };
+
+  const handleMeetingOpened = useCallback(() => {
+    setRequestedMeetingId(null);
+    if (/^\/meetings\/\d+$/.test(window.location.pathname)) {
+      window.history.replaceState(null, '', '/meetings');
+    }
+  }, []);
+
+  const handleSupportRequestReferenceHandled = useCallback(() => {
+    setRequestedSupportRequestId(null);
+    if (/^\/support-requests\/\d+$/.test(window.location.pathname)) {
+      window.history.replaceState(null, '', '/support-requests');
+    }
+  }, []);
 
   useEffect(() => {
     const syncTabWithPath = () => {
@@ -386,6 +441,8 @@ export default function App() {
         setRequestedTaskId(window.location.pathname.match(/^\/tasks\/(\d+)$/)?.[1] || null);
         setRequestedWeeklyReportId(window.location.pathname.match(/^\/weekly-reports\/(\d+)$/)?.[1] || null);
         setRequestedAllowanceId(window.location.pathname.match(/^\/allowances\/(\d+)$/)?.[1] || null);
+        setRequestedSupportRequestId(window.location.pathname.match(/^\/support-requests\/(\d+)$/)?.[1] || null);
+        setRequestedMeetingId(window.location.pathname.match(/^\/meetings\/(\d+)$/)?.[1] || null);
         setActiveTab(tabForPath(window.location.pathname));
       }
     };
@@ -401,7 +458,7 @@ export default function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId, requestedAllowanceId]);
+  }, [visibleActiveTab, requestedContractId, requestedTaskId, requestedWeeklyReportId, requestedAllowanceId, requestedSupportRequestId]);
 
   const handleUserUpdated = (user) => {
     localStorage.setItem('ims_user', JSON.stringify(user));
@@ -490,6 +547,8 @@ export default function App() {
               departments={departments}
               universities={universities}
               onShowToast={showToast}
+              isAdmin={currentUser?.vai_tro === 'Admin'}
+              onNavigateMasterData={() => navigateToTab('master-data')}
             />
           )}
 
@@ -522,12 +581,48 @@ export default function App() {
             </Suspense>
           )}
 
+          {visibleActiveTab === 'backup-management' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải quản lý sao lưu…</div>}>
+              <BackupManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {visibleActiveTab === 'activity-log' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải nhật ký hoạt động…</div>}>
+              <ActivityAuditView />
+            </Suspense>
+          )}
+
+          {canManageRecords && visibleActiveTab === 'final-reports' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở báo cáo cuối kỳ…</div>}>
+              <FinalReportManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
+          {canManageRecords && visibleActiveTab === 'statistics' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở thống kê…</div>}>
+              <StatisticsManagementView onShowToast={showToast} />
+            </Suspense>
+          )}
+
           {visibleActiveTab === 'accounts' && currentUser?.vai_tro === 'Admin' && (
             <AccountManagementView
               departments={departments}
               onShowToast={showToast}
               currentUser={currentUser}
             />
+          )}
+
+          {visibleActiveTab === 'hrm-integration' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải trạng thái tích hợp HRM…</div>}>
+              <HrmIntegrationView currentUser={currentUser} />
+            </Suspense>
+          )}
+
+          {visibleActiveTab === 'master-data' && currentUser?.vai_tro === 'Admin' && (
+            <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang tải danh mục dùng chung…</div>}>
+              <MasterDataManagementView onShowToast={showToast} />
+            </Suspense>
           )}
 
           {currentUser?.vai_tro === 'ThucTapSinh' && visibleActiveTab === 'intern-dashboard' && (
@@ -561,8 +656,22 @@ export default function App() {
           )}
           {['Admin', 'HR', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'support-requests' && (
             <Suspense fallback={<div className="workspace-card evaluation-empty" role="status">Đang mở yêu cầu hỗ trợ…</div>}>
-              <SupportRequestView currentUser={currentUser} onShowToast={showToast} />
+              <SupportRequestView
+                currentUser={currentUser}
+                onShowToast={showToast}
+                requestedRequestId={requestedSupportRequestId}
+                onRequestedRequestHandled={handleSupportRequestReferenceHandled}
+              />
             </Suspense>
+          )}
+
+          {['Admin', 'HR', 'Mentor', 'ThucTapSinh'].includes(currentUser?.vai_tro) && visibleActiveTab === 'meetings' && (
+            <MeetingsView
+              currentUser={currentUser}
+              onShowToast={showToast}
+              requestedMeetingId={requestedMeetingId}
+              onRequestedMeetingHandled={handleMeetingOpened}
+            />
           )}
 
           {currentUser?.vai_tro === 'Mentor' && visibleActiveTab === 'mentor-workspace' && (

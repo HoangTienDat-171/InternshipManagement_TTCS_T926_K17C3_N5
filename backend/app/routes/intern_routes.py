@@ -13,6 +13,21 @@ from ..personal_schedule import PersonalScheduleService
 router = APIRouter(prefix="/api/interns", tags=["Intern Profile - US01, US02, US03"])
 
 
+def _validate_master_catalog_item(db, *, item_id: int | None, meta_table: str, id_column: str, label: str, unchanged_id: int | None = None) -> None:
+    if item_id is None:
+        return
+    try:
+        row = db.execute(
+            f"SELECT is_active FROM {meta_table} WHERE {id_column} = ?", (item_id,)
+        ).fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Danh mục chưa sẵn sàng; quản trị viên cần áp dụng migration master-data.") from exc
+    if not row:
+        raise HTTPException(status_code=422, detail=f"{label} đã chọn không tồn tại trong danh mục IMS.")
+    if not bool(row["is_active"]) and item_id != unchanged_id:
+        raise HTTPException(status_code=422, detail=f"{label} đã ngừng sử dụng; hãy chọn mục đang hoạt động.")
+
+
 @router.get("/me/schedule")
 def intern_personal_schedule(
     request: Request,
@@ -129,6 +144,14 @@ def create_intern(data: InternCreate, request: Request, db: sqlite3.Connection =
     require_role(request, "Admin", "HR")
     require_password_change_schema(db)
     validate_phone_number(data.so_dien_thoai)
+    _validate_master_catalog_item(
+        db, item_id=data.ma_phong_ban, meta_table="IMS_DEPARTMENT_CATALOG_META",
+        id_column="ma_phong_ban", label="Phòng ban",
+    )
+    _validate_master_catalog_item(
+        db, item_id=data.ma_truong, meta_table="IMS_UNIVERSITY_CATALOG_META",
+        id_column="ma_truong", label="Trường đại học",
+    )
     email = data.email.strip().lower()
     cursor = db.cursor()
 
@@ -188,21 +211,11 @@ def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends
                u.ma_phong_ban, p.ten_phong_ban, u.trang_thai AS trang_thai_tai_khoan,
                h.ma_truong, t.ten_truong, h.chuyen_nganh, h.trang_thai_xet_duyet,
                CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' THEN h.trang_thai_thuc_tap ELSE NULL END AS trang_thai_thuc_tap,
-               h.ngay_tao,
-               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
-               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
-               mentor.so_dien_thoai AS mentor_so_dien_thoai,
-               mentor_department.ten_phong_ban AS mentor_phong_ban,
-               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
+               h.ngay_tao
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
-        LEFT JOIN PHAN_CONG_MENTOR_TTS assignment ON assignment.ma_ho_so = h.ma_ho_so
-        LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
-            AND mentor.vai_tro = 'Mentor'
-        LEFT JOIN PHONG_BAN mentor_department ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
-        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
     
@@ -213,7 +226,87 @@ def get_intern_by_id(id: int, request: Request, db: sqlite3.Connection = Depends
             detail=f"Không tìm thấy hồ sơ thực tập sinh với ID = {id}"
         )
 
-    return dict(row)
+    detail = dict(row)
+
+    # A profile can participate in several programs. Keep each approved
+    # application as its own detail row and associate only the assignment for
+    # that program; never select an arbitrary historical Mentor for the profile.
+    from ..mentor_assignment_service import get_timeline_status
+
+    program_rows = db.execute("""
+        SELECT a.ma_ung_tuyen, a.ma_chuong_trinh,
+               c.ma_ct, c.ten_ct, c.ngay_bat_dau, c.ngay_ket_thuc,
+               c.trang_thai AS trang_thai_chuong_trinh,
+               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
+               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
+               mentor.so_dien_thoai AS mentor_so_dien_thoai,
+               mentor_department.ten_phong_ban AS mentor_phong_ban,
+               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem,
+               assignment.ngay_phan_cong
+        FROM UNG_TUYEN_CHUONG_TRINH a
+        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+        LEFT JOIN PHAN_CONG_MENTOR_TTS assignment
+            ON assignment.ma_ho_so = a.ma_ho_so
+            AND assignment.ma_chuong_trinh = a.ma_chuong_trinh
+        LEFT JOIN NGUOI_DUNG mentor
+            ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
+            AND mentor.vai_tro = 'Mentor'
+        LEFT JOIN PHONG_BAN mentor_department
+            ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
+        WHERE a.ma_ho_so = ? AND a.trang_thai = 'DaDuyet'
+        ORDER BY c.ngay_bat_dau ASC, c.ma_chuong_trinh ASC, a.ma_ung_tuyen ASC
+    """, (id,)).fetchall()
+
+    programs = []
+    for program_row in program_rows:
+        program = dict(program_row)
+        program["ngay_bat_dau"] = str(program["ngay_bat_dau"]) if program["ngay_bat_dau"] else None
+        program["ngay_ket_thuc"] = str(program["ngay_ket_thuc"]) if program["ngay_ket_thuc"] else None
+        program["ngay_phan_cong"] = str(program["ngay_phan_cong"]) if program["ngay_phan_cong"] else None
+        program["timeline_status"] = get_timeline_status(
+            program["ngay_bat_dau"], program["ngay_ket_thuc"], program["trang_thai_chuong_trinh"]
+        )
+        programs.append(program)
+
+    unscoped_assignments = db.execute("""
+        SELECT mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
+               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
+               mentor.so_dien_thoai AS mentor_so_dien_thoai,
+               mentor_department.ten_phong_ban AS mentor_phong_ban,
+               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem,
+               assignment.ngay_phan_cong
+        FROM PHAN_CONG_MENTOR_TTS assignment
+        JOIN NGUOI_DUNG mentor
+            ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
+            AND mentor.vai_tro = 'Mentor'
+        LEFT JOIN PHONG_BAN mentor_department
+            ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
+        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
+        WHERE assignment.ma_ho_so = ? AND assignment.ma_chuong_trinh IS NULL
+        ORDER BY assignment.ngay_phan_cong DESC, assignment.ma_phan_cong DESC
+    """, (id,)).fetchall()
+
+    detail["chuong_trinh_tham_gia"] = programs
+    detail["mentor_chua_gan_chuong_trinh"] = [
+        {**dict(assignment_row), "ngay_phan_cong": str(assignment_row["ngay_phan_cong"]) if assignment_row["ngay_phan_cong"] else None}
+        for assignment_row in unscoped_assignments
+    ]
+
+    # Keep the legacy flat Mentor fields scoped to the currently active
+    # program only. Historical assignments remain available in the arrays.
+    active_program = next(
+        (program for program in programs if program["timeline_status"] == "CURRENT"),
+        None,
+    )
+    if active_program:
+        for field in (
+            "mentor_ma_nguoi_dung", "mentor_ho_ten", "mentor_email",
+            "mentor_so_dien_thoai", "mentor_phong_ban", "mentor_chuyen_mon",
+            "mentor_kinh_nghiem",
+        ):
+            detail[field] = active_program.get(field)
+    return detail
 
 @router.put("/{id}", response_model=Dict[str, Any])
 def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Connection = Depends(get_db)):
@@ -227,7 +320,8 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
     
     # Kiểm tra hồ sơ có tồn tại không
     cursor.execute("""
-        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, h.ma_truong, u.ma_phong_ban,
+               h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
         FROM HO_SO_THUC_TAP h JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (id,))
@@ -239,6 +333,15 @@ def update_intern(id: int, data: InternUpdate, request: Request, db: sqlite3.Con
         )
 
     ma_nguoi_dung = record["ma_nguoi_dung"]
+
+    _validate_master_catalog_item(
+        db, item_id=data.ma_phong_ban, meta_table="IMS_DEPARTMENT_CATALOG_META",
+        id_column="ma_phong_ban", label="Phòng ban", unchanged_id=record["ma_phong_ban"],
+    )
+    _validate_master_catalog_item(
+        db, item_id=data.ma_truong, meta_table="IMS_UNIVERSITY_CATALOG_META",
+        id_column="ma_truong", label="Trường đại học", unchanged_id=record["ma_truong"],
+    )
 
     # Kiểm tra nếu đổi email thì email mới không được trùng với người dùng khác
     cursor.execute("""
@@ -299,11 +402,6 @@ def list_interns(
         JOIN NGUOI_DUNG u ON h.ma_nguoi_dung = u.ma_nguoi_dung
         LEFT JOIN PHONG_BAN p ON u.ma_phong_ban = p.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON h.ma_truong = t.ma_truong
-        LEFT JOIN PHAN_CONG_MENTOR_TTS assignment ON assignment.ma_ho_so = h.ma_ho_so
-        LEFT JOIN NGUOI_DUNG mentor ON mentor.ma_nguoi_dung = assignment.ma_nguoi_dung_mentor
-            AND mentor.vai_tro = 'Mentor'
-        LEFT JOIN PHONG_BAN mentor_department ON mentor_department.ma_phong_ban = mentor.ma_phong_ban
-        LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = mentor.ma_nguoi_dung
         WHERE u.vai_tro = 'ThucTapSinh'
     """
     filters = []
@@ -354,12 +452,7 @@ def list_interns(
                    OR (e.reference_type = 'account'
                        AND e.reference_id = CAST(h.ma_nguoi_dung AS CHAR)
                        AND e.template_type = 'temporary_credentials')
-                ORDER BY e.id DESC LIMIT 1) AS email_status,
-               mentor.ma_nguoi_dung AS mentor_ma_nguoi_dung,
-               mentor.ho_ten AS mentor_ho_ten, mentor.email AS mentor_email,
-               mentor.so_dien_thoai AS mentor_so_dien_thoai,
-               mentor_department.ten_phong_ban AS mentor_phong_ban,
-               mp.chuyen_mon AS mentor_chuyen_mon, mp.kinh_nghiem AS mentor_kinh_nghiem
+                ORDER BY e.id DESC LIMIT 1) AS email_status
     """
     query += from_clause + " ORDER BY h.ma_ho_so DESC LIMIT ? OFFSET ?"
     cursor.execute(query, [*params, page_size, offset])
