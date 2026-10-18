@@ -1385,7 +1385,9 @@ def main() -> None:
         raise SystemExit("HRM_SANDBOX_PORT must be a valid TCP port.")
     if not 1 <= port <= 65535:
         raise SystemExit("HRM_SANDBOX_PORT must be between 1 and 65535.")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
+    # Import by module path so Pydantic/FastAPI resolve postponed annotations
+    # against app.hrm_sandbox instead of the temporary __main__ namespace.
+    uvicorn.run("app.hrm_sandbox:app", host="127.0.0.1", port=port, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":
