@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Download, RefreshCw, Search } from 'lucide-react';
+import { Check, Download, RefreshCw, RotateCcw, Search } from 'lucide-react';
+import CustomDatePicker from '../components/CustomDatePicker';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
 import { apiFetch } from '../utils/api';
@@ -130,12 +131,28 @@ export default function CompletionStatisticsPanel({ options, onShowToast }) {
           {(options.departments || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </CustomSelect>
       </label>
-      <label>Từ ngày kết thúc<input type="date" value={filters.date_from} max={filters.date_to || undefined} onChange={(event) => setFilter('date_from', event.target.value)} /></label>
-      <label>Đến ngày kết thúc<input type="date" value={filters.date_to} min={filters.date_from || undefined} onChange={(event) => setFilter('date_to', event.target.value)} /></label>
+      <label>
+        <span>Từ ngày kết thúc</span>
+        <CustomDatePicker
+          value={filters.date_from}
+          max={filters.date_to || undefined}
+          onChange={(event) => setFilter('date_from', event.target.value)}
+        />
+      </label>
+      <label>
+        <span>Đến ngày kết thúc</span>
+        <CustomDatePicker
+          value={filters.date_to}
+          min={filters.date_from || undefined}
+          onChange={(event) => setFilter('date_to', event.target.value)}
+        />
+      </label>
       <label className="statistics-search">Tìm thực tập sinh
         <span><Search size={16} /><input value={searchInput} maxLength={100} placeholder="Tên, email, chuyên ngành…" onChange={(event) => setSearchInput(event.target.value)} /></span>
       </label>
-      <button type="button" className="btn btn-secondary" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>Xóa bộ lọc</button>
+      <button type="button" className="btn btn-secondary btn-reset" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>
+        <RotateCcw size={15} /> Xóa bộ lọc
+      </button>
     </section>
 
     {error && <div className="dashboard-metrics-error" role="alert"><span>{error}</span><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>Thử lại</button></div>}

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, Check, Download, RefreshCw, Search, Users } from 'lucide-react';
+import { Award, BarChart3, BookOpen, Check, Download, GraduationCap, RefreshCw, RotateCcw, Search, Users } from 'lucide-react';
+import CustomDatePicker from '../components/CustomDatePicker';
 import CustomSelect from '../components/CustomSelect';
 import TablePagination from '../components/TablePagination';
 import { apiFetch } from '../utils/api';
@@ -175,12 +176,29 @@ export default function StatisticsManagementView({ onShowToast }) {
             {(options.departments || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </CustomSelect>
         </label>
-        <label>Từ ngày tạo hồ sơ<input type="date" value={filters.date_from} max={filters.date_to || undefined} onChange={(event) => setFilter('date_from', event.target.value)} /></label>
-        <label>Đến ngày tạo hồ sơ<input type="date" value={filters.date_to} min={filters.date_from || undefined} onChange={(event) => setFilter('date_to', event.target.value)} /></label>
+        <label>
+          <span>Từ ngày tạo hồ sơ</span>
+          <CustomDatePicker
+            value={filters.date_from}
+            max={filters.date_to || undefined}
+            onChange={(event) => setFilter('date_from', event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Đến ngày tạo hồ sơ</span>
+          <CustomDatePicker
+            value={filters.date_to}
+            min={filters.date_from || undefined}
+            onChange={(event) => setFilter('date_to', event.target.value)}
+          />
+        </label>
         <label className="statistics-search">Tìm thực tập sinh
           <span><Search size={16} /><input value={searchInput} maxLength={100} placeholder="Tên, email, chuyên ngành…" onChange={(event) => setSearchInput(event.target.value)} /></span>
         </label>
-        <button type="button" className="btn btn-secondary" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>Xóa bộ lọc</button>
+        <button type="button" className="btn btn-secondary statistics-btn-reset" onClick={() => { setFilters(EMPTY_FILTERS); setSearchInput(''); setPage(1); }}>
+          <RotateCcw size={15} />
+          <span>Xóa bộ lọc</span>
+        </button>
       </section>
 
       {optionsError && <div className="dashboard-metrics-error" role="alert"><span>{optionsError}</span></div>}
@@ -189,10 +207,36 @@ export default function StatisticsManagementView({ onShowToast }) {
 
       {report && <>
         <section className="statistics-kpis" aria-label="Chỉ số tổng quan">
-          <div className="statistics-kpi"><Users size={20} /><span>TTS duy nhất</span><strong>{summary.unique_interns}</strong></div>
-          <div className="statistics-kpi"><BarChart3 size={20} /><span>Lượt tham gia đã duyệt</span><strong>{summary.approved_participations}</strong></div>
-          <div className="statistics-kpi"><span>Trường có thông tin</span><strong>{summary.known_schools}</strong><small>{summary.missing_school} hồ sơ thiếu trường</small></div>
-          <div className="statistics-kpi"><span>Ngành có thông tin</span><strong>{summary.known_majors}</strong><small>{summary.missing_major} hồ sơ thiếu ngành</small></div>
+          <div className="statistics-kpi">
+            <div className="statistics-kpi-icon"><Users size={22} /></div>
+            <div className="statistics-kpi-content">
+              <span>TTS duy nhất</span>
+              <strong>{summary.unique_interns}</strong>
+            </div>
+          </div>
+          <div className="statistics-kpi">
+            <div className="statistics-kpi-icon success"><Award size={22} /></div>
+            <div className="statistics-kpi-content">
+              <span>Lượt tham gia đã duyệt</span>
+              <strong>{summary.approved_participations}</strong>
+            </div>
+          </div>
+          <div className="statistics-kpi">
+            <div className="statistics-kpi-icon info"><GraduationCap size={22} /></div>
+            <div className="statistics-kpi-content">
+              <span>Trường có thông tin</span>
+              <strong>{summary.known_schools}</strong>
+              <small>{summary.missing_school} hồ sơ thiếu trường</small>
+            </div>
+          </div>
+          <div className="statistics-kpi">
+            <div className="statistics-kpi-icon warning"><BookOpen size={22} /></div>
+            <div className="statistics-kpi-content">
+              <span>Ngành có thông tin</span>
+              <strong>{summary.known_majors}</strong>
+              <small>{summary.missing_major} hồ sơ thiếu ngành</small>
+            </div>
+          </div>
         </section>
 
         <div className="statistics-chart-grid">
