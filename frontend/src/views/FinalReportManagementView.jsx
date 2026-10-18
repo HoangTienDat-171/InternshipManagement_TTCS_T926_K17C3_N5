@@ -444,15 +444,21 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
           <h2>Tổng hợp Báo cáo Đánh giá Cuối kỳ</h2>
           <p>Rà soát và xem trước báo cáo cuối kỳ của thực tập sinh theo chương trình và đánh giá Mentor (US20)</p>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-          <button type="button" className="btn btn-secondary btn-sm" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('xlsx')}><Download size={14} />{exporting === 'xlsx' ? 'Đang xuất…' : 'Xuất Excel'}</button>
-          <button type="button" className="btn btn-secondary btn-sm" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('pdf')}><Download size={14} />{exporting === 'pdf' ? 'Đang xuất…' : 'Xuất PDF'}</button>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={fetchReports} title="Làm mới">
-            <RefreshCw size={14} />
+        <div className="final-report-header-actions">
+          <button type="button" className="btn btn-secondary" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('xlsx')}>
+            <Download size={15} />
+            <span>{exporting === 'xlsx' ? 'Đang xuất…' : 'Xuất Excel'}</span>
+          </button>
+          <button type="button" className="btn btn-secondary" disabled={loading || exporting !== '' || !totalItems} onClick={() => exportReports('pdf')}>
+            <Download size={15} />
+            <span>{exporting === 'pdf' ? 'Đang xuất…' : 'Xuất PDF'}</span>
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={fetchReports} title="Làm mới">
+            <RefreshCw size={15} />
             <span>Làm mới</span>
           </button>
           {isModal && onCloseModal && (
-            <button type="button" className="btn btn-secondary btn-sm" onClick={onCloseModal}>
+            <button type="button" className="btn btn-secondary" onClick={onCloseModal}>
               Đóng
             </button>
           )}
@@ -536,11 +542,11 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
 
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-secondary btn-reset"
           onClick={handleResetFilters}
           title="Đặt lại bộ lọc"
         >
-          <RefreshCw size={14} />
+          <RefreshCw size={15} />
           <span>Đặt lại</span>
         </button>
       </div>
@@ -727,10 +733,9 @@ export default function FinalReportManagementView({ onShowToast, initialProfileI
     return (
       <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onCloseModal?.()}>
         <div
-          className="modal-container"
+          className="modal-container final-report-modal-wrapper"
           role="dialog"
           aria-modal="true"
-          style={{ maxWidth: '1200px', width: '95vw', maxHeight: '92vh', overflowY: 'auto' }}
         >
           {content}
         </div>
