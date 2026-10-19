@@ -4,6 +4,7 @@ import {
   Clock3, ClipboardCheck, LogIn, LogOut, RefreshCw,
 } from 'lucide-react';
 import { apiFetch, readJsonResponse } from '../utils/api';
+import MonthYearPicker from '../components/MonthYearPicker';
 
 function dateLabel(value) {
   if (!value) return '—';
@@ -172,10 +173,34 @@ export default function AttendanceView({ onShowToast }) {
     <section className="workspace-card attendance-history-card" aria-labelledby="attendance-history-title">
       <div className="attendance-history-heading">
         <div><span className="workspace-eyebrow">THEO DÕI CỦA BẠN</span><h3 id="attendance-history-title">Lịch sử chấm công</h3></div>
-        <label className="attendance-month-filter"><span>Tháng</span>
-          <input type="month" value={month} onChange={(event) => { setPage(1); setHistoryLoading(true); setHistoryError(''); setMonth(event.target.value); }} />
-        </label>
-        {month && <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setPage(1); setHistoryLoading(true); setHistoryError(''); setMonth(''); }}>Xóa lọc</button>}
+        <div className="attendance-month-filter-wrap">
+          <span className="attendance-month-label">Tháng</span>
+          <MonthYearPicker
+            id="attendance-month-filter"
+            value={month}
+            onChange={(val) => {
+              setPage(1);
+              setHistoryLoading(true);
+              setHistoryError('');
+              setMonth(val || '');
+            }}
+            placeholder="Tất cả các tháng"
+          />
+          {month && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm attendance-month-clear-btn"
+              onClick={() => {
+                setPage(1);
+                setHistoryLoading(true);
+                setHistoryError('');
+                setMonth('');
+              }}
+            >
+              Xóa lọc
+            </button>
+          )}
+        </div>
       </div>
 
       {historyError && <div className="workspace-error attendance-error" role="alert">

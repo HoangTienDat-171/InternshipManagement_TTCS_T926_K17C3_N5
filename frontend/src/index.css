@@ -1378,6 +1378,16 @@ body { background: var(--bg-app); }
 .intern-data-table td:nth-child(3),
 .intern-data-table td:nth-child(4),
 .intern-data-table td:nth-child(5) { overflow-wrap: break-word; }
+.intern-data-table td:nth-child(3),
+.mentor-td-contact {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.intern-data-table td:nth-child(3) span,
+.mentor-td-contact span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .intern-data-table .badge { white-space: nowrap; }
 .intern-row-actions { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 8px; white-space: nowrap; }
 
@@ -1539,15 +1549,15 @@ body { background: var(--bg-app); }
   margin: 0;
 }
 .mentor-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
-.mentor-data-table { min-width: 1520px; table-layout: fixed; width: 100%; }
-.mentor-col-name { width: 220px; }
-.mentor-col-contact { width: 250px; }
-.mentor-col-department { width: 250px; }
-.mentor-col-expertise { width: 160px; }
-.mentor-col-experience { width: 130px; }
+.mentor-data-table { min-width: 1040px; table-layout: fixed; width: 100%; }
+.mentor-col-name { width: 170px; }
+.mentor-col-contact { width: 200px; }
+.mentor-col-department { width: 160px; }
+.mentor-col-expertise { width: 130px; }
+.mentor-col-experience { width: 100px; }
 .mentor-col-capacity,
-.mentor-col-count { width: 185px; }
-.mentor-col-actions { width: 325px; }
+.mentor-col-count { width: 120px; }
+.mentor-col-actions { width: 240px; }
 .mentor-data-table th,
 .mentor-data-table td { padding: 13px 14px; line-height: 1.45; vertical-align: middle; }
 .mentor-data-table th:nth-child(5),
@@ -3677,13 +3687,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root[data-theme='dark'] ::-webkit-scrollbar-thumb:hover { background: #475569; }
 
 .dashboard-metrics { display: grid; gap: 12px; margin: 0 0 20px; }
-.dashboard-metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.dashboard-metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 .dashboard-metric-card {
   display: flex;
   align-items: flex-start;
   gap: 13px;
   min-width: 0;
   min-height: 112px;
+  height: 100%;
+  box-sizing: border-box;
   padding: 16px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
@@ -3986,6 +3998,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .shift-form-actions { padding: 12px 16px 16px; }
 }
 
+.attendance-page {
+  padding-top: 12px;
+  scroll-margin-top: 80px;
+}
 .attendance-heading > div { min-width: 0; }
 .attendance-today-card { display: grid; gap: 20px; }
 .attendance-card-heading { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -4002,26 +4018,76 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .attendance-times > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 13px; background: var(--surface-card-hover); }
 .attendance-times span { color: var(--text-muted); font-size: 13px; }
 .attendance-times strong { color: var(--text-main); font-size: 20px; font-variant-numeric: tabular-nums; }
+.attendance-method-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--surface-card-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
 .attendance-note-field { display: grid; gap: 7px; max-width: 640px; color: var(--text-body); font-size: 13px; font-weight: 600; }
 .attendance-note-field small { color: var(--text-muted); font-weight: 400; }
 .attendance-note-field textarea { width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--surface-card); color: var(--text-main); font: inherit; }
-.attendance-note-field textarea:focus, .attendance-month-filter input:focus { outline: 2px solid color-mix(in srgb, var(--border-focus) 40%, transparent); border-color: var(--border-focus); }
+.attendance-note-field textarea:focus { outline: 2px solid color-mix(in srgb, var(--border-focus) 40%, transparent); border-color: var(--border-focus); }
 .attendance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .attendance-actions .btn { min-width: 145px; justify-content: center; }
 .attendance-complete-note { display: inline-flex; align-items: center; gap: 7px; color: var(--success-text); font-size: 14px; font-weight: 600; }
 .attendance-no-shift { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border: 1px solid var(--warning-border); border-radius: 12px; background: var(--warning-bg); color: var(--warning-text); font-size: 14px; }
 .attendance-no-shift svg { flex: 0 0 auto; }
 .attendance-history-card { display: grid; gap: 18px; }
-.attendance-history-heading { display: flex; align-items: center; gap: 12px; }
-.attendance-history-heading > div { flex: 1; min-width: 0; }
-.attendance-month-filter { display: grid; gap: 5px; color: var(--text-muted); font-size: 12px; }
-.attendance-month-filter input { min-height: 38px; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 9px; background: var(--surface-card); color: var(--text-main); font: inherit; }
+.attendance-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.attendance-history-heading > div:first-child { flex: 1; min-width: 200px; }
+.attendance-month-filter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.attendance-month-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.attendance-month-filter-wrap .month-year-picker-container {
+  min-width: 170px;
+}
+.attendance-month-clear-btn {
+  white-space: nowrap;
+}
 .attendance-history-table { min-width: 0; }
-.attendance-history-row { display: grid; grid-template-columns: 1.1fr 2fr 1fr 1fr 1.2fr; align-items: center; gap: 14px; min-height: 62px; padding: 10px 12px; border-bottom: 1px solid var(--border-color); color: var(--text-body); font-size: 13px; }
+.attendance-history-row { display: grid; grid-template-columns: 1.1fr 2fr 1fr 1fr 1.4fr; align-items: center; gap: 14px; min-height: 62px; padding: 10px 12px; border-bottom: 1px solid var(--border-color); color: var(--text-body); font-size: 13px; }
 .attendance-history-row:last-child { border-bottom: 0; }
 .attendance-history-row.is-header { min-height: 40px; background: var(--surface-card-hover); color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .attendance-history-row > span { min-width: 0; }
 .attendance-history-row [data-label='Ca làm'] { display: grid; gap: 3px; }
+.attendance-history-row [data-label='Giờ vào'],
+.attendance-history-row [data-label='Giờ ra'] {
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+.attendance-history-row [data-label='Trạng thái'] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.attendance-history-source {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-card-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  line-height: 1.3;
+}
 .attendance-history-row small { color: var(--text-muted); }
 .attendance-empty, .attendance-loading { display: grid; min-height: 150px; align-content: center; justify-items: center; gap: 10px; padding: 24px; color: var(--text-muted); text-align: center; }
 .attendance-empty svg { color: var(--primary-500); }

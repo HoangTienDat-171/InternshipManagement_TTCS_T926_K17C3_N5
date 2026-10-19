@@ -41,7 +41,18 @@ def get_dashboard_metrics(
                    SELECT 1
                    FROM PHAN_CONG_MENTOR_TTS a
                    JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
-                   WHERE a.ma_ho_so = h.ma_ho_so AND m.vai_tro = 'Mentor'
+                   LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+                   WHERE a.ma_ho_so = h.ma_ho_so
+                     AND m.vai_tro = 'Mentor'
+                     AND m.trang_thai = 'HoatDong'
+                     AND (
+                         (a.ma_chuong_trinh IS NOT NULL
+                          AND c.trang_thai != 'DaDong'
+                          AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
+                          AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
+                         OR
+                         (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap = 'DangThucTap')
+                     )
                ) AND h.trang_thai_xet_duyet = 'DaDuyet' THEN 1 ELSE 0 END) AS assigned,
                COUNT(DISTINCT h.ma_truong) AS universities
         FROM HO_SO_THUC_TAP h
@@ -105,39 +116,62 @@ def get_dashboard_metrics(
         ORDER BY c.ma_chuong_trinh DESC
     """, breakdown_params).fetchall()
 
-    mentor_stats = db.execute("""
+    mentor_where_clauses = ["m.vai_tro = 'Mentor'"]
+    mentor_params: list[int] = []
+    if ma_phong_ban is not None:
+        mentor_where_clauses.append("m.ma_phong_ban = ?")
+        mentor_params.append(ma_phong_ban)
+    mentor_where = " AND ".join(mentor_where_clauses)
+
+    mentor_stats = db.execute(f"""
         SELECT COUNT(*) AS total,
                SUM(CASE WHEN workload.intern_count > 0 THEN 1 ELSE 0 END) AS assigned_mentors,
                COALESCE(SUM(workload.intern_count), 0) AS assigned_interns
         FROM (
             SELECT m.ma_nguoi_dung,
-                   COUNT(DISTINCT CASE WHEN i.vai_tro = 'ThucTapSinh' THEN h.ma_ho_so END) AS intern_count
+                   COUNT(DISTINCT CASE 
+                       WHEN i.vai_tro = 'ThucTapSinh'
+                        AND i.trang_thai = 'HoatDong'
+                        AND h.trang_thai_xet_duyet = 'DaDuyet'
+                        AND (
+                            (a.ma_chuong_trinh IS NOT NULL
+                             AND c.trang_thai != 'DaDong'
+                             AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
+                             AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
+                            OR
+                            (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap = 'DangThucTap')
+                        )
+                       THEN h.ma_nguoi_dung END
+                   ) AS intern_count
             FROM NGUOI_DUNG m
             LEFT JOIN PHAN_CONG_MENTOR_TTS a ON a.ma_nguoi_dung_mentor = m.ma_nguoi_dung
             LEFT JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
             LEFT JOIN NGUOI_DUNG i ON i.ma_nguoi_dung = h.ma_nguoi_dung
-            WHERE m.vai_tro = 'Mentor'
+            LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+            WHERE {mentor_where}
             GROUP BY m.ma_nguoi_dung
         ) workload
-    """).fetchone()
-    mentor_departments = db.execute("""
+    """, mentor_params).fetchone()
+
+    mentor_departments = db.execute(f"""
         SELECT COALESCE(p.ten_phong_ban, 'Chưa phân phòng') AS name,
                COUNT(*) AS mentors
         FROM NGUOI_DUNG m
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = m.ma_phong_ban
-        WHERE m.vai_tro = 'Mentor'
+        WHERE {mentor_where}
         GROUP BY p.ten_phong_ban
         ORDER BY mentors DESC, name
-    """).fetchall()
-    mentor_expertise = db.execute("""
+    """, mentor_params).fetchall()
+
+    mentor_expertise = db.execute(f"""
         SELECT COALESCE(NULLIF(TRIM(mp.chuyen_mon), ''), 'Chưa cập nhật') AS name,
                COUNT(*) AS mentors
         FROM NGUOI_DUNG m
         LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = m.ma_nguoi_dung
-        WHERE m.vai_tro = 'Mentor'
+        WHERE {mentor_where}
         GROUP BY COALESCE(NULLIF(TRIM(mp.chuyen_mon), ''), 'Chưa cập nhật')
         ORDER BY mentors DESC, name
-    """).fetchall()
+    """, mentor_params).fetchall()
 
     account_stats = db.execute("""
         SELECT COUNT(*) AS total,
