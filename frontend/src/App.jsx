@@ -386,6 +386,7 @@ export default function App() {
     setRequestedSupportRequestId(null);
     setRequestedMeetingId(null);
     setActiveTab(tab);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   };
 
   const openNotificationReference = (notification) => {

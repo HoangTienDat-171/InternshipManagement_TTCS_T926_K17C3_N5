@@ -26,7 +26,8 @@ function readSectionMetrics(data, section) {
 
 function describeMetrics(section, metrics) {
   if (section === 'interns') {
-    const assignedRate = metrics.approved ? Math.round((metrics.assigned / metrics.approved) * 100) : 0;
+    const rawRate = metrics.approved ? (metrics.assigned / metrics.approved) * 100 : 0;
+    const assignedRate = Number.isInteger(rawRate) ? rawRate : Number(rawRate.toFixed(1));
     return {
       cards: [
         { label: 'TỔNG SỐ TTS', value: metrics.total, detail: 'Hồ sơ thực tập sinh đang được quản lý', icon: GraduationCap, tone: 'violet' },
@@ -55,8 +56,8 @@ function describeMetrics(section, metrics) {
       cards: [
         { label: 'TỔNG SỐ MENTOR', value: metrics.total, detail: 'Người hướng dẫn trong hệ thống', icon: Users, tone: 'violet' },
         { label: 'MENTOR ĐANG PHỤ TRÁCH', value: metrics.assigned_mentors, detail: `${number(metrics.total - metrics.assigned_mentors)} mentor chưa có TTS`, icon: UserRoundCheck, tone: 'green' },
-        { label: 'TTS ĐANG ĐƯỢC QUẢN LÝ', value: metrics.assigned_interns, detail: 'Tổng lượt phân công mentor – TTS', icon: GraduationCap, tone: 'blue' },
-        { label: 'TRUNG BÌNH TTS / MENTOR', value: number(metrics.average_interns), detail: 'Tính trên toàn bộ mentor', icon: Activity, tone: 'amber' },
+        { label: 'TTS ĐANG ĐƯỢC QUẢN LÝ', value: metrics.assigned_interns, detail: 'Thực tập sinh đang có người hướng dẫn', icon: GraduationCap, tone: 'blue' },
+        { label: 'TRUNG BÌNH TTS / MENTOR', value: typeof metrics.average_interns === 'number' ? metrics.average_interns.toFixed(1) : number(metrics.average_interns), detail: 'Tính trên toàn bộ mentor', icon: Activity, tone: 'amber' },
       ],
       breakdown: metrics.departments,
       expertise: metrics.expertise,
