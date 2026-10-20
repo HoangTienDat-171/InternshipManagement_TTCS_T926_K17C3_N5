@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 import unittest
 from unittest.mock import patch
 
@@ -21,7 +22,7 @@ from app.mentor_assignment_service import (
     get_timeline_status,
     unassign_mentor_canonical,
 )
-from app.routes import auth_routes, intern_routes, mentor_routes, program_routes
+from app.routes import auth_routes, intern_routes, mentor_routes, program_routes, metrics_routes
 from app.schemas import WeeklyReportCreate, WeeklyReportReview
 from app.weekly_report_service import WeeklyReportService
 
@@ -59,6 +60,7 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         cls.http_app.include_router(program_routes.router)
         cls.http_app.include_router(mentor_routes.router)
         cls.http_app.include_router(intern_routes.router)
+        cls.http_app.include_router(metrics_routes.router)
         cls.active_db = None
 
         db = database.get_db_connection()
@@ -129,15 +131,16 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         headers = [(b"host", b"testserver"), (b"content-length", str(len(body)).encode())]
         if content_type:
             headers.append((b"content-type", content_type.encode()))
+        parsed_path = urlsplit(path)
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
             "http_version": "1.1",
             "method": method,
             "scheme": "http",
-            "path": path,
-            "raw_path": path.encode(),
-            "query_string": b"",
+            "path": parsed_path.path,
+            "raw_path": parsed_path.path.encode(),
+            "query_string": parsed_path.query.encode(),
             "root_path": "",
             "headers": headers,
             "client": ("127.0.0.1", 12345),
@@ -209,6 +212,144 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         app_id = cur.lastrowid
         self.db.commit()
         return app_id
+
+    def test_picker_preserves_all_contexts_and_explains_unavailable_profiles(self):
+        _, fresh = self._create_intern('picker_fresh')
+        _, pending = self._create_intern('picker_pending')
+        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet='ChoDuyet' WHERE ma_ho_so=?", (pending,))
+        _, scoped = self._create_intern('picker_scoped')
+        today = date.today()
+        p1 = self._create_program('PICK-CURRENT', str(today - timedelta(days=1)), str(today + timedelta(days=2)))
+        p2 = self._create_program('PICK-FUTURE', str(today + timedelta(days=3)), str(today + timedelta(days=8)))
+        self._apply_and_approve(scoped, p1)
+        self._apply_and_approve(scoped, p2)
+        assign_mentor_canonical(self.db, self.mentor_alice_id, scoped, program_id=p1)
+        self.db.commit()
+        actor = {'ma_nguoi_dung': self.hr_user_id, 'vai_tro': 'HR'}
+        code, candidates = self._http_request('GET', '/api/mentors/unassigned-interns?include_unavailable=true', user=actor)
+        self.assertEqual(code, 200)
+        self.assertTrue(next(x for x in candidates if x['ma_ho_so'] == fresh)['eligible'])
+        pending_item = next(x for x in candidates if x['ma_ho_so'] == pending)
+        self.assertFalse(pending_item['eligible'])
+        self.assertTrue(pending_item['reason'])
+        scoped_items = [x for x in candidates if x['ma_ho_so'] == scoped]
+        self.assertEqual({x['ma_chuong_trinh'] for x in scoped_items}, {p1, p2})
+        self.assertFalse(next(x for x in scoped_items if x['ma_chuong_trinh'] == p1)['eligible'])
+        self.assertTrue(next(x for x in scoped_items if x['ma_chuong_trinh'] == p2)['eligible'])
+
+    def test_http_batch_unassign_reassign_and_metrics_are_consistent(self):
+        _, profile = self._create_intern('http_mentor_cycle')
+        today = date.today()
+        program = self._create_program('HTTP-CYCLE', str(today - timedelta(days=1)), str(today + timedelta(days=10)))
+        self._apply_and_approve(profile, program)
+        actor = {'ma_nguoi_dung': self.admin_user_id, 'vai_tro': 'Admin'}
+        payload = json.dumps({'assignments': [{'ma_ho_so': profile, 'ma_chuong_trinh': program}]}).encode()
+        for _ in range(2):
+            code, _ = self._http_request('POST', f'/api/mentors/{self.mentor_alice_id}/assignments/batch', user=actor, body=payload, content_type='application/json')
+            self.assertEqual(code, 201)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so=?', (profile,)).fetchone()[0], 1)
+        code, metrics = self._http_request('GET', '/api/dashboard/metrics', user=actor)
+        self.assertEqual(code, 200)
+        self.assertEqual(metrics['mentors']['assigned_mentors'], 1)
+        self.assertEqual(metrics['mentors']['assigned_interns'], 1)
+        self.assertEqual(metrics['interns']['assigned'], 1)
+        code, rows = self._http_request('GET', f'/api/mentors/{self.mentor_alice_id}/interns', user=actor)
+        self.assertEqual(code, 200)
+        self.assertEqual(len([row for row in rows if row['ma_ho_so'] == profile]), 1)
+        for role in ['Mentor', 'ThucTapSinh']:
+            code, _ = self._http_request('DELETE', f'/api/mentors/{self.mentor_alice_id}/interns/{profile}?program_id={program}', user={'ma_nguoi_dung': self.mentor_alice_id, 'vai_tro': role})
+            self.assertEqual(code, 403)
+        code, _ = self._http_request('DELETE', f'/api/mentors/{self.mentor_alice_id}/interns/{profile}?program_id={program}', user=actor)
+        self.assertEqual(code, 200)
+        code, metrics = self._http_request('GET', '/api/dashboard/metrics', user=actor)
+        self.assertEqual(metrics['mentors']['assigned_mentors'], 0)
+        self.assertEqual(metrics['mentors']['assigned_interns'], 0)
+        self.assertEqual(metrics['interns']['assigned'], 0)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM HO_SO_THUC_TAP WHERE ma_ho_so=?', (profile,)).fetchone()[0], 1)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ho_so=?', (profile,)).fetchone()[0], 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_ho_so=? AND su_kien='UNASSIGNED'", (profile,)).fetchone()[0], 1)
+        code, _ = self._http_request('POST', f'/api/mentors/{self.mentor_bob_id}/assignments/batch', user=actor, body=payload, content_type='application/json')
+        self.assertEqual(code, 201)
+        _, metrics = self._http_request('GET', '/api/dashboard/metrics', user=actor)
+        self.assertEqual(metrics['mentors']['assigned_interns'], 1)
+
+    def test_upcoming_assignment_is_visible_and_removable_without_counting_as_current(self):
+        _, profile = self._create_intern('planned_removal')
+        today = date.today()
+        program = self._create_program('PLAN-REMOVE', str(today + timedelta(days=3)), str(today + timedelta(days=9)))
+        self._apply_and_approve(profile, program)
+        assign_mentor_canonical(self.db, self.mentor_alice_id, profile, program_id=program)
+        self.db.commit()
+        rows = mentor_routes.list_mentor_interns(self.mentor_alice_id, make_request({'vai_tro': 'HR'}), self.db)
+        self.assertEqual(next(x for x in rows if x['ma_ho_so'] == profile)['timeline_status'], 'UPCOMING')
+        self.assertEqual(count_mentor_active_interns(self.db, self.mentor_alice_id), 0)
+        unassign_mentor_canonical(self.db, self.mentor_alice_id, profile, program_id=program)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=program)
+        self.db.commit()
+
+    def test_overlap_conflict_and_batch_rollback(self):
+        _, profile = self._create_intern('overlap_assignment')
+        _, fresh = self._create_intern('atomic_assignment')
+        today = date.today()
+        p1 = self._create_program('AS-OVERLAP-1', str(today), str(today + timedelta(days=8)))
+        p2 = self._create_program('AS-OVERLAP-2', str(today + timedelta(days=1)), str(today + timedelta(days=9)))
+        self._apply_and_approve(profile, p1)
+        self._apply_and_approve(profile, p2)
+        assign_mentor_canonical(self.db, self.mentor_alice_id, profile, program_id=p1)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as conflict:
+            assign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=p2)
+        self.assertEqual(conflict.exception.status_code, 409)
+        # A valid target followed by a missing target rolls the entire batch back.
+        payload = json.dumps({'assignments': [{'ma_ho_so': fresh}, {'ma_ho_so': 999999}]}).encode()
+        code, _ = self._http_request('POST', f'/api/mentors/{self.mentor_bob_id}/assignments/batch', user={'ma_nguoi_dung': self.hr_user_id, 'vai_tro': 'HR'}, body=payload, content_type='application/json')
+        self.assertEqual(code, 404)
+        self.assertIsNone(self.db.execute('SELECT 1 FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so=?', (fresh,)).fetchone())
+
+    def test_create_mentor_reuses_account_flow_and_rejects_duplicate(self):
+        payload = json.dumps({'ho_ten': 'Targeted Mentor', 'email': 'targeted.mentor@example.com', 'ma_phong_ban': self.dept_id}).encode()
+        with patch.object(mentor_routes, 'queue_temporary_password_email') as queue_email:
+            code, created = self._http_request('POST', '/api/mentors', user={'vai_tro': 'HR'}, body=payload, content_type='application/json')
+            self.assertEqual(code, 201)
+            self.assertIsNotNone(self.db.execute('SELECT 1 FROM MENTOR_PROFILE WHERE ma_nguoi_dung=?', (created['ma_nguoi_dung'],)).fetchone())
+            queue_email.assert_called_once()
+            code, _ = self._http_request('POST', '/api/mentors', user={'vai_tro': 'Admin'}, body=payload, content_type='application/json')
+            self.assertEqual(code, 400)
+        code, _ = self._http_request('POST', '/api/mentors', user={'vai_tro': 'ThucTapSinh'}, body=payload, content_type='application/json')
+        self.assertEqual(code, 403)
+
+    def test_competing_mentor_assignments_have_one_winner(self):
+        _, profile = self._create_intern('concurrent_mentors')
+        today = date.today()
+        program = self._create_program('CONCURRENT-MENTORS', str(today), str(today + timedelta(days=8)))
+        self._apply_and_approve(profile, program)
+
+        def assign(mentor):
+            conn = database.get_db_connection()
+            try:
+                conn.execute('BEGIN IMMEDIATE')
+                assign_mentor_canonical(conn, mentor, profile, program_id=program)
+                conn.commit()
+                return 201
+            except HTTPException as exc:
+                conn.rollback()
+                return exc.status_code
+            finally:
+                conn.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(assign, [self.mentor_alice_id, self.mentor_bob_id]))
+        self.assertEqual(sorted(results), [201, 409])
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so=?', (profile,)).fetchone()[0], 1)
+
+    def test_explicit_profile_context_cannot_silently_switch_to_program(self):
+        _, profile = self._create_intern('changed_context')
+        today = date.today()
+        program = self._create_program('CHANGED-CONTEXT', str(today), str(today + timedelta(days=8)))
+        self._apply_and_approve(profile, program)
+        with self.assertRaises(HTTPException) as conflict:
+            assign_mentor_canonical(self.db, self.mentor_alice_id, profile, auto_select_program=False)
+        self.assertEqual(conflict.exception.status_code, 409)
 
     # =========================================================================
     # Test 1: Fresh and Migrated Schema
@@ -352,7 +493,10 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         self._apply_and_approve(profile_id, current_program)
         self._apply_and_approve(profile_id, historical_program)
         assign_mentor_canonical(self.db, self.mentor_alice_id, profile_id, program_id=current_program)
-        assign_mentor_canonical(self.db, self.mentor_bob_id, profile_id, program_id=historical_program)
+        # Existing historical relation is fixture data, not a new assignment request.
+        self.db.execute("""INSERT INTO PHAN_CONG_MENTOR_TTS
+            (ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh)
+            VALUES (?, ?, ?)""", (self.mentor_bob_id, profile_id, historical_program))
         self.db.commit()
 
         with self.assertRaises(HTTPException) as ctx:
@@ -552,7 +696,7 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
     # Test 11: Reassign Mentor (Section 83)
     # =========================================================================
     def test_reassign_mentor(self):
-        """Reassigning mentor replaces the current mentor for that application context without duplicate active rows."""
+        """A mentor switch requires explicit unassignment and preserves the old relation in history."""
         user_id, profile_id = self._create_intern("reassign")
         p1 = self._create_program("REASSIGN-P1", "2026-10-01", "2026-12-31")
         app1 = self._apply_and_approve(profile_id, p1)
@@ -560,18 +704,22 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         r1 = assign_mentor_canonical(self.db, self.mentor_alice_id, profile_id, program_id=p1, application_id=app1)
         self.db.commit()
 
-        # Reassign to Bob
+        # Switching mentors must be explicit; first remove the existing relation.
+        with self.assertRaises(HTTPException) as conflict:
+            assign_mentor_canonical(self.db, self.mentor_bob_id, profile_id, program_id=p1)
+        self.assertEqual(conflict.exception.status_code, 409)
+        unassign_mentor_canonical(self.db, self.mentor_alice_id, profile_id, program_id=p1)
         r2 = assign_mentor_canonical(self.db, self.mentor_bob_id, profile_id, program_id=p1, application_id=app1)
         self.db.commit()
 
-        self.assertEqual(r1["ma_phan_cong"], r2["ma_phan_cong"])
-        row = self.db.execute("SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?", (r1["ma_phan_cong"],)).fetchone()
+        self.assertNotEqual(r1["ma_phan_cong"], r2["ma_phan_cong"])
+        row = self.db.execute("SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_phan_cong = ?", (r2["ma_phan_cong"],)).fetchone()
         self.assertEqual(row["ma_nguoi_dung_mentor"], self.mentor_bob_id)
         archived = self.db.execute(
             "SELECT su_kien, ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_phan_cong_goc = ?",
             (r1["ma_phan_cong"],),
         ).fetchone()
-        self.assertEqual((archived["su_kien"], archived["ma_nguoi_dung_mentor"]), ("REASSIGNED", self.mentor_alice_id))
+        self.assertEqual((archived["su_kien"], archived["ma_nguoi_dung_mentor"]), ("UNASSIGNED", self.mentor_alice_id))
 
     def test_active_assignment_count_is_distinct_by_intern_user(self):
         today = date.today()

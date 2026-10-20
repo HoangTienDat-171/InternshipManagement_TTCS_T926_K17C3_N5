@@ -10,7 +10,10 @@ import { signalDashboardMetricsChanged } from '../utils/dashboardMetrics';
 import { isValidVietnamPhone } from '../utils/phone';
 import { apiFetch, readJsonResponse } from '../utils/api';
 
-export default function MentorManagementView({ departments, onCreateDepartment, onShowToast, currentUser }) {
+const candidateKey = (intern) => `${intern.ma_ho_so}:${intern.ma_chuong_trinh ?? 'profile'}`;
+const normalizeSearch = (value) => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\u0111/g, 'd');
+
+export default function MentorManagementView({ departments, onShowToast, currentUser }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingMentor, setEditingMentor] = useState(null);
   const [assignmentMentor, setAssignmentMentor] = useState(null);
@@ -21,6 +24,11 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
   const [selectedInternIds, setSelectedInternIds] = useState([]);
   const [removingProfileId, setRemovingProfileId] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
+  const [assignmentSearch, setAssignmentSearch] = useState('');
+  const [assignmentProgram, setAssignmentProgram] = useState('');
+  const [assignmentStatus, setAssignmentStatus] = useState('all');
+  const [creatingMentor, setCreatingMentor] = useState(false);
+  const mutationBusyRef = useRef(false);
   const [profileForm, setProfileForm] = useState({ chuyen_mon: '', kinh_nghiem: '' });
 
   const [mentors, setMentors] = useState([]);
@@ -98,12 +106,15 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
 
   const handleAddMentor = async (e) => {
     e.preventDefault();
+    if (mutationBusyRef.current) return;
     if (!form.ho_ten.trim()) return onShowToast('Vui lòng nhập họ và tên Mentor.', 'error');
     if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) return onShowToast('Vui lòng nhập email Mentor hợp lệ.', 'error');
     if (form.so_dien_thoai && !isValidVietnamPhone(form.so_dien_thoai)) {
       onShowToast('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.', 'error');
       return;
     }
+    mutationBusyRef.current = true;
+    setCreatingMentor(true);
     try {
       const response = await apiFetch('/api/mentors', {
         method: 'POST',
@@ -124,6 +135,9 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
       await loadMentors(1, pageSize);
     } catch (error) {
       onShowToast(error.message, 'error');
+    } finally {
+      mutationBusyRef.current = false;
+      setCreatingMentor(false);
     }
   };
 
@@ -161,19 +175,16 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
   const openAssignmentPicker = async (mentor) => {
     setAssignmentMentor(mentor);
     setSelectedInternIds([]);
+    setUnassignedInterns([]);
+    setAssignmentSearch('');
+    setAssignmentProgram('');
+    setAssignmentStatus('all');
     setModalLoading(true);
     try {
-      const response = await apiFetch('/api/mentors/unassigned-interns');
+      const response = await apiFetch('/api/mentors/unassigned-interns?include_unavailable=true');
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Không thể tải danh sách thực tập sinh.');
-      const uniqueCandidates = new Map();
-      data.forEach((intern) => {
-        const existing = uniqueCandidates.get(intern.ma_nguoi_dung);
-        if (!existing || (existing.timeline_status !== 'CURRENT' && intern.timeline_status === 'CURRENT')) {
-          uniqueCandidates.set(intern.ma_nguoi_dung, intern);
-        }
-      });
-      setUnassignedInterns([...uniqueCandidates.values()]);
+      setUnassignedInterns(data);
     } catch (error) {
       onShowToast(error.message, 'error');
       setAssignmentMentor(null);
@@ -184,12 +195,16 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
 
   const assignIntern = async (e) => {
     e.preventDefault();
-    if (selectedInternIds.length === 0) return;
+    if (selectedInternIds.length === 0 || mutationBusyRef.current) return;
+    mutationBusyRef.current = true;
     setModalLoading(true);
     try {
       const response = await apiFetch(`/api/mentors/${assignmentMentor.ma_nguoi_dung}/assignments/batch`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ma_ho_so_list: selectedInternIds }),
+        body: JSON.stringify({ assignments: selectedInternIds.map((key) => {
+          const intern = unassignedInterns.find((item) => candidateKey(item) === key);
+          return { ma_ho_so: intern.ma_ho_so, ma_chuong_trinh: intern.ma_chuong_trinh };
+        }) }),
       });
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.detail || 'Không thể phân công thực tập sinh.');
@@ -199,6 +214,7 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
     } catch (error) {
       onShowToast(error.message, 'error');
     } finally {
+      mutationBusyRef.current = false;
       setModalLoading(false);
     }
   };
@@ -221,12 +237,13 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
 
   const removeAssignment = async () => {
     const profileId = pendingUnassignment?.ma_ho_so;
-    if (!profileId || !assignedMentor) return;
-    if (pendingUnassignment.timeline_status !== 'CURRENT') {
-      onShowToast('Chỉ có thể gỡ phân công trong chương trình hiện tại.', 'error');
+    if (!profileId || !assignedMentor || mutationBusyRef.current) return;
+    if (pendingUnassignment.timeline_status === 'HISTORICAL') {
+      onShowToast('Không thể gỡ phân công lịch sử của chương trình đã kết thúc.', 'error');
       setPendingUnassignment(null);
       return;
     }
+    mutationBusyRef.current = true;
     setRemovingProfileId(profileId);
     try {
       const programQuery = pendingUnassignment.ma_chuong_trinh
@@ -242,14 +259,21 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
     } catch (error) {
       onShowToast(error.message, 'error');
     } finally {
+      mutationBusyRef.current = false;
       setRemovingProfileId(null);
     }
   };
 
-  const currentAssignedInterns = [...new Map(
-    assignedInterns.filter((intern) => intern.timeline_status === 'CURRENT')
-      .map((intern) => [intern.ma_nguoi_dung, intern]),
-  ).values()];
+  const currentAssignedInterns = assignedInterns.filter((intern) => intern.timeline_status !== 'HISTORICAL');
+  const currentAssignedCount = new Set(currentAssignedInterns.filter((intern) => intern.counts_as_current).map((intern) => intern.ma_nguoi_dung)).size;
+  const upcomingAssignedCount = new Set(currentAssignedInterns.filter((intern) => intern.timeline_status === 'UPCOMING').map((intern) => intern.ma_nguoi_dung)).size;
+  const filteredCandidates = unassignedInterns.filter((intern) => {
+    const query = normalizeSearch(assignmentSearch);
+    return (!query || normalizeSearch(`${intern.ho_ten} ${intern.email} ${intern.ma_ho_so} ${intern.ma_ct || ''} ${intern.ten_ct || ''}`).includes(query))
+      && (!assignmentProgram || String(intern.ma_chuong_trinh ?? 'profile') === assignmentProgram)
+      && (assignmentStatus === 'all' || (assignmentStatus === 'available' ? intern.eligible : Boolean(intern.mentor_id)));
+  });
+  const candidatePrograms = [...new Map(unassignedInterns.filter((intern) => intern.ma_chuong_trinh).map((intern) => [intern.ma_chuong_trinh, intern])).values()];
 
   return (
     <div className="mentor-management-page">
@@ -324,7 +348,6 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                   idKey="ma_phong_ban"
                   labelKey="ten_phong_ban"
                   placeholder="Tìm hoặc chọn phòng ban"
-                  onCreateNew={onCreateDepartment}
                   onChange={handleChange}
                 />
               </div>
@@ -355,10 +378,10 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
               </div>
 
               <div className="form-full" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowAddForm(false)}>
+                <button type="button" className="btn btn-secondary" disabled={creatingMentor} onClick={() => setShowAddForm(false)}>
                   Hủy
                 </button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" disabled={creatingMentor}>
                   <UserPlus size={15} />
                   <span>Xác nhận thêm</span>
                 </button>
@@ -501,24 +524,30 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
         </div>
       </div>}
 
-      {assignmentMentor && <div className="modal-overlay" onClick={() => setAssignmentMentor(null)}>
+      {assignmentMentor && <div className="modal-overlay" onClick={() => !modalLoading && setAssignmentMentor(null)}>
         <div className="modal-container mentor-assignment-dialog" onClick={(e) => e.stopPropagation()}>
-          <div className="modal-header"><div><h3>Phân công thực tập sinh</h3><p>{assignmentMentor.ho_ten} · {assignmentMentor.phong_ban || 'Chưa phân phòng'}</p></div><button className="modal-close-btn" type="button" onClick={() => setAssignmentMentor(null)}><X size={18} /></button></div>
+          <div className="modal-header"><div><h3>Phân công thực tập sinh</h3><p>{assignmentMentor.ho_ten} · {assignmentMentor.phong_ban || 'Chưa phân phòng'}</p></div><button className="modal-close-btn" type="button" disabled={modalLoading} onClick={() => setAssignmentMentor(null)}><X size={18} /></button></div>
           <form noValidate onSubmit={assignIntern}>
             <div className="modal-body mentor-assignment-body">
+              <div className="mentor-assignment-filters">
+                <input className="form-control" aria-label="Tìm TTS theo tên, email hoặc mã hồ sơ" placeholder="Tìm tên, email, mã hồ sơ…" value={assignmentSearch} onChange={(event) => setAssignmentSearch(event.target.value)} />
+                <select className="form-control" aria-label="Lọc chương trình" value={assignmentProgram} onChange={(event) => setAssignmentProgram(event.target.value)}><option value="">Tất cả chương trình</option><option value="profile">Hồ sơ chưa gắn chương trình</option>{candidatePrograms.map((intern) => <option key={intern.ma_chuong_trinh} value={intern.ma_chuong_trinh}>{intern.ten_ct}</option>)}</select>
+                <select className="form-control" aria-label="Lọc trạng thái phân công" value={assignmentStatus} onChange={(event) => setAssignmentStatus(event.target.value)}><option value="all">Tất cả trạng thái</option><option value="available">Có thể phân công</option><option value="assigned">Đã phân công</option></select>
+              </div>
                 <div className="assignment-selection-summary">
                   <span>TTS đang hướng dẫn: <strong>{assignmentMentor.so_tts_dang_huong_dan || 0} TTS</strong></span>
                   <span>Đang chọn: <strong>{selectedInternIds.length} TTS</strong></span>
                 </div>
               {modalLoading ? <p className="workspace-empty">Đang tải danh sách thực tập sinh…</p> : <div className="assignment-transfer-grid">
                 <section className="assignment-transfer-column">
-                  <header><div><strong>TTS chưa phân công</strong><small>{unassignedInterns.length} hồ sơ đủ điều kiện</small></div></header>
+                  <header><div><strong>Hồ sơ và chương trình</strong><small>{filteredCandidates.length} kết quả · {unassignedInterns.filter((intern) => intern.eligible).length} lượt có thể phân công</small></div></header>
                   <div className="assignment-transfer-list">
-                    {unassignedInterns.length === 0 ? <p className="workspace-empty">Hiện không có hồ sơ đủ điều kiện.</p> : unassignedInterns.map((intern) => {
-                      const selected = selectedInternIds.includes(intern.ma_ho_so);
-                      return <button type="button" key={intern.ma_ho_so} className={`assignment-candidate${selected ? ' selected' : ''}`}
-                        onClick={() => setSelectedInternIds((items) => selected ? items.filter((id) => id !== intern.ma_ho_so) : [...items, intern.ma_ho_so])}>
-                        <span className="assignment-check-mark">{selected ? '✓' : '+'}</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small>{intern.ten_ct && <small style={{ color: 'var(--brand-primary, #0284c7)', display: 'block', fontWeight: 600 }}>Chương trình: {intern.ten_ct}</small>}</span>
+                    {filteredCandidates.length === 0 ? <p className="workspace-empty">Không có hồ sơ phù hợp với bộ lọc. Hồ sơ cần được duyệt và có chương trình hiện tại/sắp tới hợp lệ; hồ sơ đang thực tập chưa đăng ký chương trình cũng có thể phân công.</p> : filteredCandidates.map((intern) => {
+                      const key = candidateKey(intern);
+                      const selected = selectedInternIds.includes(key);
+                      return <button type="button" key={key} disabled={!intern.eligible} className={`assignment-candidate${selected ? ' selected' : ''}`}
+                        onClick={() => setSelectedInternIds((items) => selected ? items.filter((id) => id !== key) : [...items, key])}>
+                        <span className="assignment-check-mark">{selected ? '✓' : '+'}</span><span><strong>{intern.ho_ten} · #{intern.ma_ho_so}</strong><small>{intern.eligible ? 'Chưa phân công' : (intern.mentor_id ? `Đã phân công: ${intern.mentor_name}` : 'Chưa đủ điều kiện')}</small>{intern.reason && <small className="assignment-ineligible-reason">{intern.reason}</small>}<small>{intern.email}</small><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small><small>Chương trình: {intern.ten_ct || 'Hồ sơ chưa gắn chương trình'}{intern.timeline_status === 'UPCOMING' ? ' · Sắp tới' : ''}</small></span>
                       </button>;
                     })}
                   </div>
@@ -527,16 +556,16 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                   <header><div><strong>Danh sách sẽ gán</strong><small>{selectedInternIds.length} đã chọn</small></div><button type="button" className="btn btn-secondary btn-sm" onClick={() => setSelectedInternIds([])} disabled={!selectedInternIds.length}>Bỏ chọn</button></header>
                   <div className="assignment-transfer-list">
                     {selectedInternIds.length === 0 ? <p className="workspace-empty">Chọn TTS ở cột bên trái để thêm vào đợt phân công.</p> : selectedInternIds.map((id) => {
-                      const intern = unassignedInterns.find((item) => item.ma_ho_so === id);
+                      const intern = unassignedInterns.find((item) => candidateKey(item) === id);
                       return intern ? <button type="button" key={id} className="assignment-candidate selected" onClick={() => setSelectedInternIds((items) => items.filter((item) => item !== id))}>
-                        <span className="assignment-check-mark">−</span><span><strong>{intern.ho_ten}</strong><small>{intern.ten_truong || 'Chưa cập nhật trường'} · {intern.chuyen_nganh || 'Chưa cập nhật chuyên ngành'}</small>{intern.ten_ct && <small style={{ color: 'var(--brand-primary, #0284c7)', display: 'block', fontWeight: 600 }}>Chương trình: {intern.ten_ct}</small>}</span>
+                        <span className="assignment-check-mark">−</span><span><strong>{intern.ho_ten} · #{intern.ma_ho_so}</strong><small>{intern.email}</small><small>{intern.ten_ct || 'Hồ sơ chưa gắn chương trình'}</small></span>
                       </button> : null;
                     })}
                   </div>
                 </section>
               </div>}
             </div>
-            <div className="modal-footer"><button type="button" className="btn btn-secondary" onClick={() => setAssignmentMentor(null)}>Đóng</button><button className="btn btn-primary" disabled={modalLoading || selectedInternIds.length === 0}><Users size={15} />Phân công {selectedInternIds.length || ''}</button></div>
+            <div className="modal-footer"><button type="button" className="btn btn-secondary" disabled={modalLoading} onClick={() => setAssignmentMentor(null)}>Đóng</button><button className="btn btn-primary" disabled={modalLoading || selectedInternIds.length === 0}><Users size={15} />Phân công {selectedInternIds.length || ''}</button></div>
           </form>
         </div>
       </div>}
@@ -545,7 +574,7 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
         <div className="modal-container" onClick={(e) => e.stopPropagation()}>
           <div className="modal-header"><h3>TTS do {assignedMentor.ho_ten} hướng dẫn</h3><button className="modal-close-btn" type="button" onClick={() => setAssignedMentor(null)}><X size={18} /></button></div>
           <div className="modal-body">
-            <p className="mentor-capacity-summary">TTS đang hướng dẫn: {currentAssignedInterns.length} TTS</p>
+            <p className="mentor-capacity-summary">Đang hướng dẫn: {currentAssignedCount} TTS · Đã phân công sắp tới: {upcomingAssignedCount} TTS. KPI đang hướng dẫn chỉ tính chương trình hiện tại.</p>
             {modalLoading ? <p>Đang tải danh sách...</p> : currentAssignedInterns.length === 0 ? <p>Mentor chưa có thực tập sinh đang tham gia chương trình hiện tại.</p> : <div className="mentor-intern-list">
               {currentAssignedInterns.map((intern) => <div className="mentor-intern-item" key={`${intern.ma_ho_so}-${intern.ma_chuong_trinh ?? 'legacy'}`}>
                 <div>
@@ -553,7 +582,7 @@ export default function MentorManagementView({ departments, onCreateDepartment, 
                   <div className="text-muted">{intern.email} · {intern.ten_truong || 'Chưa có trường'} · {intern.chuyen_nganh || 'Chưa có chuyên ngành'}</div>
                   {intern.ten_ct && <div style={{ fontSize: '12px', color: 'var(--brand-primary, #0284c7)', marginTop: '2px' }}>Chương trình: <strong>{intern.ten_ct}</strong> {intern.timeline_status ? `(${intern.timeline_status === 'CURRENT' ? 'Đang thực tập' : (intern.timeline_status === 'UPCOMING' ? 'Sắp tới' : 'Lịch sử')})` : ''}</div>}
                 </div>
-                {intern.timeline_status === 'CURRENT' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công khỏi chương trình hiện tại" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
+                {intern.timeline_status !== 'HISTORICAL' && ['Admin', 'HR'].includes(currentUser?.vai_tro) && <button type="button" className="btn btn-danger btn-sm" onClick={() => setPendingUnassignment(intern)} disabled={removingProfileId === intern.ma_ho_so} title="Gỡ phân công khỏi chương trình hiện tại" aria-label={`Gỡ phân công ${intern.ho_ten}`}><Trash2 size={14} />Gỡ phân công</button>}
               </div>)}
             </div>}
           </div>

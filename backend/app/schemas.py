@@ -310,14 +310,33 @@ class InternAssignmentCandidate(BaseModel):
     ma_ct: Optional[str] = None
     ma_ung_tuyen: Optional[int] = None
     timeline_status: Optional[str] = None
+    mentor_id: Optional[int] = None
+    mentor_name: Optional[str] = None
+    eligible: bool = True
+    reason: Optional[str] = None
 
 class MentorAssignmentDetail(InternAssignmentCandidate):
     ngay_phan_cong: Optional[str] = None
     ma_phan_cong: Optional[int] = None
+    counts_as_current: bool = False
+
+class MentorAssignmentTarget(BaseModel):
+    ma_ho_so: int = Field(gt=0)
+    ma_chuong_trinh: Optional[int] = Field(default=None, gt=0)
+
 
 class MentorBatchAssignment(BaseModel):
-    ma_ho_so_list: List[int] = Field(min_length=1, max_length=50)
+    ma_ho_so_list: List[int] = Field(default_factory=list, max_length=50)
     ma_chuong_trinh: Optional[int] = None
+    assignments: List[MentorAssignmentTarget] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_targets(self):
+        if bool(self.ma_ho_so_list) == bool(self.assignments):
+            raise ValueError("Chọn một danh sách phân công từ 1 đến 50 hồ sơ.")
+        if self.assignments and self.ma_chuong_trinh is not None:
+            raise ValueError("Chương trình phải đi kèm từng hồ sơ phân công.")
+        return self
 
 class ProgramMentorAssignment(BaseModel):
     mentor_id: int = Field(gt=0)

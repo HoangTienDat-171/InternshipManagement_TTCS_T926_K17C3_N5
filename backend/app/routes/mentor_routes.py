@@ -9,6 +9,8 @@ from ..account_credentials import create_temporary_password, queue_temporary_pas
 from ..mentor_assignment_service import (
     assign_mentor_canonical,
     get_timeline_status,
+    list_assignment_candidates,
+    current_assignment_sql,
     unassign_mentor_canonical,
 )
 from ..schemas import (
@@ -129,25 +131,17 @@ def list_mentors(
         total_items = total_pages = effective_page = None
         limit_clause = ""
         paging_params = ()
-    rows = db.execute("""
+    active_condition = current_assignment_sql(m='u')
+    rows = db.execute(f"""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban AS phong_ban,
                mp.chuyen_mon, mp.kinh_nghiem,
                (SELECT COUNT(DISTINCT h.ma_nguoi_dung)
                 FROM PHAN_CONG_MENTOR_TTS a
                 JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
+                JOIN NGUOI_DUNG i ON i.ma_nguoi_dung = h.ma_nguoi_dung
                 LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-                WHERE a.ma_nguoi_dung_mentor = u.ma_nguoi_dung
-                  AND u.trang_thai = 'HoatDong'
-                  AND h.trang_thai_xet_duyet = 'DaDuyet'
-                  AND (
-                      (a.ma_chuong_trinh IS NOT NULL
-                       AND c.trang_thai != 'DaDong'
-                       AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
-                       AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
-                      OR
-                      (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap = 'DangThucTap')
-                  )
+                WHERE a.ma_nguoi_dung_mentor = u.ma_nguoi_dung AND {active_condition}
                ) AS so_tts_dang_huong_dan
         FROM NGUOI_DUNG u
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban
@@ -168,62 +162,10 @@ def list_mentors(
 
 
 @router.get("/unassigned-interns", response_model=list[InternAssignmentCandidate])
-def list_unassigned_interns(request: Request, db: sqlite3.Connection = Depends(get_db)):
+def list_unassigned_interns(request: Request, include_unavailable: bool = Query(False), db: sqlite3.Connection = Depends(get_db)):
     require_role(request, "Admin", "HR")
-    # Lấy các ứng viên có chương trình đã duyệt (CURRENT hoặc UPCOMING) chưa có mentor trong chương trình đó
-    rows = db.execute("""
-        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               t.ten_truong, h.chuyen_nganh,
-               a.ma_chuong_trinh, c.ten_ct, c.ma_ct, a.ma_ung_tuyen,
-               c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct
-        FROM HO_SO_THUC_TAP h
-        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
-        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
-        JOIN UNG_TUYEN_CHUONG_TRINH a ON a.ma_ho_so = h.ma_ho_so AND a.trang_thai = 'DaDuyet'
-        JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh AND c.trang_thai != 'DaDong'
-        WHERE u.vai_tro = 'ThucTapSinh' AND u.trang_thai = 'HoatDong'
-          AND h.trang_thai_xet_duyet = 'DaDuyet'
-          AND NOT EXISTS (
-              SELECT 1 FROM PHAN_CONG_MENTOR_TTS p
-              WHERE p.ma_ho_so = h.ma_ho_so
-                AND (p.ma_chuong_trinh = a.ma_chuong_trinh OR (p.ma_chuong_trinh IS NULL AND p.ma_ho_so = h.ma_ho_so))
-          )
-        ORDER BY u.ho_ten COLLATE NOCASE
-    """).fetchall()
-
-    results = []
-    seen = set()
-    for row in rows:
-        t_status = get_timeline_status(row["ngay_bat_dau"], row["ngay_ket_thuc"], row["trang_thai_ct"])
-        if t_status != "HISTORICAL":
-            d = dict(row)
-            d["timeline_status"] = t_status
-            results.append(d)
-            seen.add(row["ma_ho_so"])
-
-    # Fallback cho TTS hồ sơ duyệt nhưng chưa có record trong UNG_TUYEN_CHUONG_TRINH (test fixtures cũ)
-    legacy_rows = db.execute("""
-        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
-               t.ten_truong, h.chuyen_nganh
-        FROM HO_SO_THUC_TAP h
-        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
-        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
-        WHERE u.vai_tro = 'ThucTapSinh' AND u.trang_thai = 'HoatDong'
-          AND h.trang_thai_xet_duyet = 'DaDuyet'
-          AND h.trang_thai_thuc_tap = 'DangThucTap'
-          AND NOT EXISTS (
-              SELECT 1 FROM PHAN_CONG_MENTOR_TTS a WHERE a.ma_ho_so = h.ma_ho_so
-          )
-        ORDER BY u.ho_ten COLLATE NOCASE
-    """).fetchall()
-    for row in legacy_rows:
-        if row["ma_ho_so"] not in seen:
-            d = dict(row)
-            d["timeline_status"] = "CURRENT"
-            results.append(d)
-            seen.add(row["ma_ho_so"])
-
-    return results
+    candidates = list_assignment_candidates(db)
+    return candidates if include_unavailable else [item for item in candidates if item['eligible']]
 
 
 @router.get("/{mentor_id}/interns", response_model=list[MentorAssignmentDetail])
@@ -231,18 +173,21 @@ def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection
     require_role(request, "Admin", "HR")
     if not db.execute("SELECT 1 FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'", (mentor_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
-    rows = db.execute("""
+    rows = db.execute(f"""
         SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                t.ten_truong, h.chuyen_nganh, a.ngay_phan_cong, a.ma_phan_cong,
                a.ma_chuong_trinh, a.ma_ung_tuyen,
                c.ten_ct, c.ma_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
-               h.trang_thai_thuc_tap
+               h.trang_thai_thuc_tap,
+               CASE WHEN {current_assignment_sql(i='u')} THEN 1 ELSE 0 END AS counts_as_current
         FROM PHAN_CONG_MENTOR_TTS a
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-        WHERE a.ma_nguoi_dung_mentor = ?
+        WHERE a.ma_nguoi_dung_mentor = ? AND u.trang_thai = 'HoatDong' AND u.vai_tro = 'ThucTapSinh'
+          AND h.trang_thai_xet_duyet = 'DaDuyet'
         ORDER BY u.ho_ten COLLATE NOCASE
     """, (mentor_id,)).fetchall()
     items = []
@@ -325,18 +270,20 @@ def assign_interns_batch(
     db: sqlite3.Connection = Depends(get_db),
 ):
     actor = require_role(request, "Admin", "HR")
-    if len(set(data.ma_ho_so_list)) != len(data.ma_ho_so_list):
+    targets = [(item.ma_ho_so, item.ma_chuong_trinh) for item in data.assignments] or [(profile_id, data.ma_chuong_trinh) for profile_id in data.ma_ho_so_list]
+    if len(set(targets)) != len(targets):
         raise HTTPException(status_code=400, detail="Danh sách có thực tập sinh bị lặp.")
     try:
         db.execute("BEGIN IMMEDIATE")
         intern_user_ids = []
-        for profile_id in data.ma_ho_so_list:
+        for profile_id, program_id in sorted(targets, key=lambda item: (item[0], item[1] or 0)):
             res = assign_mentor_canonical(
                 db,
                 mentor_id=mentor_id,
                 profile_id=profile_id,
-                program_id=data.ma_chuong_trinh,
+                program_id=program_id,
                 assigned_by=actor["ma_nguoi_dung"],
+                auto_select_program=not bool(data.assignments),
             )
             intern_user_ids.append(res["intern_user_id"])
         db.commit()
@@ -354,8 +301,8 @@ def assign_interns_batch(
     for intern_user_id in intern_user_ids:
         background_tasks.add_task(publish_workspace_updated, intern_user_id)
     return {
-        "message": f"Đã phân công {len(data.ma_ho_so_list)} thực tập sinh.",
-        "so_tts_da_phan_cong": len(data.ma_ho_so_list),
+        "message": f"Đã phân công {len(targets)} thực tập sinh.",
+        "so_tts_da_phan_cong": len(targets),
     }
 
 
@@ -393,6 +340,10 @@ def unassign_intern(
 def create_mentor(data: MentorCreate, request: Request, db: sqlite3.Connection = Depends(get_db)):
     require_role(request, "Admin", "HR")
     require_password_change_schema(db)
+    if not data.ho_ten.strip():
+        raise HTTPException(status_code=400, detail="Vui lòng nhập họ và tên Mentor.")
+    if data.ma_phong_ban is not None and not db.execute("SELECT 1 FROM PHONG_BAN WHERE ma_phong_ban = ?", (data.ma_phong_ban,)).fetchone():
+        raise HTTPException(status_code=400, detail="Phòng ban không hợp lệ. Hãy chọn trong danh mục hiện có.")
     if data.so_dien_thoai and not re.fullmatch(r"(03|05|07|08|09)\d{8}", data.so_dien_thoai):
         raise HTTPException(status_code=400, detail="Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 03, 05, 07, 08 hoặc 09.")
     email = data.email.strip().lower()

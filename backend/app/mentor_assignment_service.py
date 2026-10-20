@@ -5,6 +5,99 @@ from typing import Any, Optional
 from fastapi import HTTPException, status
 
 
+def current_assignment_sql(a='a', h='h', i='i', m='m', c='c') -> str:
+    """One definition of current workload for mentor rows and both KPI screens."""
+    return f"""{i}.vai_tro = 'ThucTapSinh' AND {i}.trang_thai = 'HoatDong'
+        AND {h}.trang_thai_xet_duyet = 'DaDuyet'
+        AND {m}.vai_tro = 'Mentor' AND {m}.trang_thai = 'HoatDong'
+        AND (({a}.ma_chuong_trinh IS NOT NULL AND {c}.trang_thai != 'DaDong'
+              AND ({c}.ngay_bat_dau IS NULL OR CURRENT_DATE >= {c}.ngay_bat_dau)
+              AND ({c}.ngay_ket_thuc IS NULL OR CURRENT_DATE <= {c}.ngay_ket_thuc)
+              AND EXISTS (SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH approved_app
+                  WHERE approved_app.ma_ho_so = {h}.ma_ho_so
+                    AND approved_app.ma_chuong_trinh = {a}.ma_chuong_trinh
+                    AND approved_app.trang_thai = 'DaDuyet'))
+             OR ({a}.ma_chuong_trinh IS NULL AND {h}.trang_thai_thuc_tap = 'DangThucTap'))"""
+
+
+def _lock_intern_user(db, profile_id: int) -> None:
+    # Routes hold BEGIN IMMEDIATE on SQLite; serialize MySQL writes on the
+    # account as well, including multiple profiles belonging to the same TTS.
+    if not isinstance(db, sqlite3.Connection):
+        db.execute("""
+            SELECT ma_nguoi_dung FROM NGUOI_DUNG
+            WHERE ma_nguoi_dung = (SELECT ma_nguoi_dung FROM HO_SO_THUC_TAP WHERE ma_ho_so = ?)
+            FOR UPDATE
+        """, (profile_id,)).fetchone()
+
+
+def _periods_overlap(left, right) -> bool:
+    start, end = parse_date_value(left.get('ngay_bat_dau')), parse_date_value(left.get('ngay_ket_thuc'))
+    other_start, other_end = parse_date_value(right.get('ngay_bat_dau')), parse_date_value(right.get('ngay_ket_thuc'))
+    return (not end or not other_start or other_start <= end) and (not other_end or not start or start <= other_end)
+
+
+def list_assignment_candidates(db) -> list[dict]:
+    """Keep every profile/program visible and explain why it cannot be picked."""
+    rows = db.execute("""
+        SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+               u.ma_phong_ban, h.ma_truong, t.ten_truong, h.chuyen_nganh,
+               h.trang_thai_xet_duyet, h.trang_thai_thuc_tap, u.trang_thai AS trang_thai_tk,
+               a.ma_chuong_trinh, a.ma_ung_tuyen, a.trang_thai AS trang_thai_ung_tuyen,
+               c.ten_ct, c.ma_ct, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai AS trang_thai_ct,
+               m.ma_nguoi_dung AS mentor_id, m.ho_ten AS mentor_name
+        FROM HO_SO_THUC_TAP h
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung AND u.vai_tro = 'ThucTapSinh'
+        LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
+        LEFT JOIN UNG_TUYEN_CHUONG_TRINH a ON a.ma_ho_so = h.ma_ho_so
+        LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+        LEFT JOIN PHAN_CONG_MENTOR_TTS p ON p.ma_ho_so = h.ma_ho_so
+            AND (p.ma_chuong_trinh = a.ma_chuong_trinh
+                 OR (p.ma_chuong_trinh IS NULL AND a.ma_ung_tuyen IS NULL))
+        LEFT JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = p.ma_nguoi_dung_mentor
+        ORDER BY u.ho_ten, h.ma_ho_so, c.ngay_bat_dau, a.ma_chuong_trinh
+    """).fetchall()
+    existing = db.execute("""
+        SELECT h.ma_nguoi_dung, h.trang_thai_thuc_tap, p.ma_chuong_trinh,
+               c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai
+        FROM PHAN_CONG_MENTOR_TTS p
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
+        LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
+    """).fetchall()
+    results = []
+    for row in rows:
+        item = dict(row)
+        timeline = get_timeline_status(row['ngay_bat_dau'], row['ngay_ket_thuc'], row['trang_thai_ct']) if row['ma_chuong_trinh'] else 'CURRENT'
+        reason = None
+        if row['trang_thai_tk'] != 'HoatDong':
+            reason = 'Tài khoản TTS chưa hoạt động.'
+        elif row['trang_thai_xet_duyet'] != 'DaDuyet':
+            reason = 'Hồ sơ TTS chưa được duyệt.'
+        elif row['ma_chuong_trinh'] and row['trang_thai_ung_tuyen'] != 'DaDuyet':
+            reason = 'Đơn ứng tuyển chương trình chưa được duyệt.'
+        elif timeline == 'HISTORICAL':
+            reason = 'Chương trình đã kết thúc hoặc đã đóng; giữ lại để xem lịch sử.'
+        elif not row['ma_chuong_trinh'] and row['trang_thai_thuc_tap'] != 'DangThucTap':
+            reason = 'Hồ sơ chưa có chương trình được duyệt và không ở trạng thái đang thực tập.'
+        elif row['mentor_id']:
+            reason = f"Đã phân công cho {row['mentor_name']}. Hãy gỡ phân công hiện tại trước khi đổi Mentor."
+        if reason is None:
+            for assignment in existing:
+                if assignment['ma_nguoi_dung'] != row['ma_nguoi_dung']:
+                    continue
+                if assignment['ma_chuong_trinh']:
+                    if get_timeline_status(assignment['ngay_bat_dau'], assignment['ngay_ket_thuc'], assignment['trang_thai']) == 'HISTORICAL':
+                        continue
+                elif assignment['trang_thai_thuc_tap'] != 'DangThucTap':
+                    continue
+                if _periods_overlap(item, dict(assignment)):
+                    reason = 'TTS đã có phân công trong cùng thời gian thực tập. Hãy gỡ phân công đó trước.'
+                    break
+        item.update(timeline_status=timeline, eligible=reason is None, reason=reason)
+        results.append(item)
+    return results
+
+
 def parse_date_value(val: Any) -> Optional[date]:
     if val is None:
         return None
@@ -117,7 +210,7 @@ def get_intern_approved_programs(
         FROM UNG_TUYEN_CHUONG_TRINH a
         JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
         LEFT JOIN PHAN_CONG_MENTOR_TTS p ON p.ma_ho_so = a.ma_ho_so
-             AND (p.ma_chuong_trinh = c.ma_chuong_trinh OR (p.ma_chuong_trinh IS NULL AND p.ma_ho_so = a.ma_ho_so))
+             AND p.ma_chuong_trinh = c.ma_chuong_trinh
         LEFT JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = p.ma_nguoi_dung_mentor AND m.vai_tro = 'Mentor'
         WHERE a.ma_ho_so = ? AND a.trang_thai = 'DaDuyet'
         ORDER BY c.ngay_bat_dau ASC, c.ma_chuong_trinh ASC
@@ -225,7 +318,12 @@ def count_mentor_active_interns(
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
-        WHERE p.ma_nguoi_dung_mentor = ? AND u.trang_thai = 'HoatDong'
+        JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = p.ma_nguoi_dung_mentor
+        WHERE p.ma_nguoi_dung_mentor = ? AND u.trang_thai = 'HoatDong' AND u.vai_tro = 'ThucTapSinh'
+          AND h.trang_thai_xet_duyet = 'DaDuyet' AND m.vai_tro = 'Mentor' AND m.trang_thai = 'HoatDong'
+          AND (p.ma_chuong_trinh IS NULL OR EXISTS (
+              SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH a WHERE a.ma_ho_so = h.ma_ho_so
+              AND a.ma_chuong_trinh = p.ma_chuong_trinh AND a.trang_thai = 'DaDuyet'))
     """, (mentor_id,)).fetchall()
 
     active_count = 0
@@ -256,6 +354,7 @@ def assign_mentor_canonical(
     program_id: Optional[int] = None,
     application_id: Optional[int] = None,
     assigned_by: Optional[int] = None,
+    auto_select_program: bool = True,
 ) -> dict:
     """
     CANONICAL IMPLEMENTATION cho US12 và US30:
@@ -271,6 +370,7 @@ def assign_mentor_canonical(
     4. Không dùng UNIQUE(ma_ho_so) để giới hạn Mentor toàn đời.
     5. Không giới hạn số TTS gán cho một Mentor; bộ đếm chỉ tính người đang thực tập hiện tại.
     """
+    _lock_intern_user(db, profile_id)
     # 1. Kiểm tra Mentor hợp lệ và hoạt động
     mentor = db.execute("""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.trang_thai
@@ -299,8 +399,11 @@ def assign_mentor_canonical(
     # 3. Xác định ngữ cảnh Chương trình thực tập (Program Context)
     target_program_id = program_id
     target_app_id = application_id
+    if not auto_select_program and target_program_id is None and target_app_id is None:
+        if db.execute('SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ho_so = ?', (profile_id,)).fetchone():
+            raise HTTPException(status_code=409, detail="Ngữ cảnh chương trình của hồ sơ đã thay đổi. Hãy tải lại danh sách và chọn đúng chương trình.")
 
-    if target_app_id and not target_program_id:
+    if target_app_id:
         app_row = db.execute("""
             SELECT ma_chuong_trinh, ma_ho_so, trang_thai
             FROM UNG_TUYEN_CHUONG_TRINH
@@ -308,6 +411,8 @@ def assign_mentor_canonical(
         """, (target_app_id,)).fetchone()
         if not app_row or app_row["ma_ho_so"] != profile_id:
             raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển của thực tập sinh.")
+        if target_program_id and app_row['ma_chuong_trinh'] != target_program_id:
+            raise HTTPException(status_code=400, detail="Đơn ứng tuyển không thuộc chương trình đã chọn.")
         if app_row["trang_thai"] != "DaDuyet":
             raise HTTPException(status_code=400, detail="Chỉ có thể phân công Mentor cho đơn ứng tuyển đã được duyệt.")
         target_program_id = app_row["ma_chuong_trinh"]
@@ -329,7 +434,8 @@ def assign_mentor_canonical(
         # Nếu không truyền program_id, tìm chương trình đã duyệt hợp lệ của TTS (ưu tiên CURRENT, rồi UPCOMING)
         approved_progs = get_intern_approved_programs(db, profile_id)
         if not approved_progs:
-            if intern.get("trang_thai_thuc_tap") == "DangThucTap" or intern.get("trang_thai_xet_duyet") == "DaDuyet":
+            has_application = db.execute('SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ho_so = ?', (profile_id,)).fetchone()
+            if not has_application and intern.get("trang_thai_thuc_tap") == "DangThucTap":
                 target_program_id = None
                 target_app_id = None
             else:
@@ -339,8 +445,11 @@ def assign_mentor_canonical(
                 )
         else:
             # Tìm chương trình chưa có mentor phân công
-            unassigned_progs = [p for p in approved_progs if not p.get("mentor_id")]
-            candidates = unassigned_progs or approved_progs
+            available = [p for p in approved_progs if p['timeline_status'] != 'HISTORICAL']
+            if not available:
+                raise HTTPException(status_code=400, detail="TTS chỉ có chương trình đã kết thúc. Hãy duyệt một chương trình hợp lệ trước khi phân công.")
+            unassigned_progs = [p for p in available if not p.get("mentor_id")]
+            candidates = unassigned_progs or available
             # Ưu tiên CURRENT rồi UPCOMING rồi mới đến HISTORICAL
             current_progs = [p for p in candidates if p["timeline_status"] == "CURRENT"]
             upcoming_progs = [p for p in candidates if p["timeline_status"] == "UPCOMING"]
@@ -365,11 +474,12 @@ def assign_mentor_canonical(
         prog_title = ""
 
     # 4. Lưu phân công (Idempotent / Upsert cho cùng program context)
+    lock_clause = '' if isinstance(db, sqlite3.Connection) else ' FOR UPDATE'
     existing_assignment = db.execute("""
         SELECT ma_phan_cong, ma_nguoi_dung_mentor
         FROM PHAN_CONG_MENTOR_TTS
         WHERE ma_ho_so = ? AND (ma_chuong_trinh = ? OR (ma_chuong_trinh IS NULL AND ? IS NULL))
-    """, (profile_id, target_program_id, target_program_id)).fetchone()
+    """ + lock_clause, (profile_id, target_program_id, target_program_id)).fetchone()
 
     if existing_assignment:
         if existing_assignment["ma_nguoi_dung_mentor"] == mentor_id:
@@ -384,15 +494,24 @@ def assign_mentor_canonical(
                 "intern_user_id": intern["ma_nguoi_dung"],
             }
         else:
-            # Cập nhật đổi sang Mentor mới
-            archive_mentor_assignment(db, existing_assignment["ma_phan_cong"], "REASSIGNED", assigned_by)
-            db.execute("""
-                UPDATE PHAN_CONG_MENTOR_TTS
-                SET ma_nguoi_dung_mentor = ?, ma_ung_tuyen = ?, ma_nguoi_phan_cong = ?, ngay_phan_cong = CURRENT_TIMESTAMP
-                WHERE ma_phan_cong = ?
-            """, (mentor_id, target_app_id, assigned_by, existing_assignment["ma_phan_cong"]))
-            assignment_id = existing_assignment["ma_phan_cong"]
+            raise HTTPException(status_code=409, detail="TTS đã có Mentor trong chương trình này. Hãy gỡ phân công hiện tại trước khi chọn Mentor khác.")
     else:
+        if timeline_status == 'HISTORICAL':
+            raise HTTPException(status_code=400, detail="Không thể phân công mới vào chương trình đã kết thúc hoặc đã đóng.")
+        others = db.execute("""
+            SELECT p.ma_chuong_trinh, h.trang_thai_thuc_tap, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai
+            FROM PHAN_CONG_MENTOR_TTS p
+            JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
+            LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
+            WHERE h.ma_nguoi_dung = ?
+        """ + lock_clause, (intern['ma_nguoi_dung'],)).fetchall()
+        for other in others:
+            if other['ma_chuong_trinh'] and get_timeline_status(other['ngay_bat_dau'], other['ngay_ket_thuc'], other['trang_thai']) == 'HISTORICAL':
+                continue
+            if not other['ma_chuong_trinh'] and other['trang_thai_thuc_tap'] != 'DangThucTap':
+                continue
+            if _periods_overlap(dict(prog_info) if prog_info else {}, dict(other)):
+                raise HTTPException(status_code=409, detail="TTS đã có phân công trong cùng thời gian thực tập. Hãy gỡ phân công đang hiệu lực trước khi phân công lại.")
         cursor = db.execute("""
             INSERT INTO PHAN_CONG_MENTOR_TTS
                 (ma_nguoi_dung_mentor, ma_ho_so, ma_chuong_trinh, ma_ung_tuyen, ma_nguoi_phan_cong)
@@ -421,6 +540,8 @@ def unassign_mentor_canonical(
     """
     CANONICAL GỠ PHÂN CÔNG cho US12 và US30.
     """
+    _lock_intern_user(db, profile_id)
+    lock_clause = '' if isinstance(db, sqlite3.Connection) else ' FOR UPDATE'
     if program_id:
         assignment = db.execute("""
             SELECT p.ma_phan_cong, h.ma_nguoi_dung, p.ma_chuong_trinh,
@@ -430,7 +551,7 @@ def unassign_mentor_canonical(
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
             LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
             WHERE p.ma_nguoi_dung_mentor = ? AND p.ma_ho_so = ? AND p.ma_chuong_trinh = ?
-        """, (mentor_id, profile_id, program_id)).fetchone()
+        """ + lock_clause, (mentor_id, profile_id, program_id)).fetchone()
     else:
         assignment = db.execute("""
             SELECT p.ma_phan_cong, h.ma_nguoi_dung, p.ma_chuong_trinh,
@@ -439,9 +560,9 @@ def unassign_mentor_canonical(
             FROM PHAN_CONG_MENTOR_TTS p
             JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = p.ma_ho_so
             LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = p.ma_chuong_trinh
-            WHERE p.ma_nguoi_dung_mentor = ? AND p.ma_ho_so = ?
+            WHERE p.ma_nguoi_dung_mentor = ? AND p.ma_ho_so = ? AND p.ma_chuong_trinh IS NULL
             ORDER BY p.ma_phan_cong DESC LIMIT 1
-        """, (mentor_id, profile_id)).fetchone()
+        """ + lock_clause, (mentor_id, profile_id)).fetchone()
 
     if not assignment:
         raise HTTPException(status_code=404, detail="Không tìm thấy phân công phù hợp để gỡ.")
@@ -451,10 +572,10 @@ def unassign_mentor_canonical(
     ) if assignment["ma_chuong_trinh"] else (
         "CURRENT" if assignment["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
     )
-    if timeline_status != "CURRENT":
+    if timeline_status == "HISTORICAL":
         raise HTTPException(
             status_code=400,
-            detail="Chỉ có thể gỡ phân công trong chương trình hiện tại.",
+            detail="Không thể gỡ phân công lịch sử của chương trình đã kết thúc; dữ liệu lịch sử được giữ nguyên.",
         )
 
     archive_mentor_assignment(db, assignment["ma_phan_cong"], "UNASSIGNED", unassigned_by)

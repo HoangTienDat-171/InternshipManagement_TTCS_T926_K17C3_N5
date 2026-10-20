@@ -1927,6 +1927,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 /* Mentor transfer list and role-specific workspaces */
 .mentor-assignment-dialog { width: min(920px, calc(100vw - 32px)); max-height: min(86vh, 860px); overflow: auto; }
 .mentor-assignment-body { display: grid; gap: 18px; }
+.mentor-assignment-filters { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
+.assignment-candidate:disabled { cursor: not-allowed; opacity: .72; background: var(--bg-secondary, #f5f6fa); }
+.assignment-ineligible-reason { color: var(--text-muted); white-space: normal; }
+@media (max-width: 720px) { .mentor-assignment-filters { grid-template-columns: 1fr; } }
 .assignment-capacity-card { padding: 16px 18px; border: 1px solid #e4e7f1; border-radius: 14px; background: #f8f9ff; }
 .assignment-capacity-card > div:first-child { display: flex; justify-content: space-between; gap: 12px; color: #28314d; }
 .assignment-capacity-card > div:first-child span { color: #5b52dc; font-weight: 750; }
@@ -4525,3 +4529,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 640px) {
   .modal-footer > .btn { flex: 1 1 auto; }
 }
+.mentor-assignment-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.mentor-assignment-dialog > form { display: flex; flex-direction: column; min-height: 0; }
+.mentor-assignment-dialog .modal-body { min-height: 0; overflow-y: auto; }
+.mentor-assignment-dialog .modal-header,
+.mentor-assignment-dialog .modal-footer { flex-shrink: 0; }
