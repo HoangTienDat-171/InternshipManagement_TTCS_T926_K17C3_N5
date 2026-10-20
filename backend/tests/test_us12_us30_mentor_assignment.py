@@ -404,6 +404,37 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         self.assertEqual(result['mentor']['ma_nguoi_dung'], self.mentor_bob_id)
         self.assertEqual(result['mentor']['timeline_status'], 'UPCOMING')
 
+    def test_management_counts_all_remaining_links_and_deduplicates_interns(self):
+        _, profile = self._create_intern('count_assigned_contexts')
+        _, other = self._create_intern('count_second_intern')
+        today = date.today()
+        old = self._create_program('COUNT-OLD', str(today - timedelta(days=8)), str(today - timedelta(days=1)))
+        future = self._create_program('COUNT-FUTURE', str(today + timedelta(days=3)), str(today + timedelta(days=8)))
+        self._apply_pending(profile, old)
+        self._apply_and_approve(profile, future)
+        self._apply_pending(other, old)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=old, manual_override=True)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=future, manual_override=True)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, other, program_id=old, manual_override=True)
+        self.db.commit()
+        actor = {'vai_tro': 'HR', 'ma_nguoi_dung': self.hr_user_id}
+        def check(expected):
+            metrics = metrics_routes.get_dashboard_metrics(make_request(actor), ma_phong_ban=None, ma_truong=None, db=self.db)
+            mentors = mentor_routes.list_mentors(make_request(actor), page=None, page_size=None, db=self.db)
+            bob = next(row for row in mentors if row['ma_nguoi_dung'] == self.mentor_bob_id)
+            rows = mentor_routes.list_mentor_interns(self.mentor_bob_id, make_request(actor), self.db, manual_override=True)
+            self.assertEqual(bob['so_tts_dang_huong_dan'], expected)
+            self.assertEqual(len({row['ma_nguoi_dung'] for row in rows}), expected)
+            self.assertEqual(metrics['mentors']['assigned_interns'], expected)
+            self.assertEqual(metrics['interns']['assigned'], expected)
+        check(2)
+        unassign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=old, manual_override=True)
+        self.db.commit()
+        check(2)  # Same TTS still has the future-program link.
+        unassign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=future, manual_override=True)
+        self.db.commit()
+        check(1)
+
     # =========================================================================
     # Test 1: Fresh and Migrated Schema
     # =========================================================================

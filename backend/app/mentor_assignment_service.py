@@ -5,6 +5,11 @@ from typing import Any, Optional
 from fastapi import HTTPException, status
 
 
+def management_assignment_sql(i='i', m='m') -> str:
+    """Count remaining assignment links; archived/removed links are not in this table."""
+    return f"{i}.vai_tro = 'ThucTapSinh' AND {m}.vai_tro = 'Mentor'"
+
+
 def current_assignment_sql(a='a', h='h', i='i', m='m', c='c') -> str:
     """One definition of current workload for mentor rows and both KPI screens."""
     return f"""{i}.vai_tro = 'ThucTapSinh' AND {i}.trang_thai = 'HoatDong'

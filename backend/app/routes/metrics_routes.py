@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 
 from ..database import get_db
-from ..mentor_assignment_service import current_assignment_sql, list_assignment_candidates
+from ..mentor_assignment_service import management_assignment_sql
 from ..security import require_role
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard Metrics"])
@@ -42,7 +42,7 @@ def get_dashboard_metrics(
                    SELECT 1 FROM PHAN_CONG_MENTOR_TTS a
                    JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
                    LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-                   WHERE a.ma_ho_so = h.ma_ho_so AND {current_assignment_sql(i='u')}
+                   WHERE a.ma_ho_so = h.ma_ho_so AND {management_assignment_sql(i='u')}
                ) THEN h.ma_nguoi_dung END) AS assigned,
                COUNT(DISTINCT h.ma_truong) AS universities
         FROM HO_SO_THUC_TAP h
@@ -124,16 +124,21 @@ def get_dashboard_metrics(
         JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
         JOIN NGUOI_DUNG i ON i.ma_nguoi_dung = h.ma_nguoi_dung
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-        WHERE {mentor_where} AND {current_assignment_sql()}
+        WHERE {mentor_where} AND {management_assignment_sql()}
           {"AND h.ma_truong = ?" if ma_truong is not None else ""}
     """, [*mentor_params, *([ma_truong] if ma_truong is not None else [])]).fetchone()
     mentor_stats.update(dict(workload))
-    waiting_users = {
-        item['ma_nguoi_dung'] for item in list_assignment_candidates(db)
-        if item['eligible']
-        and (ma_phong_ban is None or item['ma_phong_ban'] == ma_phong_ban)
-        and (ma_truong is None or item['ma_truong'] == ma_truong)
-    }
+    waiting_stats = db.execute(f"""
+        SELECT COUNT(DISTINCT u.ma_nguoi_dung) AS total
+        FROM HO_SO_THUC_TAP h
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        WHERE {' AND '.join(intern_filters)} AND NOT EXISTS (
+            SELECT 1 FROM PHAN_CONG_MENTOR_TTS a
+            JOIN HO_SO_THUC_TAP other_h ON other_h.ma_ho_so = a.ma_ho_so
+            JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
+            WHERE other_h.ma_nguoi_dung = u.ma_nguoi_dung AND m.vai_tro = 'Mentor'
+        )
+    """, intern_params).fetchone()
 
     mentor_departments = db.execute(f"""
         SELECT COALESCE(p.ten_phong_ban, 'Chưa phân phòng') AS name,
@@ -185,7 +190,7 @@ def get_dashboard_metrics(
             "completed": count_value(intern_stats, "completed"),
             "withdrawn": count_value(intern_stats, "withdrawn"),
             "assigned": assigned,
-            "unassigned": len(waiting_users),
+            "unassigned": int(waiting_stats['total']),
             "universities": count_value(intern_stats, "universities"),
         },
         "programs": {

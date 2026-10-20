@@ -11,6 +11,7 @@ from ..mentor_assignment_service import (
     get_timeline_status,
     list_assignment_candidates,
     current_assignment_sql,
+    management_assignment_sql,
     unassign_mentor_canonical,
 )
 from ..schemas import (
@@ -131,7 +132,7 @@ def list_mentors(
         total_items = total_pages = effective_page = None
         limit_clause = ""
         paging_params = ()
-    active_condition = current_assignment_sql(m='u')
+    active_condition = management_assignment_sql(m='u')
     rows = db.execute(f"""
         SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
                u.ma_phong_ban, p.ten_phong_ban AS phong_ban,
@@ -187,7 +188,6 @@ def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
         WHERE a.ma_nguoi_dung_mentor = ? AND u.vai_tro = 'ThucTapSinh'
-          {"" if manual_override else "AND u.trang_thai = 'HoatDong' AND h.trang_thai_xet_duyet = 'DaDuyet'"}
         ORDER BY u.ho_ten COLLATE NOCASE
     """, (mentor_id,)).fetchall()
     items = []

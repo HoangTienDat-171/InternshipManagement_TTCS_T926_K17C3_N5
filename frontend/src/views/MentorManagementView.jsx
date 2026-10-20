@@ -271,7 +271,8 @@ export default function MentorManagementView({ departments, onShowToast, current
     }
   };
 
-  const currentAssignedInterns = assignedInterns.filter((intern) => manualAssignments || intern.timeline_status !== 'HISTORICAL');
+  const currentAssignedInterns = assignedInterns;
+  const assignedCount = new Set(assignedInterns.map((intern) => intern.ma_nguoi_dung)).size;
   const currentAssignedCount = new Set(currentAssignedInterns.filter((intern) => intern.counts_as_current).map((intern) => intern.ma_nguoi_dung)).size;
   const upcomingAssignedCount = new Set(currentAssignedInterns.filter((intern) => intern.timeline_status === 'UPCOMING').map((intern) => intern.ma_nguoi_dung)).size;
   const contextPriority = (intern) => (intern.application_approved ? 0 : 5) + ({ CURRENT: 0, UPCOMING: 1, HISTORICAL: 10 }[intern.timeline_status] ?? 2);
@@ -433,7 +434,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                 <th className="mentor-th-department">Phòng ban</th>
                 <th className="mentor-th-expertise">Chuyên môn</th>
                 <th className="mentor-th-experience">Kinh nghiệm</th>
-                <th className="mentor-th-capacity">TTS đang hướng dẫn</th>
+                <th className="mentor-th-capacity">TTS được phân công</th>
                 <th className="mentor-th-actions">Thao tác</th>
               </tr>
             </thead>
@@ -549,7 +550,7 @@ export default function MentorManagementView({ departments, onShowToast, current
                 <select className="form-control" aria-label="Lọc trạng thái phân công" value={assignmentStatus} onChange={(event) => setAssignmentStatus(event.target.value)}><option value="all">Tất cả trạng thái</option><option value="available">Có thể phân công</option><option value="assigned">Đã phân công</option></select>
               </div>
                 <div className="assignment-selection-summary">
-                  <span>TTS đang hướng dẫn: <strong>{assignmentMentor.so_tts_dang_huong_dan || 0} TTS</strong></span>
+                  <span>TTS được phân công: <strong>{assignmentMentor.so_tts_dang_huong_dan || 0} TTS</strong></span>
                   <span>Đang chọn: <strong>{selectedInternIds.length} TTS</strong></span>
                 </div>
               {modalLoading ? <p className="workspace-empty">Đang tải danh sách thực tập sinh…</p> : <div className="assignment-transfer-grid">
@@ -589,8 +590,8 @@ export default function MentorManagementView({ departments, onShowToast, current
           <div className="modal-header"><h3>TTS do {assignedMentor.ho_ten} hướng dẫn</h3><button className="modal-close-btn" type="button" onClick={() => setAssignedMentor(null)}><X size={18} /></button></div>
           <div className="modal-body">
             {manualAssignments && <p className="mentor-unassign-note">Chế độ thủ công: có thể gỡ cả phân công cũ. Quan hệ được chuyển vào lịch sử, hồ sơ và dữ liệu nghiệp vụ được giữ nguyên.</p>}
-            <p className="mentor-capacity-summary">Đang hướng dẫn: {currentAssignedCount} TTS · Đã phân công sắp tới: {upcomingAssignedCount} TTS. KPI đang hướng dẫn chỉ tính chương trình hiện tại.</p>
-            {modalLoading ? <p>Đang tải danh sách...</p> : currentAssignedInterns.length === 0 ? <p>Mentor chưa có thực tập sinh đang tham gia chương trình hiện tại.</p> : <div className="mentor-intern-list">
+            <p className="mentor-capacity-summary">Đã phân công: {assignedCount} TTS ({assignedInterns.length} lượt). Trong đó chương trình hiện tại: {currentAssignedCount} TTS · Sắp tới: {upcomingAssignedCount} TTS. Số tổng tính các liên kết chưa gỡ.</p>
+            {modalLoading ? <p>Đang tải danh sách...</p> : currentAssignedInterns.length === 0 ? <p>Mentor chưa có TTS được phân công.</p> : <div className="mentor-intern-list">
               {currentAssignedInterns.map((intern) => <div className="mentor-intern-item" key={`${intern.ma_ho_so}-${intern.ma_chuong_trinh ?? 'legacy'}`}>
                 <div>
                   <strong>{intern.ho_ten}</strong>
