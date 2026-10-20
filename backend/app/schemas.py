@@ -569,6 +569,7 @@ class WorkShiftCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     start_time: time
     end_time: time
+    weekdays: List[StrictInt] = Field(min_length=1, max_length=7)
     scope_type: WorkShiftScope
     program_id: Optional[StrictInt] = Field(default=None, gt=0)
     effective_from: date
@@ -590,6 +591,15 @@ class WorkShiftCreate(BaseModel):
             raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
         return value
 
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: List[int]) -> List[int]:
+        if len(set(value)) != len(value):
+            raise ValueError("Ngày lặp lại không được chọn trùng.")
+        if any(day < 1 or day > 7 for day in value):
+            raise ValueError("Ngày trong tuần phải nằm từ 1 (Thứ 2) đến 7 (Chủ nhật).")
+        return sorted(value)
+
     @model_validator(mode="after")
     def validate_shift_window(self):
         if self.start_time >= self.end_time:
@@ -607,6 +617,7 @@ class WorkShiftUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     start_time: Optional[time] = None
     end_time: Optional[time] = None
+    weekdays: Optional[List[StrictInt]] = Field(default=None, min_length=1, max_length=7)
     scope_type: Optional[WorkShiftScope] = None
     program_id: Optional[StrictInt] = Field(default=None, gt=0)
     effective_from: Optional[date] = None
@@ -629,6 +640,17 @@ class WorkShiftUpdate(BaseModel):
         if value is not None and value.tzinfo is not None:
             raise ValueError("Giờ ca phải là giờ địa phương, không kèm múi giờ.")
         return value
+
+    @field_validator("weekdays")
+    @classmethod
+    def validate_weekdays(cls, value: Optional[List[int]]) -> Optional[List[int]]:
+        if value is None:
+            return None
+        if len(set(value)) != len(value):
+            raise ValueError("Ngày lặp lại không được chọn trùng.")
+        if any(day < 1 or day > 7 for day in value):
+            raise ValueError("Ngày trong tuần phải nằm từ 1 (Thứ 2) đến 7 (Chủ nhật).")
+        return sorted(value)
 
     @model_validator(mode="after")
     def require_valid_patch(self):

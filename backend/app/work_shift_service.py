@@ -55,12 +55,36 @@ def _date_text(value) -> str:
     return str(value)[:10]
 
 
+def _weekdays_from_mask(mask) -> list[int]:
+    value = int(mask or 0)
+    return [weekday for weekday in range(1, 8) if value & (1 << (weekday - 1))]
+
+
+def _weekday_mask(weekdays) -> int:
+    value = 0
+    for weekday in weekdays:
+        value |= 1 << (weekday - 1)
+    return value
+
+
+def _has_occurrence_in_range(weekday_mask: int, other_mask: int, start: date, end: date) -> bool:
+    shared = weekday_mask & other_mask
+    for weekday in range(1, 8):
+        if shared & (1 << (weekday - 1)):
+            days_until = (weekday - start.isoweekday()) % 7
+            if start + timedelta(days=days_until) <= end:
+                return True
+    return False
+
+
 def _shift_dict(row) -> dict:
     shift = dict(row)
     shift["start_time"] = _time_text(shift["start_time"])
     shift["end_time"] = _time_text(shift["end_time"])
     shift["effective_from"] = _date_text(shift["effective_from"])
     shift["effective_to"] = _date_text(shift["effective_to"]) if shift["effective_to"] else None
+    if "weekday_mask" in shift:
+        shift["weekdays"] = _weekdays_from_mask(shift.pop("weekday_mask"))
     return shift
 
 
@@ -86,7 +110,7 @@ class WorkShiftService:
             params.extend((day, day))
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         rows = self.db.execute(f"""
-            SELECT s.id, s.name, s.start_time, s.end_time, s.scope_type,
+            SELECT s.id, s.name, s.start_time, s.end_time, s.weekday_mask, s.scope_type,
                    s.ma_chuong_trinh AS program_id, p.ten_ct AS program_name,
                    p.ma_ct AS program_code,
                    s.effective_from, s.effective_to, s.status, s.created_by,
@@ -100,7 +124,7 @@ class WorkShiftService:
 
     def get_shift(self, shift_id: int):
         row = self.db.execute("""
-            SELECT s.id, s.name, s.start_time, s.end_time, s.scope_type,
+            SELECT s.id, s.name, s.start_time, s.end_time, s.weekday_mask, s.scope_type,
                    s.ma_chuong_trinh AS program_id, p.ten_ct AS program_name,
                    p.ma_ct AS program_code,
                    s.effective_from, s.effective_to, s.status, s.created_by,
@@ -120,11 +144,11 @@ class WorkShiftService:
             try:
                 cursor = self.db.execute("""
                     INSERT INTO CA_LAM_VIEC
-                        (name, start_time, end_time, scope_type, ma_chuong_trinh,
+                        (name, start_time, end_time, weekday_mask, scope_type, ma_chuong_trinh,
                          effective_from, effective_to, status, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    data["name"], data["start_time"], data["end_time"], data["scope_type"],
+                    data["name"], data["start_time"], data["end_time"], data["weekday_mask"], data["scope_type"],
                     data["program_id"], data["effective_from"], data["effective_to"],
                     data["status"], actor_id,
                 ))
@@ -146,11 +170,12 @@ class WorkShiftService:
                     UPDATE CA_LAM_VIEC
                     SET name = ?, start_time = ?, end_time = ?, scope_type = ?,
                         ma_chuong_trinh = ?, effective_from = ?, effective_to = ?,
+                        weekday_mask = ?,
                         status = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (
                     merged["name"], merged["start_time"], merged["end_time"], merged["scope_type"],
-                    merged["program_id"], merged["effective_from"], merged["effective_to"],
+                    merged["program_id"], merged["effective_from"], merged["effective_to"], merged["weekday_mask"],
                     merged["status"], shift_id,
                 ))
             except sqlite3.IntegrityError as exc:
@@ -167,6 +192,11 @@ class WorkShiftService:
         normalized["scope_type"] = normalized.get("scope_type")
         normalized["program_id"] = normalized.get("program_id", normalized.get("ma_chuong_trinh"))
         normalized["status"] = normalized.get("status")
+        weekdays = normalized.get("weekdays")
+        if weekdays is None:
+            weekdays = _weekdays_from_mask(normalized.get("weekday_mask"))
+        normalized["weekdays"] = weekdays
+        normalized["weekday_mask"] = _weekday_mask(weekdays) if weekdays else 0
         return normalized
 
     def _validate_values(self, data: dict, *, exclude_id=None):
@@ -176,6 +206,16 @@ class WorkShiftService:
             raise HTTPException(status_code=400, detail="Phạm vi ca phải là GLOBAL hoặc PROGRAM.")
         if data["status"] not in ("ACTIVE", "INACTIVE"):
             raise HTTPException(status_code=400, detail="Trạng thái ca không hợp lệ.")
+        weekdays = data.get("weekdays")
+        if (
+            not isinstance(weekdays, (list, tuple))
+            or not weekdays
+            or len(set(weekdays)) != len(weekdays)
+            or any(isinstance(day, bool) or not isinstance(day, int) or day < 1 or day > 7 for day in weekdays)
+        ):
+            raise HTTPException(status_code=400, detail="Vui lòng chọn ít nhất một ngày lặp lại trong tuần.")
+        data["weekdays"] = sorted(weekdays)
+        data["weekday_mask"] = _weekday_mask(data["weekdays"])
         if (data["scope_type"] == "GLOBAL") != (data["program_id"] is None):
             raise HTTPException(status_code=400, detail="Ca GLOBAL không gắn chương trình; ca PROGRAM phải chọn chương trình.")
         if data["program_id"] is not None:
@@ -199,8 +239,8 @@ class WorkShiftService:
         if end_date is not None and end_date < start_date:
             raise HTTPException(status_code=400, detail="Ngày kết thúc hiệu lực phải sau hoặc bằng ngày bắt đầu.")
         if data["status"] == "ACTIVE":
-            conflict = self.db.execute("""
-                SELECT id FROM CA_LAM_VIEC
+            conflicts = self.db.execute("""
+                SELECT id, effective_from, effective_to, weekday_mask FROM CA_LAM_VIEC
                 WHERE status = 'ACTIVE'
                   AND scope_type = ?
                   AND ((? = 'GLOBAL' AND ma_chuong_trinh IS NULL)
@@ -209,39 +249,54 @@ class WorkShiftService:
                   AND (? IS NULL OR effective_from <= ?)
                   AND start_time < ? AND ? < end_time
                   AND (? IS NULL OR id <> ?)
-                LIMIT 1
             """, (
                 data["scope_type"], data["scope_type"], data["scope_type"], data["program_id"],
                 data["effective_from"], data["effective_to"], data["effective_to"],
                 data["end_time"], data["start_time"], exclude_id, exclude_id,
-            )).fetchone()
-            if conflict:
+            )).fetchall()
+            conflict = None
+            new_end = end_date or date.max
+            for candidate in conflicts:
+                overlap_start = max(start_date, date.fromisoformat(_date_text(candidate["effective_from"])))
+                overlap_end = min(
+                    new_end,
+                    date.fromisoformat(_date_text(candidate["effective_to"]))
+                    if candidate["effective_to"] else date.max,
+                )
+                if overlap_start <= overlap_end and _has_occurrence_in_range(
+                    data["weekday_mask"], int(candidate["weekday_mask"]), overlap_start, overlap_end,
+                ):
+                    conflict = candidate
+                    break
+            if conflict is not None:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Ca bị chồng lấn với ca #{conflict['id']} trong cùng phạm vi và thời gian hiệu lực.",
+                    detail=f"Ca bị chồng lấn với ca #{conflict['id']} vào ngày lặp lại trong cùng phạm vi và thời gian hiệu lực.",
                 )
 
 
 def resolve_applicable_shifts(db, program_id: int | None, on_date: date) -> list[dict]:
     """Return applicable active shifts; a program-specific schedule overrides global."""
     day = on_date.isoformat() if isinstance(on_date, date) else str(on_date)
+    day_mask = 1 << (date.fromisoformat(day).isoweekday() - 1)
     if program_id is not None:
         specific = db.execute("""
-            SELECT id, name, start_time, end_time, scope_type, ma_chuong_trinh AS program_id,
+            SELECT id, name, start_time, end_time, weekday_mask, scope_type, ma_chuong_trinh AS program_id,
                    effective_from, effective_to, status
             FROM CA_LAM_VIEC
             WHERE status = 'ACTIVE' AND scope_type = 'PROGRAM' AND ma_chuong_trinh = ?
               AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
             ORDER BY start_time, id
         """, (program_id, day, day)).fetchall()
+        specific = [row for row in specific if int(row["weekday_mask"]) & day_mask]
         if specific:
             return [_shift_dict(row) for row in specific]
     global_rows = db.execute("""
-        SELECT id, name, start_time, end_time, scope_type, ma_chuong_trinh AS program_id,
+        SELECT id, name, start_time, end_time, weekday_mask, scope_type, ma_chuong_trinh AS program_id,
                effective_from, effective_to, status
         FROM CA_LAM_VIEC
         WHERE status = 'ACTIVE' AND scope_type = 'GLOBAL' AND ma_chuong_trinh IS NULL
           AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
         ORDER BY start_time, id
     """, (day, day)).fetchall()
-    return [_shift_dict(row) for row in global_rows]
+    return [_shift_dict(row) for row in global_rows if int(row["weekday_mask"]) & day_mask]

@@ -331,6 +331,7 @@ def init_mysql_db():
                 name VARCHAR(120) NOT NULL,
                 start_time TIME NOT NULL,
                 end_time TIME NOT NULL,
+                weekday_mask TINYINT UNSIGNED NOT NULL,
                 scope_type ENUM('GLOBAL','PROGRAM') NOT NULL,
                 ma_chuong_trinh INT NULL,
                 effective_from DATE NOT NULL,
@@ -670,6 +671,18 @@ def init_mysql_db():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
         for statement in statements:
             conn.execute(statement)
+
+        shift_columns = conn.execute("""
+            SELECT COLUMN_NAME, IS_NULLABLE FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'CA_LAM_VIEC'
+        """).fetchall()
+        shift_column_nullable = {row["COLUMN_NAME"]: row["IS_NULLABLE"] for row in shift_columns}
+        if "weekday_mask" not in shift_column_nullable:
+            conn.execute("ALTER TABLE CA_LAM_VIEC ADD COLUMN weekday_mask TINYINT UNSIGNED NULL AFTER end_time")
+            shift_column_nullable["weekday_mask"] = "YES"
+        if shift_column_nullable.get("weekday_mask") == "YES":
+            conn.execute("UPDATE CA_LAM_VIEC SET weekday_mask = 127 WHERE weekday_mask IS NULL")
+            conn.execute("ALTER TABLE CA_LAM_VIEC MODIFY COLUMN weekday_mask TINYINT UNSIGNED NOT NULL")
 
         application_columns = conn.execute("""
             SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -1249,6 +1262,7 @@ def init_db():
         name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
         start_time TIME NOT NULL,
         end_time TIME NOT NULL,
+        weekday_mask INTEGER NOT NULL CHECK(weekday_mask BETWEEN 1 AND 127),
         scope_type TEXT NOT NULL CHECK(scope_type IN ('GLOBAL', 'PROGRAM')),
         ma_chuong_trinh INTEGER,
         effective_from DATE NOT NULL,
@@ -1265,6 +1279,10 @@ def init_db():
         FOREIGN KEY (created_by) REFERENCES NGUOI_DUNG(ma_nguoi_dung) ON DELETE RESTRICT
     )
     """)
+    shift_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(CA_LAM_VIEC)")}
+    if "weekday_mask" not in shift_columns:
+        cursor.execute("ALTER TABLE CA_LAM_VIEC ADD COLUMN weekday_mask INTEGER")
+    cursor.execute("UPDATE CA_LAM_VIEC SET weekday_mask = 127 WHERE weekday_mask IS NULL")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_filter ON CA_LAM_VIEC(status, scope_type, ma_chuong_trinh, effective_from)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ca_lam_viec_creator ON CA_LAM_VIEC(created_by)")
 
