@@ -4538,4 +4538,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .manual-assignment-option input { margin-top: 4px; accent-color: #6354e8; }
 .manual-assignment-option span { display: grid; gap: 4px; min-width: 0; }
 .manual-assignment-option small { color: var(--text-muted); line-height: 1.5; }
+.mentor-active-count > div { display: flex; align-items: baseline; gap: 8px; margin: 12px 0; }
+.mentor-active-count > div strong { font-size: 36px; line-height: 1.2; font-weight: 700; color: var(--text-primary); }
+.mentor-active-count > div span { color: var(--text-muted); font-size: 14px; }
 .mentor-assignment-dialog .assignment-selection-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; }

@@ -435,6 +435,37 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
         self.db.commit()
         check(1)
 
+    def test_mentor_workspace_and_profile_access_follow_remaining_assignments(self):
+        _, upcoming_profile = self._create_intern('workspace_assigned_future')
+        _, old_profile = self._create_intern('workspace_assigned_old')
+        _, unrelated_profile = self._create_intern('workspace_unrelated')
+        today = date.today()
+        future = self._create_program('MENTOR-VIEW-FUTURE', str(today + timedelta(days=3)), str(today + timedelta(days=8)))
+        old = self._create_program('MENTOR-VIEW-OLD', str(today - timedelta(days=8)), str(today - timedelta(days=1)))
+        self._apply_and_approve(upcoming_profile, future)
+        self._apply_pending(old_profile, old)
+        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet='ChoDuyet' WHERE ma_ho_so=?", (old_profile,))
+        assign_mentor_canonical(self.db, self.mentor_bob_id, upcoming_profile, program_id=future)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, old_profile, program_id=old, manual_override=True)
+        assign_mentor_canonical(self.db, self.mentor_alice_id, unrelated_profile)
+        self.db.commit()
+        actor = {'ma_nguoi_dung': self.mentor_bob_id, 'vai_tro': 'Mentor'}
+        code, workspace = self._http_request('GET', '/api/mentors/me/workspace', user=actor)
+        self.assertEqual(code, 200)
+        self.assertEqual({x['ma_ho_so'] for x in workspace['interns']}, {upcoming_profile, old_profile})
+        for profile in [upcoming_profile, old_profile]:
+            code, detail = self._http_request('GET', f'/api/mentors/me/interns/{profile}', user=actor)
+            self.assertEqual(code, 200)
+            self.assertEqual(detail['intern']['ma_ho_so'], profile)
+        code, _ = self._http_request('GET', f'/api/mentors/me/interns/{unrelated_profile}', user=actor)
+        self.assertEqual(code, 404)
+        code, _ = self._http_request('GET', '/api/mentors/me/workspace', user={'vai_tro': 'ThucTapSinh'})
+        self.assertEqual(code, 403)
+        unassign_mentor_canonical(self.db, self.mentor_bob_id, old_profile, program_id=old, manual_override=True)
+        self.db.commit()
+        code, _ = self._http_request('GET', f'/api/mentors/me/interns/{old_profile}', user=actor)
+        self.assertEqual(code, 404)
+
     # =========================================================================
     # Test 1: Fresh and Migrated Schema
     # =========================================================================

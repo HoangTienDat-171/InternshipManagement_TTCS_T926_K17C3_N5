@@ -51,9 +51,8 @@ def mentor_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         LEFT JOIN PHONG_BAN p ON p.ma_phong_ban=u.ma_phong_ban
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
-        WHERE a.ma_nguoi_dung_mentor=? AND u.trang_thai='HoatDong'
-          AND h.trang_thai_xet_duyet='DaDuyet'
-        ORDER BY u.ho_ten
+        WHERE a.ma_nguoi_dung_mentor=? AND u.vai_tro='ThucTapSinh'
+        ORDER BY u.ho_ten, h.ma_ho_so DESC, a.ma_phan_cong DESC
     """, (mentor["ma_nguoi_dung"],)).fetchall()
     current_interns = {}
     for row in interns:
@@ -63,11 +62,9 @@ def mentor_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         ) if row["ma_chuong_trinh"] else (
             "CURRENT" if row["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
         )
-        if timeline != "CURRENT":
-            continue
         current = current_interns.setdefault(row["ma_nguoi_dung"], {**item, "programs": []})
         if row["ma_chuong_trinh"] and not any(p["ma_chuong_trinh"] == row["ma_chuong_trinh"] for p in current["programs"]):
-            current["programs"].append({"ma_chuong_trinh": row["ma_chuong_trinh"], "ten_ct": row["ten_ct"]})
+            current["programs"].append({"ma_chuong_trinh": row["ma_chuong_trinh"], "ten_ct": row["ten_ct"], "timeline_status": timeline})
     return {"mentor": dict(profile) if profile else None, "interns": list(current_interns.values())}
 
 
@@ -86,11 +83,7 @@ def mentor_intern_detail(profile_id: int, request: Request, db: sqlite3.Connecti
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong=h.ma_truong
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh=a.ma_chuong_trinh
         WHERE a.ma_nguoi_dung_mentor=? AND h.ma_ho_so=?
-          AND u.trang_thai='HoatDong' AND h.trang_thai_xet_duyet='DaDuyet'
-          AND ((a.ma_chuong_trinh IS NOT NULL AND c.trang_thai != 'DaDong'
-                AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
-                AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
-               OR (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap='DangThucTap'))
+          AND u.vai_tro='ThucTapSinh'
         ORDER BY a.ma_phan_cong DESC LIMIT 1
     """, (mentor["ma_nguoi_dung"], profile_id)).fetchone()
     if not intern:
