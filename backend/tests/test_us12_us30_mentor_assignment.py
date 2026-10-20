@@ -351,6 +351,59 @@ class US12US30MentorAssignmentTests(unittest.TestCase):
             assign_mentor_canonical(self.db, self.mentor_alice_id, profile, auto_select_program=False)
         self.assertEqual(conflict.exception.status_code, 409)
 
+    def test_manual_mode_assigns_and_removes_closed_pending_context_without_changing_status(self):
+        user, profile = self._create_intern('manual_all_states')
+        today = date.today()
+        program = self._create_program('MANUAL-CLOSED', str(today - timedelta(days=8)), str(today - timedelta(days=1)))
+        application = self._apply_pending(profile, program)
+        self.db.execute("UPDATE HO_SO_THUC_TAP SET trang_thai_xet_duyet='ChoDuyet' WHERE ma_ho_so=?", (profile,))
+        self.db.execute("UPDATE NGUOI_DUNG SET trang_thai='Khoa' WHERE ma_nguoi_dung=?", (user,))
+        self.db.execute("UPDATE CHUONG_TRINH_THUC_TAP SET trang_thai='DaDong' WHERE ma_chuong_trinh=?", (program,))
+        self.db.commit()
+        actor = {'ma_nguoi_dung': self.hr_user_id, 'vai_tro': 'HR'}
+        code, candidates = self._http_request('GET', '/api/mentors/unassigned-interns?include_unavailable=true&manual_override=true', user=actor)
+        self.assertEqual(code, 200)
+        self.assertTrue(next(x for x in candidates if x['ma_ho_so'] == profile)['eligible'])
+        payload = json.dumps({'manual_override': True, 'assignments': [{'ma_ho_so': profile, 'ma_chuong_trinh': program}]}).encode()
+        code, _ = self._http_request('POST', f'/api/mentors/{self.mentor_alice_id}/assignments/batch', user=actor, body=payload, content_type='application/json')
+        self.assertEqual(code, 201)
+        code, rows = self._http_request('GET', f'/api/mentors/{self.mentor_alice_id}/interns?manual_override=true', user=actor)
+        self.assertEqual(code, 200)
+        self.assertEqual(next(x for x in rows if x['ma_ho_so'] == profile)['timeline_status'], 'HISTORICAL')
+        for role in ['Mentor', 'ThucTapSinh']:
+            code, _ = self._http_request('POST', f'/api/mentors/{self.mentor_alice_id}/assignments/batch', user={'vai_tro': role}, body=payload, content_type='application/json')
+            self.assertEqual(code, 403)
+        code, _ = self._http_request('DELETE', f'/api/mentors/{self.mentor_alice_id}/interns/{profile}?program_id={program}&manual_override=true', user=actor)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.db.execute('SELECT trang_thai FROM NGUOI_DUNG WHERE ma_nguoi_dung=?', (user,)).fetchone()[0], 'Khoa')
+        self.assertEqual(self.db.execute('SELECT trang_thai FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ung_tuyen=?', (application,)).fetchone()[0], 'ChoDuyet')
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_ho_so=?', (profile,)).fetchone()[0], 1)
+
+    def test_manual_transfer_requires_confirmation_and_archives_previous_mentor(self):
+        _, profile = self._create_intern('manual_transfer')
+        assign_mentor_canonical(self.db, self.mentor_alice_id, profile, manual_override=True)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as conflict:
+            assign_mentor_canonical(self.db, self.mentor_bob_id, profile, manual_override=True)
+        self.assertEqual(conflict.exception.status_code, 409)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile, manual_override=True, replace_existing=True)
+        self.db.commit()
+        rows = self.db.execute('SELECT ma_nguoi_dung_mentor FROM PHAN_CONG_MENTOR_TTS WHERE ma_ho_so=?', (profile,)).fetchall()
+        self.assertEqual([r[0] for r in rows], [self.mentor_bob_id])
+        history = self.db.execute('SELECT ma_nguoi_dung_mentor,su_kien FROM PHAN_CONG_MENTOR_TTS_LICH_SU WHERE ma_ho_so=?', (profile,)).fetchone()
+        self.assertEqual(tuple(history), (self.mentor_alice_id, 'REASSIGNED'))
+
+    def test_intern_workspace_shows_mentor_of_upcoming_program(self):
+        user, profile = self._create_intern('upcoming_workspace')
+        today = date.today()
+        program = self._create_program('UPCOMING-WORKSPACE', str(today + timedelta(days=3)), str(today + timedelta(days=8)))
+        self._apply_and_approve(profile, program)
+        assign_mentor_canonical(self.db, self.mentor_bob_id, profile, program_id=program)
+        self.db.commit()
+        result = intern_routes.intern_workspace(make_request({'ma_nguoi_dung': user, 'vai_tro': 'ThucTapSinh'}), self.db)
+        self.assertEqual(result['mentor']['ma_nguoi_dung'], self.mentor_bob_id)
+        self.assertEqual(result['mentor']['timeline_status'], 'UPCOMING')
+
     # =========================================================================
     # Test 1: Fresh and Migrated Schema
     # =========================================================================

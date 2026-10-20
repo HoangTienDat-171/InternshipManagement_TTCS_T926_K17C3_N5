@@ -37,7 +37,7 @@ def _periods_overlap(left, right) -> bool:
     return (not end or not other_start or other_start <= end) and (not other_end or not start or start <= other_end)
 
 
-def list_assignment_candidates(db) -> list[dict]:
+def list_assignment_candidates(db, manual_override: bool = False) -> list[dict]:
     """Keep every profile/program visible and explain why it cannot be picked."""
     rows = db.execute("""
         SELECT h.ma_ho_so, u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
@@ -93,7 +93,10 @@ def list_assignment_candidates(db) -> list[dict]:
                 if _periods_overlap(item, dict(assignment)):
                     reason = 'TTS đã có phân công trong cùng thời gian thực tập. Hãy gỡ phân công đó trước.'
                     break
-        item.update(timeline_status=timeline, eligible=reason is None, reason=reason)
+        item.update(timeline_status=timeline, eligible=reason is None, reason=reason,
+                    application_approved=row['trang_thai_ung_tuyen'] == 'DaDuyet')
+        if manual_override:
+            item.update(eligible=True, reason=(f"Đang có Mentor {row['mentor_name']}; xác nhận chuyển khi lưu." if row['mentor_id'] else 'Có thể phân công thủ công; bỏ qua điều kiện duyệt và thời gian.'))
         results.append(item)
     return results
 
@@ -355,6 +358,8 @@ def assign_mentor_canonical(
     application_id: Optional[int] = None,
     assigned_by: Optional[int] = None,
     auto_select_program: bool = True,
+    manual_override: bool = False,
+    replace_existing: bool = False,
 ) -> dict:
     """
     CANONICAL IMPLEMENTATION cho US12 và US30:
@@ -380,26 +385,29 @@ def assign_mentor_canonical(
     if not mentor:
         raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
     mentor = dict(mentor)
-    if mentor["trang_thai"] != "HoatDong":
+    if not manual_override and mentor["trang_thai"] != "HoatDong":
         raise HTTPException(status_code=400, detail="Mentor chưa ở trạng thái hoạt động.")
 
     # 2. Kiểm tra TTS hợp lệ
     intern = db.execute("""
-        SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
+        SELECT h.ma_ho_so, h.ma_nguoi_dung, u.ho_ten, u.email, u.trang_thai AS account_status,
+               h.trang_thai_xet_duyet, h.trang_thai_thuc_tap
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
-        WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh' AND u.trang_thai = 'HoatDong'
+        WHERE h.ma_ho_so = ? AND u.vai_tro = 'ThucTapSinh'
     """, (profile_id,)).fetchone()
     if not intern:
         raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ thực tập sinh hợp lệ.")
     intern = dict(intern)
-    if intern["trang_thai_xet_duyet"] != "DaDuyet":
+    if not manual_override and intern['account_status'] != 'HoatDong':
+        raise HTTPException(status_code=400, detail="Tài khoản thực tập sinh chưa hoạt động.")
+    if not manual_override and intern["trang_thai_xet_duyet"] != "DaDuyet":
         raise HTTPException(status_code=400, detail="Chỉ có thể phân công TTS có hồ sơ đã được duyệt.")
 
     # 3. Xác định ngữ cảnh Chương trình thực tập (Program Context)
     target_program_id = program_id
     target_app_id = application_id
-    if not auto_select_program and target_program_id is None and target_app_id is None:
+    if not manual_override and not auto_select_program and target_program_id is None and target_app_id is None:
         if db.execute('SELECT 1 FROM UNG_TUYEN_CHUONG_TRINH WHERE ma_ho_so = ?', (profile_id,)).fetchone():
             raise HTTPException(status_code=409, detail="Ngữ cảnh chương trình của hồ sơ đã thay đổi. Hãy tải lại danh sách và chọn đúng chương trình.")
 
@@ -413,7 +421,7 @@ def assign_mentor_canonical(
             raise HTTPException(status_code=404, detail="Không tìm thấy đơn ứng tuyển của thực tập sinh.")
         if target_program_id and app_row['ma_chuong_trinh'] != target_program_id:
             raise HTTPException(status_code=400, detail="Đơn ứng tuyển không thuộc chương trình đã chọn.")
-        if app_row["trang_thai"] != "DaDuyet":
+        if not manual_override and app_row["trang_thai"] != "DaDuyet":
             raise HTTPException(status_code=400, detail="Chỉ có thể phân công Mentor cho đơn ứng tuyển đã được duyệt.")
         target_program_id = app_row["ma_chuong_trinh"]
 
@@ -424,13 +432,13 @@ def assign_mentor_canonical(
             FROM UNG_TUYEN_CHUONG_TRINH
             WHERE ma_ho_so = ? AND ma_chuong_trinh = ?
         """, (profile_id, target_program_id)).fetchone()
-        if not app or app["trang_thai"] != "DaDuyet":
+        if not app or (not manual_override and app["trang_thai"] != "DaDuyet"):
             raise HTTPException(
                 status_code=400,
                 detail="Thực tập sinh chưa có đơn ứng tuyển đã duyệt trong chương trình này.",
             )
         target_app_id = app["ma_ung_tuyen"]
-    else:
+    elif not manual_override:
         # Nếu không truyền program_id, tìm chương trình đã duyệt hợp lệ của TTS (ưu tiên CURRENT, rồi UPCOMING)
         approved_progs = get_intern_approved_programs(db, profile_id)
         if not approved_progs:
@@ -494,9 +502,15 @@ def assign_mentor_canonical(
                 "intern_user_id": intern["ma_nguoi_dung"],
             }
         else:
-            raise HTTPException(status_code=409, detail="TTS đã có Mentor trong chương trình này. Hãy gỡ phân công hiện tại trước khi chọn Mentor khác.")
+            if not (manual_override and replace_existing):
+                raise HTTPException(status_code=409, detail="TTS đã có Mentor trong chương trình này. Hãy gỡ phân công hoặc xác nhận chuyển Mentor trước khi lưu.")
+            archive_mentor_assignment(db, existing_assignment['ma_phan_cong'], 'REASSIGNED', assigned_by)
+            db.execute('''UPDATE PHAN_CONG_MENTOR_TTS SET ma_nguoi_dung_mentor = ?, ma_ung_tuyen = ?,
+                ma_nguoi_phan_cong = ?, ngay_phan_cong = CURRENT_TIMESTAMP WHERE ma_phan_cong = ?''',
+                (mentor_id, target_app_id, assigned_by, existing_assignment['ma_phan_cong']))
+            assignment_id = existing_assignment['ma_phan_cong']
     else:
-        if timeline_status == 'HISTORICAL':
+        if not manual_override and timeline_status == 'HISTORICAL':
             raise HTTPException(status_code=400, detail="Không thể phân công mới vào chương trình đã kết thúc hoặc đã đóng.")
         others = db.execute("""
             SELECT p.ma_chuong_trinh, h.trang_thai_thuc_tap, c.ngay_bat_dau, c.ngay_ket_thuc, c.trang_thai
@@ -506,6 +520,8 @@ def assign_mentor_canonical(
             WHERE h.ma_nguoi_dung = ?
         """ + lock_clause, (intern['ma_nguoi_dung'],)).fetchall()
         for other in others:
+            if manual_override:
+                break
             if other['ma_chuong_trinh'] and get_timeline_status(other['ngay_bat_dau'], other['ngay_ket_thuc'], other['trang_thai']) == 'HISTORICAL':
                 continue
             if not other['ma_chuong_trinh'] and other['trang_thai_thuc_tap'] != 'DangThucTap':
@@ -536,6 +552,7 @@ def unassign_mentor_canonical(
     profile_id: int,
     program_id: Optional[int] = None,
     unassigned_by: Optional[int] = None,
+    manual_override: bool = False,
 ) -> dict:
     """
     CANONICAL GỠ PHÂN CÔNG cho US12 và US30.
@@ -572,7 +589,7 @@ def unassign_mentor_canonical(
     ) if assignment["ma_chuong_trinh"] else (
         "CURRENT" if assignment["trang_thai_thuc_tap"] == "DangThucTap" else "HISTORICAL"
     )
-    if timeline_status == "HISTORICAL":
+    if not manual_override and timeline_status == "HISTORICAL":
         raise HTTPException(
             status_code=400,
             detail="Không thể gỡ phân công lịch sử của chương trình đã kết thúc; dữ liệu lịch sử được giữ nguyên.",

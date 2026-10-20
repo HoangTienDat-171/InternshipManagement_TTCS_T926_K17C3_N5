@@ -314,6 +314,7 @@ class InternAssignmentCandidate(BaseModel):
     mentor_name: Optional[str] = None
     eligible: bool = True
     reason: Optional[str] = None
+    application_approved: bool = False
 
 class MentorAssignmentDetail(InternAssignmentCandidate):
     ngay_phan_cong: Optional[str] = None
@@ -329,6 +330,8 @@ class MentorBatchAssignment(BaseModel):
     ma_ho_so_list: List[int] = Field(default_factory=list, max_length=50)
     ma_chuong_trinh: Optional[int] = None
     assignments: List[MentorAssignmentTarget] = Field(default_factory=list, max_length=50)
+    manual_override: bool = False
+    replace_existing: bool = False
 
     @model_validator(mode="after")
     def validate_targets(self):

@@ -4534,3 +4534,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .mentor-assignment-dialog .modal-body { min-height: 0; overflow-y: auto; }
 .mentor-assignment-dialog .modal-header,
 .mentor-assignment-dialog .modal-footer { flex-shrink: 0; }
+.manual-assignment-option { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border-color, #c7c2fb); border-radius: 10px; background: var(--bg-secondary, #f5f3ff); }
+.manual-assignment-option input { margin-top: 4px; accent-color: #6354e8; }
+.manual-assignment-option span { display: grid; gap: 4px; min-width: 0; }
+.manual-assignment-option small { color: var(--text-muted); line-height: 1.5; }
+.mentor-assignment-dialog .assignment-selection-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; }

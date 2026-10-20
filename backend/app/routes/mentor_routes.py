@@ -162,14 +162,14 @@ def list_mentors(
 
 
 @router.get("/unassigned-interns", response_model=list[InternAssignmentCandidate])
-def list_unassigned_interns(request: Request, include_unavailable: bool = Query(False), db: sqlite3.Connection = Depends(get_db)):
+def list_unassigned_interns(request: Request, include_unavailable: bool = Query(False), db: sqlite3.Connection = Depends(get_db), manual_override: bool = False):
     require_role(request, "Admin", "HR")
-    candidates = list_assignment_candidates(db)
+    candidates = list_assignment_candidates(db, manual_override=manual_override)
     return candidates if include_unavailable else [item for item in candidates if item['eligible']]
 
 
 @router.get("/{mentor_id}/interns", response_model=list[MentorAssignmentDetail])
-def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection = Depends(get_db)):
+def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection = Depends(get_db), manual_override: bool = False):
     require_role(request, "Admin", "HR")
     if not db.execute("SELECT 1 FROM NGUOI_DUNG WHERE ma_nguoi_dung = ? AND vai_tro = 'Mentor'", (mentor_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Không tìm thấy Mentor.")
@@ -186,8 +186,8 @@ def list_mentor_interns(mentor_id: int, request: Request, db: sqlite3.Connection
         JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
         LEFT JOIN TRUONG_DAI_HOC t ON t.ma_truong = h.ma_truong
         LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-        WHERE a.ma_nguoi_dung_mentor = ? AND u.trang_thai = 'HoatDong' AND u.vai_tro = 'ThucTapSinh'
-          AND h.trang_thai_xet_duyet = 'DaDuyet'
+        WHERE a.ma_nguoi_dung_mentor = ? AND u.vai_tro = 'ThucTapSinh'
+          {"" if manual_override else "AND u.trang_thai = 'HoatDong' AND h.trang_thai_xet_duyet = 'DaDuyet'"}
         ORDER BY u.ho_ten COLLATE NOCASE
     """, (mentor_id,)).fetchall()
     items = []
@@ -284,6 +284,8 @@ def assign_interns_batch(
                 program_id=program_id,
                 assigned_by=actor["ma_nguoi_dung"],
                 auto_select_program=not bool(data.assignments),
+                manual_override=data.manual_override,
+                replace_existing=data.replace_existing,
             )
             intern_user_ids.append(res["intern_user_id"])
         db.commit()
@@ -312,6 +314,7 @@ def unassign_intern(
     background_tasks: BackgroundTasks,
     program_id: int | None = Query(None),
     db: sqlite3.Connection = Depends(get_db),
+    manual_override: bool = False,
 ):
     actor = require_role(request, "Admin", "HR")
     try:
@@ -322,6 +325,7 @@ def unassign_intern(
             profile_id=profile_id,
             program_id=program_id,
             unassigned_by=actor["ma_nguoi_dung"],
+            manual_override=manual_override,
         )
         db.commit()
     except HTTPException:
