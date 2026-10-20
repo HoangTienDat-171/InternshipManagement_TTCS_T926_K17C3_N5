@@ -70,6 +70,7 @@ class WorkShiftTests(unittest.TestCase):
             "name": "  Ca sáng  ",
             "start_time": "08:00",
             "end_time": "12:00",
+            "weekdays": [1, 2, 3, 4, 5, 6, 7],
             "scope_type": "GLOBAL",
             "program_id": None,
             "effective_from": "2026-10-05",

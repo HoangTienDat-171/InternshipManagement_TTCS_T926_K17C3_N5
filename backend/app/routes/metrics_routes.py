@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 
 from ..database import get_db
+from ..mentor_assignment_service import management_assignment_sql
 from ..security import require_role
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard Metrics"])
@@ -37,23 +38,12 @@ def get_dashboard_metrics(
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'DangThucTap' THEN 1 ELSE 0 END) AS in_progress,
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'HoanThanh' THEN 1 ELSE 0 END) AS completed,
                SUM(CASE WHEN h.trang_thai_xet_duyet = 'DaDuyet' AND h.trang_thai_thuc_tap = 'ThoiHoc' THEN 1 ELSE 0 END) AS withdrawn,
-               SUM(CASE WHEN EXISTS (
-                   SELECT 1
-                   FROM PHAN_CONG_MENTOR_TTS a
+               COUNT(DISTINCT CASE WHEN EXISTS (
+                   SELECT 1 FROM PHAN_CONG_MENTOR_TTS a
                    JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
                    LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-                   WHERE a.ma_ho_so = h.ma_ho_so
-                     AND m.vai_tro = 'Mentor'
-                     AND m.trang_thai = 'HoatDong'
-                     AND (
-                         (a.ma_chuong_trinh IS NOT NULL
-                          AND c.trang_thai != 'DaDong'
-                          AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
-                          AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
-                         OR
-                         (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap = 'DangThucTap')
-                     )
-               ) AND h.trang_thai_xet_duyet = 'DaDuyet' THEN 1 ELSE 0 END) AS assigned,
+                   WHERE a.ma_ho_so = h.ma_ho_so AND {management_assignment_sql(i='u')}
+               ) THEN h.ma_nguoi_dung END) AS assigned,
                COUNT(DISTINCT h.ma_truong) AS universities
         FROM HO_SO_THUC_TAP h
         JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
@@ -123,35 +113,32 @@ def get_dashboard_metrics(
         mentor_params.append(ma_phong_ban)
     mentor_where = " AND ".join(mentor_where_clauses)
 
-    mentor_stats = db.execute(f"""
-        SELECT COUNT(*) AS total,
-               SUM(CASE WHEN workload.intern_count > 0 THEN 1 ELSE 0 END) AS assigned_mentors,
-               COALESCE(SUM(workload.intern_count), 0) AS assigned_interns
-        FROM (
-            SELECT m.ma_nguoi_dung,
-                   COUNT(DISTINCT CASE 
-                       WHEN i.vai_tro = 'ThucTapSinh'
-                        AND i.trang_thai = 'HoatDong'
-                        AND h.trang_thai_xet_duyet = 'DaDuyet'
-                        AND (
-                            (a.ma_chuong_trinh IS NOT NULL
-                             AND c.trang_thai != 'DaDong'
-                             AND (c.ngay_bat_dau IS NULL OR CURRENT_DATE >= c.ngay_bat_dau)
-                             AND (c.ngay_ket_thuc IS NULL OR CURRENT_DATE <= c.ngay_ket_thuc))
-                            OR
-                            (a.ma_chuong_trinh IS NULL AND h.trang_thai_thuc_tap = 'DangThucTap')
-                        )
-                       THEN h.ma_nguoi_dung END
-                   ) AS intern_count
-            FROM NGUOI_DUNG m
-            LEFT JOIN PHAN_CONG_MENTOR_TTS a ON a.ma_nguoi_dung_mentor = m.ma_nguoi_dung
-            LEFT JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
-            LEFT JOIN NGUOI_DUNG i ON i.ma_nguoi_dung = h.ma_nguoi_dung
-            LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
-            WHERE {mentor_where}
-            GROUP BY m.ma_nguoi_dung
-        ) workload
-    """, mentor_params).fetchone()
+    mentor_stats = dict(db.execute(f"""
+        SELECT COUNT(*) AS total FROM NGUOI_DUNG m WHERE {mentor_where}
+    """, mentor_params).fetchone())
+    workload = db.execute(f"""
+        SELECT COUNT(DISTINCT m.ma_nguoi_dung) AS assigned_mentors,
+               COUNT(DISTINCT h.ma_nguoi_dung) AS assigned_interns
+        FROM PHAN_CONG_MENTOR_TTS a
+        JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
+        JOIN HO_SO_THUC_TAP h ON h.ma_ho_so = a.ma_ho_so
+        JOIN NGUOI_DUNG i ON i.ma_nguoi_dung = h.ma_nguoi_dung
+        LEFT JOIN CHUONG_TRINH_THUC_TAP c ON c.ma_chuong_trinh = a.ma_chuong_trinh
+        WHERE {mentor_where} AND {management_assignment_sql()}
+          {"AND h.ma_truong = ?" if ma_truong is not None else ""}
+    """, [*mentor_params, *([ma_truong] if ma_truong is not None else [])]).fetchone()
+    mentor_stats.update(dict(workload))
+    waiting_stats = db.execute(f"""
+        SELECT COUNT(DISTINCT u.ma_nguoi_dung) AS total
+        FROM HO_SO_THUC_TAP h
+        JOIN NGUOI_DUNG u ON u.ma_nguoi_dung = h.ma_nguoi_dung
+        WHERE {' AND '.join(intern_filters)} AND NOT EXISTS (
+            SELECT 1 FROM PHAN_CONG_MENTOR_TTS a
+            JOIN HO_SO_THUC_TAP other_h ON other_h.ma_ho_so = a.ma_ho_so
+            JOIN NGUOI_DUNG m ON m.ma_nguoi_dung = a.ma_nguoi_dung_mentor
+            WHERE other_h.ma_nguoi_dung = u.ma_nguoi_dung AND m.vai_tro = 'Mentor'
+        )
+    """, intern_params).fetchone()
 
     mentor_departments = db.execute(f"""
         SELECT COALESCE(p.ten_phong_ban, 'Chưa phân phòng') AS name,
@@ -188,7 +175,6 @@ def get_dashboard_metrics(
         return int(row[key] or 0)
 
     intern_total = count_value(intern_stats, "total")
-    approved_interns = count_value(intern_stats, "approved")
     assigned = count_value(intern_stats, "assigned")
     total_mentors = count_value(mentor_stats, "total")
     assigned_mentors = count_value(mentor_stats, "assigned_mentors")
@@ -204,7 +190,7 @@ def get_dashboard_metrics(
             "completed": count_value(intern_stats, "completed"),
             "withdrawn": count_value(intern_stats, "withdrawn"),
             "assigned": assigned,
-            "unassigned": max(approved_interns - assigned, 0),
+            "unassigned": int(waiting_stats['total']),
             "universities": count_value(intern_stats, "universities"),
         },
         "programs": {

@@ -115,6 +115,21 @@ def intern_workspace(request: Request, db: sqlite3.Connection = Depends(get_db))
         None,
     )
 
+    # The workspace displays the next approved program before its start date.
+    # Show that program's assigned mentor as well instead of claiming none exists.
+    if mentor is None and current_program and current_program.get('mentor_id'):
+        mentor_row = db.execute("""
+            SELECT u.ma_nguoi_dung, u.ho_ten, u.email, u.so_dien_thoai,
+                   p.ten_phong_ban AS phong_ban, mp.chuyen_mon, mp.kinh_nghiem
+            FROM NGUOI_DUNG u
+            LEFT JOIN PHONG_BAN p ON p.ma_phong_ban = u.ma_phong_ban
+            LEFT JOIN MENTOR_PROFILE mp ON mp.ma_nguoi_dung = u.ma_nguoi_dung
+            WHERE u.ma_nguoi_dung = ? AND u.vai_tro = 'Mentor'
+        """, (current_program['mentor_id'],)).fetchone()
+        mentor = dict(mentor_row) if mentor_row else None
+        if mentor:
+            mentor['timeline_status'] = current_program.get('timeline_status', 'UPCOMING')
+
     progress = None
     if current_program and current_program.get("ngay_bat_dau") and current_program.get("ngay_ket_thuc"):
         start = date.fromisoformat(str(current_program["ngay_bat_dau"])[:10])
