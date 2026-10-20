@@ -201,14 +201,6 @@
 .ims-login-card .auth-alert { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 14px; padding: 11px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
 .ims-login-card .auth-alert > svg { flex: 0 0 auto; margin-top: 1px; }
 
-.ims-login-card .auth-demo-accounts { margin-top: 19px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
-.ims-login-card .auth-demo-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; color: #475569; font-size: 12px; font-weight: 700; }
-.ims-login-card .auth-demo-accounts > .auth-demo-heading { color: #475569 !important; font-size: 12px !important; letter-spacing: normal !important; text-transform: none !important; }
-.ims-login-card .auth-demo-heading span { color: #94a3b8; font-size: 11px; font-weight: 500; }
-.ims-login-card .auth-demo-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
-.ims-login-card .auth-demo-buttons .btn-secondary { min-height: 36px; padding: 6px 5px; border: 1px solid #e2e8f0; border-radius: 9px; background: #f8fafc; color: #4f46e5; font-size: 11px; font-weight: 650; }
-.ims-login-card .auth-demo-buttons .btn-secondary:hover { border-color: #c7d2fe; background: #eef2ff; color: #4338ca; }
-
 .ims-login-card .auth-form-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 5px; margin-top: 18px; color: #64748b; font-size: 13px; }
 .ims-login-card .auth-account-note { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; color: #334155; font-size: 12px; line-height: 1.45; }
 .ims-login-card .auth-account-note strong { color: #334155; }
@@ -257,12 +249,6 @@
 :root[data-theme='dark'] .ims-login-card .auth-alert.error > svg { color: var(--danger-icon); }
 :root[data-theme='dark'] .ims-login-card .auth-alert.success { border-color: var(--success-border); background: var(--success-bg); color: var(--success-text); }
 :root[data-theme='dark'] .ims-login-card .auth-alert.success > svg { color: var(--success-icon); }
-:root[data-theme='dark'] .ims-login-card .auth-demo-accounts { border-top-color: #29354d; }
-:root[data-theme='dark'] .ims-login-card .auth-demo-heading { color: #cbd5e1; }
-:root[data-theme='dark'] .ims-login-card .auth-demo-accounts > .auth-demo-heading { color: #cbd5e1 !important; }
-:root[data-theme='dark'] .ims-login-card .auth-demo-heading span { color: #94a3b8; }
-:root[data-theme='dark'] .ims-login-card .auth-demo-buttons .btn-secondary { border-color: #29354d; background: #172337; color: #c7d2fe; }
-:root[data-theme='dark'] .ims-login-card .auth-demo-buttons .btn-secondary:hover { border-color: #414d67; background: #1b283c; color: #e0e7ff; }
 :root[data-theme='dark'] .ims-login-card .auth-form-footer { color: #94a3b8; }
 :root[data-theme='dark'] .ims-login-card .auth-account-note { border-color: #29354d; background: #0f172a; color: #cbd5e1; }
 :root[data-theme='dark'] .ims-login-card .auth-account-note strong { color: #e2e8f0; }
@@ -276,7 +262,6 @@
   .auth-card.ims-login-card { width: min(456px, 100%); padding: 25px 20px 20px; border-radius: 18px; }
   .ims-login-card .auth-brand-header { margin-bottom: 20px; }
   .ims-login-card .auth-brand-header h1 { font-size: 21px; }
-  .ims-login-card .auth-demo-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-height: 720px) and (min-width: 561px) {

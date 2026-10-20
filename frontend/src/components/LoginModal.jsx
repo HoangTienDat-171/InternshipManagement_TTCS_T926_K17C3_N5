@@ -40,11 +40,6 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
     }
   };
 
-  const handleQuickLogin = (quickEmail, quickPassword) => {
-    setEmail(quickEmail);
-    setPassword(quickPassword);
-  };
-
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-container" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
@@ -100,43 +95,6 @@ export default function LoginModal({ isOpen, onClose, onLoginSuccess, onSwitchTo
               <span>{loading ? 'Đang xác thực...' : 'Đăng nhập'}</span>
             </button>
           </form>
-
-          {/* Quick Login for 4 Roles */}
-          <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase' }}>
-              Chọn nhanh tài khoản mẫu theo vai trò:
-            </span>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginTop: '8px' }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleQuickLogin('admin@internship.vn', '123456')}
-              >
-                Admin (Quản trị)
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleQuickLogin('hr@internship.vn', '123456')}
-              >
-                Quản lý TTS (HR)
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleQuickLogin('mentor@internship.vn', '123456')}
-              >
-                Mentor
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleQuickLogin('tuan.lm@internship.vn', '123456')}
-              >
-                Thực tập sinh
-              </button>
-            </div>
-          </div>
 
           <div style={{ textAlign: 'center', marginTop: '20px' }}>
             <button

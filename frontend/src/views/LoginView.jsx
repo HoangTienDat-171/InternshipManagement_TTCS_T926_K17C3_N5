@@ -163,12 +163,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice, theme = 'ligh
     }
   };
 
-  const handleQuickLogin = (quickEmail, quickPassword) => {
-    setEmail(quickEmail);
-    setPassword(quickPassword);
-    setErrorMsg('');
-  };
-
   const openForgotMode = () => {
     setIsForgotMode(true);
     setIsRegisterMode(false);
@@ -422,18 +416,6 @@ export default function LoginView({ onLoginSuccess, sessionNotice, theme = 'ligh
                 <span>{regLoading ? 'Đang gửi thông tin…' : 'Đăng ký tài khoản'}</span>
               </button>
             </form>
-          )}
-
-          {import.meta.env.DEV && !isRegisterMode && !isForgotMode && (
-            <div className="auth-demo-accounts">
-              <div className="auth-demo-heading">Tài khoản demo <span>Chọn để điền nhanh</span></div>
-              <div className="auth-demo-buttons">
-                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('admin@internship.vn', '123456')}>Admin</button>
-                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('hr@internship.vn', '123456')}>Quản lý</button>
-                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('mentor@internship.vn', '123456')}>Mentor</button>
-                <button type="button" className="btn btn-secondary" onClick={() => handleQuickLogin('tuan.lm@internship.vn', '123456')}>TTS</button>
-              </div>
-            </div>
           )}
 
           <footer className="auth-form-footer">
