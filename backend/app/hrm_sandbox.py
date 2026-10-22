@@ -1,6 +1,8 @@
 """Local-only HRM Sandbox API backed by an isolated SQLite or MySQL database."""
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import hmac
 import hashlib
 import json
@@ -615,7 +617,19 @@ def require_admin_api_key(authorization: str | None = Header(default=None)) -> s
     raise HTTPException(status_code=401, detail="Không xác thực được với HRM Sandbox.")
 
 
-app = FastAPI(title="HRM Sandbox", version="1.0.0", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def sandbox_lifespan(_app: FastAPI):
+    _load_env_config()
+    if not _load_api_key() or not _load_admin_api_key():
+        raise RuntimeError("HRM_SANDBOX_API_KEY and HRM_SANDBOX_ADMIN_API_KEY must both be configured.")
+    if hmac.compare_digest(_load_api_key(), _load_admin_api_key()):
+        raise RuntimeError("HRM Sandbox service and admin keys must be different.")
+    if os.getenv("HRM_SANDBOX_SKIP_STARTUP_DB_INIT") != "1":
+        await asyncio.to_thread(initialize_database)
+    yield
+
+
+app = FastAPI(title="HRM Sandbox", version="1.0.0", docs_url=None, redoc_url=None, lifespan=sandbox_lifespan)
 
 
 @app.middleware("http")
@@ -641,17 +655,6 @@ def sandbox_console():
     page = page.replace("Dữ liệu nằm trong SQLite riêng.", "Dữ liệu nằm trong cơ sở dữ liệu riêng của HRM Sandbox.")
     page = page.replace("database SQLite riêng của HRM Sandbox", "database riêng của HRM Sandbox")
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
-
-@app.on_event("startup")
-def on_startup() -> None:
-    _load_env_config()
-    if not _load_api_key() or not _load_admin_api_key():
-        raise RuntimeError("HRM_SANDBOX_API_KEY and HRM_SANDBOX_ADMIN_API_KEY must both be configured.")
-    if hmac.compare_digest(_load_api_key(), _load_admin_api_key()):
-        raise RuntimeError("HRM Sandbox service and admin keys must be different.")
-    if os.getenv("HRM_SANDBOX_SKIP_STARTUP_DB_INIT") != "1":
-        initialize_database()
-
 
 @app.get("/api/v1/health", dependencies=[Depends(require_api_key)])
 def health():
