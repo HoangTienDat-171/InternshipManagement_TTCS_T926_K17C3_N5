@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from starlette.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +14,21 @@ from .hrm_connection_service import bootstrap_legacy_connection, ensure_sqlite_s
 from .security import get_session_user, session_connections
 from .routes import allowance_routes, attendance_routes, audit_routes, auth_routes, backup_routes, contract_routes, document_routes, evaluation_routes, final_report_routes, hrm_connection_routes, hrm_routes, intern_routes, leave_routes, master_routes, meeting_routes, mentor_routes, metrics_routes, notification_routes, program_routes, reporting_routes, support_request_routes, task_routes, weekly_report_routes, work_shift_routes
 
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    try:
+        on_startup()
+        yield
+    finally:
+        await on_shutdown()
+
+
 app = FastAPI(
     title="Hệ thống Quản lý Thực tập sinh (Internship Management System)",
     description="Backend API phục vụ Quản lý Thực tập sinh với Kiến trúc Bảo mật 3 Giai đoạn",
-    version="1.1.0"
+    version="1.1.0",
+    lifespan=app_lifespan,
 )
 
 app.add_middleware(support_request_routes.SupportRequestBodyLimitMiddleware)
@@ -118,7 +130,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
 def on_startup():
     global _backup_scheduler_stop, _backup_scheduler_task
     if os.getenv("IMS_SKIP_STARTUP_DB_INIT") != "1":
@@ -144,7 +155,6 @@ def on_startup():
         conn.close()
 
 
-@app.on_event("shutdown")
 async def on_shutdown():
     global _backup_scheduler_stop, _backup_scheduler_task
     await stop_email_worker()
